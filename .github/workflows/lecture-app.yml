@@ -17,7 +17,7 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild -list
-          xcodebuild -scheme '課堂逐字稿' -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/PlaygroundBuild" CODE_SIGNING_ALLOWED=NO build 2>&1 | tee "$RUNNER_TEMP/playground-device.log"
+          xcodebuild -scheme LectureTranscriber -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/PlaygroundBuild" CODE_SIGNING_ALLOWED=NO build 2>&1 | tee "$RUNNER_TEMP/playground-device.log"
       - name: Report package build errors
         if: failure()
         run: |
