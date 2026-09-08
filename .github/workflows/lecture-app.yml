@@ -20,6 +20,12 @@ jobs:
         run: |
           swiftc Apps/LectureTranscriber.swiftpm/Sources/Session.swift AppTests/main.swift -o "$RUNNER_TEMP/session-tests"
           "$RUNNER_TEMP/session-tests"
+      - name: Type-check App Playground manifest
+        run: |
+          XCODE_ROOT="$(xcode-select -p)/../.."
+          MODULE="$(find "$XCODE_ROOT" -path '*/ManifestAPI/AppleProductTypes.swiftmodule' -print -quit)"
+          test -n "$MODULE"
+          xcrun swiftc -typecheck -I "$(dirname "$MODULE")" -package-description-version 5.10.0 Apps/LectureTranscriber.swiftpm/Package.swift
       - name: Generate Xcode validation project
         run: |
           brew install xcodegen
