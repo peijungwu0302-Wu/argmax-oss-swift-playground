@@ -18,6 +18,26 @@ struct AudioPart: Codable, Identifiable, Sendable {
     var sampleCount: Int = 0
     var processedSamples: Int = 0
 }
+
+struct WindowDecision {
+    var confirmed: [TranscriptLine]
+    var provisional: [TranscriptLine]
+    var consumed: Int
+    static func make(lines: [TranscriptLine], samples: Int, offset: Double, final: Bool) -> WindowDecision {
+        let cutoff = offset + Double(samples) / 16000 - 2
+        var confirmed = samples >= 12 * 16000 ? lines.filter { $0.end <= cutoff } : []
+        var consumed = 0
+        if final || (samples == 26 * 16000 && confirmed.isEmpty) {
+            confirmed = lines; consumed = samples
+        } else if let last = confirmed.last {
+            consumed = min(samples, max(1, Int(((last.end - offset) * 16000).rounded())))
+        } else if lines.isEmpty && samples >= 12 * 16000 {
+            consumed = samples - 2 * 16000
+        }
+        return WindowDecision(confirmed: confirmed,
+            provisional: lines.filter { line in !confirmed.contains(where: { $0.id == line.id }) }, consumed: consumed)
+    }
+}
 struct LectureSession: Codable, Identifiable, Sendable {
     var id = UUID()
     var title: String
@@ -95,6 +115,11 @@ struct SessionStore {
             var session = try JSONDecoder().decode(LectureSession.self, from: Data(contentsOf: file))
             for index in session.parts.indices {
                 let audio = directory.appendingPathComponent(session.parts[index].fileName)
+                guard FileManager.default.fileExists(atPath: audio.path) else {
+                    // JSON is saved before opening the mic; a crash in between can leave an empty part.
+                    if session.parts[index].sampleCount == 0 { continue }
+                    throw LectureError.message("找不到錄音檔：\(session.title) / \(session.parts[index].fileName)")
+                }
                 if let size = try FileManager.default.attributesOfItem(atPath: audio.path)[.size] as? NSNumber {
                     session.parts[index].sampleCount = size.intValue / MemoryLayout<Float>.size
                 }

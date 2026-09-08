@@ -84,7 +84,12 @@ final class PCMRecorder: @unchecked Sendable {
         let file = try FileHandle(forReadingFrom: url)
         defer { try? file.close() }
         try file.seek(toOffset: UInt64(start) * 4)
-        let data = try file.read(upToCount: count * 4) ?? Data()
+        var data = Data()
+        while data.count < count * 4 {
+            let portion = try file.read(upToCount: count * 4 - data.count) ?? Data()
+            guard !portion.isEmpty else { throw LectureError.message("錄音檔長度不足，已保留未完成的位置，請稍後重試。") }
+            data.append(portion)
+        }
         var samples = [Float](repeating: 0, count: data.count / 4)
         _ = samples.withUnsafeMutableBytes { destination in data.copyBytes(to: destination) }
         return samples

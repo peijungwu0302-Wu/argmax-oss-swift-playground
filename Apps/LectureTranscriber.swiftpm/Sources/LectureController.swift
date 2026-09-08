@@ -104,7 +104,7 @@ final class LectureController: ObservableObject {
             catch {
                 // A failed start may still have created a recoverable empty PCM file.
                 session?.parts.removeLast()
-                try? store.save(session!)
+                if let remaining = session { try? store.save(remaining) }
                 throw error
             }
             activePartID = part.id
@@ -153,6 +153,8 @@ final class LectureController: ObservableObject {
             fail("辨識暫停，已錄聲音保留在本機，可按「補辨識」。", error)
         }
         isDecoding = false
+        worker = nil
+        reloadHistory()
     }
 
     // Keep two seconds of right context, then advance at the last confirmed segment end.
@@ -168,22 +170,12 @@ final class LectureController: ObservableObject {
         let lines = try await engine.transcribe(file: store.audioURL(current, part), start: part.processedSamples,
             count: count, offset: offset, language: current.language)
         guard session?.id == current.id, let index = session?.parts.firstIndex(where: { $0.id == id }) else { return }
-        let isLast = final && count == available
-        let cutoff = offset + Double(count) / 16000 - 2
-        var confirmed = (count >= 12 * 16000 || final) ? lines.filter { $0.end <= cutoff } : []
-        var consumed = 0
-        if isLast || (count == 26 * 16000 && confirmed.isEmpty) {
-            confirmed = lines; consumed = count
-        } else if let last = confirmed.last {
-            consumed = min(count, max(1, Int(((last.end - offset) * 16000).rounded())))
-        } else if lines.isEmpty && count >= 12 * 16000 {
-            consumed = count - 2 * 16000
-        }
-        provisional = lines.filter { line in !confirmed.contains(where: { $0.id == line.id }) }
-        if consumed > 0 {
+        let decision = WindowDecision.make(lines: lines, samples: count, offset: offset, final: final && count == available)
+        provisional = decision.provisional
+        if decision.consumed > 0 {
             // Audio count may have increased while decoding; mutate the live session.
-            session?.lines.append(contentsOf: confirmed)
-            session?.parts[index].processedSamples += consumed
+            session?.lines.append(contentsOf: decision.confirmed)
+            session?.parts[index].processedSamples += decision.consumed
             guard let updated = session else { return }
             try store.save(updated)
             lastSaved = Date()
@@ -243,12 +235,6 @@ final class LectureController: ObservableObject {
         // Do not wait for ML when the OS is about to suspend the app.
         status = reason + "。返回後可補辨識並繼續。"
         errorMessage = status
-        let oldWorker = worker
-        Task { [weak self] in
-            await oldWorker?.value
-            self?.worker = nil
-            self?.reloadHistory()
-        }
     }
 
     func backgrounded() { interrupt("App 已進入背景，錄音已暫停") }
