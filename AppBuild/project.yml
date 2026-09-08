@@ -25,8 +25,23 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         CODE_SIGNING_ALLOWED: NO
         TARGETED_DEVICE_FAMILY: "1,2"
+  LaunchTests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - ../AppTests/Launch
+    dependencies:
+      - target: LectureTranscriber
+    settings:
+      base:
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGNING_ALLOWED: NO
 schemes:
   LectureTranscriber:
     build:
       targets:
         LectureTranscriber: all
+    test:
+      targets:
+        - LaunchTests
