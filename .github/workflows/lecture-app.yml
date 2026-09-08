@@ -7,6 +7,32 @@ on:
 permissions:
   contents: read
 jobs:
+  playground-package:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build actual App Playground for iPad
+        working-directory: Apps/LectureTranscriber.swiftpm
+        run: |
+          set -o pipefail
+          xcodebuild -list
+          xcodebuild -scheme '課堂逐字稿' -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/PlaygroundBuild" CODE_SIGNING_ALLOWED=NO build 2>&1 | tee "$RUNNER_TEMP/playground-device.log"
+      - name: Report package build errors
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import os, pathlib
+          for p in pathlib.Path(os.environ['RUNNER_TEMP']).glob('playground-*.log'):
+              for line in p.read_text(errors='replace').splitlines():
+                  if 'error:' in line.lower():
+                      print('::error::' + line.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playground-package-log
+          path: ${{ runner.temp }}/playground-*.log
   ios-build:
     runs-on: macos-26
     timeout-minutes: 30
