@@ -12,7 +12,7 @@ let package = Package(
             bundleIdentifier: "com.peijungwu0302.lecturetranscriber",
             displayVersion: "1.0.0",
             bundleVersion: "1",
-            appIcon: .placeholder(icon: .book),
+            appIcon: .placeholder(icon: .star),
             supportedDeviceFamilies: [.pad, .phone],
             supportedInterfaceOrientations: [.portrait, .landscapeLeft, .landscapeRight],
             capabilities: [.microphone(purposeString: "錄製課堂聲音，在這台裝置上產生逐字稿。")]

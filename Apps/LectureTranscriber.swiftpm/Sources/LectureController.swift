@@ -90,6 +90,9 @@ final class LectureController: ObservableObject {
                 throw LectureError.message("麥克風未獲授權。請到 iPad 設定允許此 App 使用麥克風，再返回重試。")
             }
             try await loadModel(session?.model ?? model)
+            guard UIApplication.shared.applicationState == .active else {
+                throw LectureError.message("模型已就緒。請回到 App，再按開始錄音。")
+            }
             if session == nil {
                 let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
                 session = LectureSession(title: cleanTitle.isEmpty ? "課堂 \(Date().formatted(date: .abbreviated, time: .shortened))" : cleanTitle,

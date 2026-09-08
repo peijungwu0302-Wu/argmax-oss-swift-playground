@@ -50,6 +50,7 @@
 GitHub Actions 的 `Lecture App Validation` 使用雲端 Mac：
 
 - 用真實 Foundation 執行時間戳記、字幕、Unicode、匯出路徑、JSON 保存與中斷恢复測試。
+- 用 Xcode 內建 AppleProductTypes 對 App Playground 的 Package.swift 做型別檢查。
 - 用 Xcode 編譯相同 App Swift 原始碼與真正的 WhisperKit 1.1.3 iOS 相依套件。
 
 App Playground 的 AppleProductTypes 包裝、iPad 麥克風授權、模型下載／Core ML 載入、裝置上的辨識速度及音訊品質仍需真機驗證。CI 編譯成功不代表這些真機流程已測試。
