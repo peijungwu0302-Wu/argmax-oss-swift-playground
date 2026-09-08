@@ -6,6 +6,20 @@ App 1.0.1 隨專案附上藍綠色聲波圖示，修正直接建置 App Playgrou
 
 已在 iPadOS 26.6.1、iPad Air 11 吋（M2）、Swift Playgrounds 4.7 確認：原專案重新選擇預設圖示後，可正常進入課堂逐字稿主畫面。已能啟動的專案可繼續使用，不必重新下載。
 
+## App 1.1.0：即時草稿與刪除
+
+- 預設改為 Large v3 Turbo；依使用者在 M2 iPad 的辨識回饋選定，並非各裝置通用的效能保證。
+- 至少新增一秒音訊即可啟動下一輪辨識。直接顯示 WhisperKit 解碼 callback 產生的文字，每 150 ms 最多更新一次 UI；這是檢查／刷新間隔，不是保證的語音辨識延遲。
+- 同一段的草稿反覆修正；連續兩輪相同且保留兩秒後續音訊的段落可提早確認。其他段落保留原先的時間窗確認與暫停補完機制。草稿不會當作已確認文字匯出。
+- 「中英混說（中文為主）」使用中文主語言與中英提示文字；自動偵測仍是單一主語言判斷，不是兩種辨識器同時投票，也不是翻譯。英文為主的課堂可選 English。
+- 可在新課堂開始前填入人名、課名、術語；提示與最近已確認文字提供有限上下文。提示不是保證，也可能造成錯誤，應對照實際錄音。
+- 歷史紀錄新增垃圾桶與左滑刪除；確認後刪除該堂課的錄音、文字、標記及本機匯出檔。模型和其他課堂保留。錄音／辨識中的課堂須先暫停並等候作業完成。
+- 顯示本輪辨識時間與草稿所涵蓋音訊的落後秒數；「尚未定稿」包含仍保留的語境，不等於看不到文字的延遲。
+
+舊版 JSON 可讀取；但重新匯入 Playground 或改成獨立 App 可能使用不同資料容器。更新前保留原專案，重要逐字稿先匯出，不會自動搬移舊錄音或已下載模型。
+
+實作參考：[WhisperKit 官方 AudioStreamTranscriber](https://github.com/argmaxinc/argmax-oss-swift/blob/main/Sources/WhisperKit/Core/Audio/AudioStreamTranscriber.swift)。保留本 App 寫入磁碟及斷點恢復的錄音方式，參考官方逐步解碼／草稿與確認段落的區分，並非直接替換成官方全部錄音管線。尚未實作官方 eager 模式的逐字時間戳記演算法。
+
 ## 在 iPad 開啟
 
 1. 使用 Safari 下載儲存庫 `Deliverables/LectureTranscriber.zip`。
@@ -17,7 +31,7 @@ App 1.0.1 隨專案附上藍綠色聲波圖示，修正直接建置 App Playgrou
 
 ## 第一次使用
 
-1. 保持連網，在 App 內選 Small 與「中英自動」，按「載入模型」。
+1. 保持連網，在 App 內選 Large v3 Turbo 與「中英混說（中文為主）」，按「載入模型」。英文為主則改選 English。
 2. 首次需要下載 Core ML 模型與 tokenizer，並在 iPad 上準備模型，可能需要數分鐘。Large 選項的準備時間及記憶體需求更高。
 3. 輸入課堂名稱，按「開始錄音」，允許麥克風。
 4. 灰色文字是暫時結果；確認段落帶有時間，會持續儲存。
@@ -67,3 +81,5 @@ iPad 上 Swift Playgrounds 的執行、麥克風授權、模型下載／Core ML 
 
 `AppBuild/project.yml` 可用 XcodeGen 產生一般 Xcode 驗證專案；`AppTests/main.swift` 為可獨立執行的資料與時間處理測試。
 App 保留套件原有 LICENSE 與 Argmax attribution，沒有修改 WhisperKit 模型推論、解碼、tokenizer 或音訊處理原始碼。
+
+私人安裝與後續改善見 [私人安裝說明](PRIVATE_INSTALL.zh-Hant.md)。
