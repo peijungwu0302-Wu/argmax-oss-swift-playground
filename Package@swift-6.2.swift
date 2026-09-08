@@ -29,11 +29,6 @@ let package = Package(
             name: "SpeakerKit",
             targets: ["SpeakerKit"]
         ),
-        .library(
-            name: "ArgmaxOSSDynamic",
-            type: .dynamic,
-            targets: ["ArgmaxOSS"]
-        ),
         .executable(
             name: "argmax-cli",
             targets: ["ArgmaxCLI"]
