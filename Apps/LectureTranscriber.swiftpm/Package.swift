@@ -10,9 +10,9 @@ let package = Package(
             name: "課堂逐字稿",
             targets: ["AppModule"],
             bundleIdentifier: "com.peijungwu0302.lecturetranscriber",
-            displayVersion: "1.0.0",
-            bundleVersion: "1",
-            appIcon: .placeholder(icon: .star),
+            displayVersion: "1.0.1",
+            bundleVersion: "2",
+            appIcon: .asset("AppIcon"),
             supportedDeviceFamilies: [.pad, .phone],
             supportedInterfaceOrientations: [.portrait, .landscapeLeft, .landscapeRight],
             capabilities: [.microphone(purposeString: "錄製課堂聲音，在這台裝置上產生逐字稿。")]
@@ -25,7 +25,8 @@ let package = Package(
         .executableTarget(
             name: "AppModule",
             dependencies: [.product(name: "WhisperKit", package: "argmax-oss-swift-playground")],
-            path: "Sources"
+            path: "Sources",
+            resources: [.process("Assets.xcassets")]
         )
     ],
     swiftLanguageVersions: [.v5]

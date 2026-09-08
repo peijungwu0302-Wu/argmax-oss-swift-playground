@@ -7,8 +7,9 @@ root = Path(__file__).resolve().parents[1]
 app = root / "Apps" / "LectureTranscriber.swiftpm"
 destination = root / "Deliverables" / "LectureTranscriber.zip"
 destination.parent.mkdir(exist_ok=True)
-sources = [app / "Package.swift", *sorted((app / "Sources").glob("*.swift"))]
-assert len(sources) == 7, "Unexpected app source inventory"
+sources = [app / "Package.swift", *sorted(p for p in (app / "Sources").rglob("*") if p.is_file())]
+assert sum(p.suffix == ".swift" for p in sources) == 7, "Unexpected app source inventory"
+assert len(sources) == 10, "App icon catalog must be included"
 assert 'exact: "1.1.3"' in sources[0].read_text(encoding="utf-8")
 with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
     for source in sources:
@@ -21,6 +22,7 @@ with zipfile.ZipFile(destination) as archive:
     assert "LectureTranscriber.swiftpm/Package.swift" in archive.namelist()
     for entry in archive.namelist():
         assert "\\" not in entry and ".." not in entry
-        assert entry.endswith(".swift"), entry
+        assert entry.endswith((".swift", ".json", ".png")), entry
+    assert "LectureTranscriber.swiftpm/Sources/Assets.xcassets/AppIcon.appiconset/AppIcon.png" in archive.namelist()
 print(f"Packaged {len(sources)} files: {destination}")
 print(f"SHA256 {hashlib.sha256(destination.read_bytes()).hexdigest()}")
