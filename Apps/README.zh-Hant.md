@@ -2,6 +2,10 @@
 
 完整 App 位於 `LectureTranscriber.swiftpm`，套件固定使用已在 iPad 通過基本匯入測試的 WhisperKit 相容版本 `1.1.3`。
 
+App 1.0.1 隨專案附上藍綠色聲波圖示，修正直接建置 App Playground 時找不到 `__PlaceholderAppIcon` 的資源錯誤。更新時下載完整 ZIP，解壓後開啟新版專案即可，不必手動加入套件或貼程式。原有專案可保留。
+
+已在 iPadOS 26.6.1、iPad Air 11 吋（M2）、Swift Playgrounds 4.7 確認：原專案重新選擇預設圖示後，可正常進入課堂逐字稿主畫面。已能啟動的專案可繼續使用，不必重新下載。
+
 ## 在 iPad 開啟
 
 1. 使用 Safari 下載儲存庫 `Deliverables/LectureTranscriber.zip`。
@@ -52,8 +56,10 @@ GitHub Actions 的 `Lecture App Validation` 使用雲端 Mac：
 - 用真實 Foundation 執行時間戳記、字幕、Unicode、匯出路徑、JSON 保存與中斷恢复測試。
 - 用 Xcode 內建 AppleProductTypes 對 App Playground 的 Package.swift 做型別檢查。
 - 用 Xcode 編譯相同 App Swift 原始碼與真正的 WhisperKit 1.1.3 iOS 相依套件。
+- 直接以原始 `.swiftpm/Package.swift` 建置 iOS 裝置版本，涵蓋 App 圖示與資源處理。
+- 直接建置 `.swiftpm` 模擬器版本，安裝、啟動並保存畫面；另以 UI 測試確認主畫面及歷史紀錄導覽。
 
-App Playground 的 AppleProductTypes 包裝、iPad 麥克風授權、模型下載／Core ML 載入、裝置上的辨識速度及音訊品質仍需真機驗證。CI 編譯成功不代表這些真機流程已測試。
+iPad 上 Swift Playgrounds 的執行、麥克風授權、模型下載／Core ML 載入、装置上的辨識速度及音訊品質仍需真機驗證。CI 編譯與模擬器啟動成功不代表這些真機流程已測試。
 
 建議真機一次驗收：錄中英文各 15 秒 → 標記 → 暫停 → 繼續 10 秒 → 暫停 → 匯出三種格式 → 重開 App 讀取歷史紀錄。
 
