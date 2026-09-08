@@ -23,9 +23,19 @@ struct WindowDecision {
     var confirmed: [TranscriptLine]
     var provisional: [TranscriptLine]
     var consumed: Int
-    static func make(lines: [TranscriptLine], samples: Int, offset: Double, final: Bool) -> WindowDecision {
+    static func make(lines: [TranscriptLine], samples: Int, offset: Double, final: Bool, previous: [TranscriptLine] = []) -> WindowDecision {
         let cutoff = offset + Double(samples) / 16000 - 2
         var confirmed = samples >= 12 * 16000 ? lines.filter { $0.end <= cutoff } : []
+        // Earlier confirmation requires agreement across successive decodes, with right context.
+        // Compare only a contiguous prefix so we never skip unconfirmed audio in the middle.
+        if confirmed.isEmpty && samples >= 3 * 16000 {
+            for (line, old) in zip(lines, previous) {
+                guard line.end <= cutoff,
+                      abs(line.start - old.start) <= 0.5, abs(line.end - old.end) <= 0.5,
+                      line.text.trimmingCharacters(in: .whitespacesAndNewlines) == old.text.trimmingCharacters(in: .whitespacesAndNewlines) else { break }
+                confirmed.append(line)
+            }
+        }
         var consumed = 0
         if final || (samples == 26 * 16000 && confirmed.isEmpty) {
             confirmed = lines; consumed = samples
@@ -44,6 +54,7 @@ struct LectureSession: Codable, Identifiable, Sendable {
     var createdAt = Date()
     var model: String
     var language: String
+    var vocabulary: String? = nil
     var parts: [AudioPart] = []
     var lines: [TranscriptLine] = []
     var bookmarks: [Bookmark] = []
@@ -130,6 +141,18 @@ struct SessionStore {
     }
     func audioURL(_ session: LectureSession, _ part: AudioPart) -> URL {
         folder(session.id).appendingPathComponent(part.fileName)
+    }
+    func delete(_ id: UUID) throws {
+        // Derive the destination solely from the session UUID, never a title or imported filename.
+        let destination = folder(id).standardizedFileURL
+        guard destination.deletingLastPathComponent().path == root.standardizedFileURL.path,
+              destination.resolvingSymlinksInPath().lastPathComponent == id.uuidString,
+              destination.resolvingSymlinksInPath().deletingLastPathComponent().path == root.resolvingSymlinksInPath().standardizedFileURL.path else {
+            throw LectureError.message("錄音位置不正確，無法刪除。")
+        }
+        if FileManager.default.fileExists(atPath: destination.path) {
+            try FileManager.default.removeItem(at: destination)
+        }
     }
     func export(_ session: LectureSession, format: TranscriptFormat) throws -> URL {
         let name = session.title.components(separatedBy: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_ ")).inverted)

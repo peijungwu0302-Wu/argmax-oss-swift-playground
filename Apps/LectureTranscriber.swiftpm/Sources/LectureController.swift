@@ -6,8 +6,9 @@ import UIKit
 final class LectureController: ObservableObject {
     @Published var session: LectureSession?
     @Published var history: [LectureSession] = []
-    @Published var model = SpeechModel.small.rawValue
-    @Published var language = "auto"
+    @Published var model = SpeechModel.turbo.rawValue
+    @Published var language = "mixed"
+    @Published var vocabulary = ""
     @Published var title = ""
     @Published var status = "先載入模型，再開始錄音"
     @Published var progress: Double?
@@ -17,6 +18,9 @@ final class LectureController: ObservableObject {
     @Published var isDecoding = false
     @Published var level: Float = 0
     @Published var provisional: [TranscriptLine] = []
+    @Published var liveDraft = ""
+    @Published var lastDecodeSeconds: Double?
+    @Published var draftAudioEnd: Double = 0
     @Published var errorMessage: String?
     @Published var lastSaved: Date?
     @Published var search = ""
@@ -30,6 +34,9 @@ final class LectureController: ObservableObject {
     private var lastPreviewSample = 0
     private var observers: [NSObjectProtocol] = []
     private var saveCounter = 0
+    private var activeDecodeID: UUID?
+    private var draftRevision = 0
+    private var previousHypothesis: [TranscriptLine] = []
 
     init() {
         do {
@@ -59,6 +66,9 @@ final class LectureController: ObservableObject {
     }
     var canStart: Bool { !isBusy && !isRecording && worker == nil && !(session?.hasPendingAudio ?? false) }
     var settingsLocked: Bool { isBusy || isRecording || session != nil }
+    var canManageSessions: Bool { !isRecording && !isBusy && worker == nil }
+    var displayedDraft: String { liveDraft.isEmpty ? provisional.map(\.text).joined(separator: " ") : liveDraft }
+    var draftBehindSeconds: Double { max(0, duration - draftAudioEnd) }
 
     func prepareModel() async {
         guard !isBusy, !isRecording, worker == nil else { return }
@@ -96,7 +106,7 @@ final class LectureController: ObservableObject {
             if session == nil {
                 let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
                 session = LectureSession(title: cleanTitle.isEmpty ? "課堂 \(Date().formatted(date: .abbreviated, time: .shortened))" : cleanTitle,
-                    model: model, language: language)
+                    model: model, language: language, vocabulary: vocabulary)
             }
             guard var current = session else { return }
             let part = AudioPart(fileName: UUID().uuidString + ".pcm", offset: current.duration)
@@ -112,6 +122,7 @@ final class LectureController: ObservableObject {
             }
             activePartID = part.id
             lastPreviewSample = 0
+            previousHypothesis = []; liveDraft = ""; draftAudioEnd = part.offset
             isRecording = true; status = "正在錄音 · 聲音只保存在本機"
             UIApplication.shared.isIdleTimerDisabled = true
             meter = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
@@ -141,8 +152,8 @@ final class LectureController: ObservableObject {
                 updateAudioCount()
                 guard let current = session, let part = current.parts.last else { break }
                 let available = part.sampleCount - part.processedSamples
-                let enoughNewAudio = part.sampleCount - lastPreviewSample >= 3 * 16000
-                if available >= 3 * 16000 && (enoughNewAudio || available >= 26 * 16000) {
+                let enoughNewAudio = part.sampleCount - lastPreviewSample >= 16000
+                if available >= 16000 && (enoughNewAudio || available >= 26 * 16000) {
                     lastPreviewSample = part.sampleCount
                     try await decodePart(part.id, final: false)
                 } else {
@@ -169,12 +180,27 @@ final class LectureController: ObservableObject {
         let count = min(26 * 16000, available)
         let offset = part.offset + Double(part.processedSamples) / 16000
         isDecoding = true
-        defer { isDecoding = false }
+        let request = UUID()
+        activeDecodeID = request; draftRevision = 0; liveDraft = ""
+        let started = Date()
+        defer { isDecoding = false; activeDecodeID = nil; liveDraft = "" }
         let lines = try await engine.transcribe(file: store.audioURL(current, part), start: part.processedSamples,
-            count: count, offset: offset, language: current.language)
+            count: count, offset: offset, language: current.language,
+            vocabulary: current.vocabulary ?? "", context: current.lines.suffix(2).map(\.text).joined(separator: " "), final: final) { [weak self] text, revision in
+                Task { @MainActor in
+                    guard let self, self.activeDecodeID == request, self.session?.id == current.id,
+                          revision > self.draftRevision else { return }
+                    self.draftRevision = revision; self.liveDraft = text
+                    self.draftAudioEnd = offset + Double(count) / 16000
+                }
+            }
         guard session?.id == current.id, let index = session?.parts.firstIndex(where: { $0.id == id }) else { return }
-        let decision = WindowDecision.make(lines: lines, samples: count, offset: offset, final: final && count == available)
+        lastDecodeSeconds = Date().timeIntervalSince(started)
+        draftAudioEnd = offset + Double(count) / 16000
+        let decision = WindowDecision.make(lines: lines, samples: count, offset: offset, final: final && count == available,
+                                           previous: previousHypothesis)
         provisional = decision.provisional
+        previousHypothesis = decision.provisional
         if decision.consumed > 0 {
             // Audio count may have increased while decoding; mutate the live session.
             session?.lines.append(contentsOf: decision.confirmed)
@@ -229,6 +255,7 @@ final class LectureController: ObservableObject {
             try await decodePart(part.id, final: true)
         }
         provisional = []
+        liveDraft = ""; previousHypothesis = []
         persist()
     }
 
@@ -261,18 +288,35 @@ final class LectureController: ObservableObject {
         guard !isRecording, !isBusy, worker == nil else { return }
         persist(); reloadHistory()
         session = nil; title = ""; provisional = []; search = ""
+        liveDraft = ""; previousHypothesis = []; lastDecodeSeconds = nil; draftAudioEnd = 0; lastSaved = nil
         status = "準備新的一堂課"
     }
     func open(_ saved: LectureSession) {
         guard !isRecording, !isBusy, worker == nil else { return }
         session = saved; title = saved.title; model = saved.model; language = saved.language
+        vocabulary = saved.vocabulary ?? ""
         provisional = []; search = ""
+        liveDraft = ""; previousHypothesis = []; lastDecodeSeconds = nil; draftAudioEnd = saved.duration
         status = saved.hasPendingAudio ? "找到尚未完成的錄音，請按補辨識" : "已開啟本機逐字稿，可繼續錄音"
     }
     func export(_ format: TranscriptFormat) -> URL? {
         guard let session, let store else { return nil }
         do { return try store.export(session, format: format) }
         catch { fail("匯出失敗。", error); return nil }
+    }
+    func deleteLecture(_ id: UUID) {
+        guard canManageSessions, let store else { return }
+        do {
+            try store.delete(id)
+            if session?.id == id {
+                // Do not call newLecture(): its persistence would recreate the deleted folder.
+                session = nil; title = ""; provisional = []; liveDraft = ""; search = ""
+                previousHypothesis = []; activeDecodeID = nil; lastSaved = nil
+                lastDecodeSeconds = nil; draftAudioEnd = 0
+                status = "錄音與逐字稿已刪除"
+            }
+            reloadHistory()
+        } catch { fail("刪除失敗，請重試。", error) }
     }
     private func persist() {
         guard let session, let store else { return }

@@ -11,6 +11,7 @@ struct ContentView: View {
     @State private var sharedFile: SharedFile?
     @State private var editedLine: TranscriptLine?
     @State private var followLatest = true
+    @State private var pendingDeletion: LectureSession?
     private let ink = Color(red: 0.09, green: 0.20, blue: 0.24)
     private let teal = Color(red: 0.02, green: 0.43, blue: 0.43)
 
@@ -28,11 +29,11 @@ struct ContentView: View {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button { controller.reloadHistory(); showHistory = true } label: {
                         Label("歷史紀錄", systemImage: "books.vertical")
-                    }.disabled(controller.isRecording || controller.isBusy)
+                    }.disabled(!controller.canManageSessions)
                 }
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
                     Button { controller.newLecture() } label: { Label("新課堂", systemImage: "square.and.pencil") }
-                        .disabled(controller.isRecording || controller.isBusy)
+                        .disabled(!controller.canManageSessions)
                     Menu {
                         ForEach(TranscriptFormat.allCases) { format in
                             Button("匯出 \(format.rawValue)") {
@@ -73,6 +74,15 @@ struct ContentView: View {
                 HStack { settings; Spacer(); modelButton }
                 VStack(alignment: .leading) { settings; modelButton }
             }
+            DisclosureGroup("課堂專有名詞（選填）") {
+                TextField("例如：CRISPR、Cas9、gene editing", text: $controller.vocabulary, axis: .vertical)
+                    .lineLimit(2...3).textFieldStyle(.roundedBorder)
+                    .onChange(of: controller.vocabulary) { value in
+                        if value.count > 500 { controller.vocabulary = String(value.prefix(500)) }
+                    }
+                Text("提示模型辨識人名與術語，不保證逐字正確。中文為主、夾雜英文時可選中英混說。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }.font(.footnote).disabled(controller.settingsLocked)
             if controller.isBusy {
                 if let fraction = controller.progress { ProgressView(value: fraction) }
                 else { ProgressView().frame(maxWidth: .infinity, alignment: .leading) }
@@ -105,8 +115,12 @@ struct ContentView: View {
                     .contextMenu { Button("加入文字註記") { showBookmark = true } }
                 Spacer()
                 if controller.pendingSeconds > 5 {
-                    Text("待辨識 \(Int(controller.pendingSeconds)) 秒").font(.caption).foregroundStyle(.secondary)
+                    Text("尚未定稿 \(Int(controller.pendingSeconds)) 秒").font(.caption).foregroundStyle(.secondary)
                 }
+            }
+            if controller.isRecording, let seconds = controller.lastDecodeSeconds {
+                Text(String(format: "本輪辨識 %.1f 秒 · 草稿音訊落後 %.1f 秒", seconds, controller.draftBehindSeconds))
+                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
             Text("保持 App 在前景；錄音時螢幕不會自動鎖定。首次下載完成後可離線辨識。")
                 .font(.caption).foregroundStyle(.secondary)
@@ -121,7 +135,8 @@ struct ContentView: View {
                 ForEach(SpeechModel.allCases) { Text($0.title).tag($0.rawValue) }
             }
             Picker("辨識語言", selection: $controller.language) {
-                Text("中英自動").tag("auto")
+                Text("中英混說（中文為主）").tag("mixed")
+                Text("自動偵測主語言").tag("auto")
                 Text("中文").tag("zh")
                 Text("English").tag("en")
             }
@@ -144,11 +159,11 @@ struct ContentView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 16) {
-                        if controller.session?.lines.isEmpty != false && controller.provisional.isEmpty {
+                        if controller.session?.lines.isEmpty != false && controller.displayedDraft.isEmpty {
                             VStack(alignment: .leading, spacing: 14) {
                                 Image(systemName: "waveform").font(.system(size: 38)).foregroundStyle(teal)
                                 Text("把注意力留給課堂").font(.title2.bold()).foregroundStyle(ink)
-                                Text("開始錄音後，文字會分段出現。灰色內容仍在辨識，確認後會自動保存。")
+                                Text("說話時會先顯示即時草稿，再逐段確認。灰色文字會隨辨識更新，確認後會自動保存。")
                                     .foregroundStyle(.secondary)
                                 Text("音訊與逐字稿保留在這台 iPad；錄音約使用 230 MB／小時。")
                                     .font(.footnote).foregroundStyle(.secondary)
@@ -163,10 +178,10 @@ struct ContentView: View {
                             .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
                             .contextMenu { Button("編輯文字") { editedLine = line } }
                         }
-                        if controller.search.isEmpty, !controller.provisional.isEmpty {
+                        if controller.search.isEmpty, !controller.displayedDraft.isEmpty {
                             VStack(alignment: .leading, spacing: 8) {
-                                Label("辨識中，文字可能更新", systemImage: "ellipsis.bubble").font(.caption)
-                                Text(controller.provisional.map(\.text).joined(separator: " ")).lineSpacing(5)
+                                Label("即時草稿 · 文字可能修正", systemImage: "ellipsis.bubble").font(.caption)
+                                Text(controller.displayedDraft).lineSpacing(5).textSelection(.enabled)
                             }.foregroundStyle(.secondary).padding(16)
                         }
                         if let marks = controller.session?.bookmarks, !marks.isEmpty {
@@ -183,6 +198,9 @@ struct ContentView: View {
                 .onChange(of: controller.session?.lines.count) { _ in
                     if followLatest && controller.search.isEmpty { withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
                 }
+                .onChange(of: controller.displayedDraft) { _ in
+                    if followLatest && controller.search.isEmpty { proxy.scrollTo("bottom", anchor: .bottom) }
+                }
             }
             if let saved = controller.lastSaved {
                 Text("已儲存到本機 · \(saved.formatted(date: .omitted, time: .standard))")
@@ -195,19 +213,35 @@ struct ContentView: View {
             List {
                 if controller.history.isEmpty { Text("還沒有已儲存的課堂").foregroundStyle(.secondary) }
                 ForEach(controller.history) { session in
-                    Button {
-                        controller.open(session); showHistory = false
-                    } label: {
+                    HStack {
+                        Button {
+                            controller.open(session); showHistory = false
+                        } label: {
                         VStack(alignment: .leading, spacing: 6) {
                             Text(session.title).font(.headline)
                             Text("\(session.createdAt.formatted()) · \(TranscriptExport.clock(session.duration))")
                                 .font(.caption).foregroundStyle(.secondary)
                             if session.hasPendingAudio { Label("有錄音等待補辨識", systemImage: "arrow.clockwise").font(.caption) }
                         }.padding(.vertical, 5)
+                        }.buttonStyle(.plain)
+                        Spacer()
+                        Button(role: .destructive) {
+                            pendingDeletion = session
+                        } label: { Image(systemName: "trash") }
+                        .buttonStyle(.borderless).accessibilityLabel("刪除 \(session.title)")
                     }
+                    .swipeActions(allowsFullSwipe: false) { Button("刪除", role: .destructive) { pendingDeletion = session } }
+                    .disabled(!controller.canManageSessions)
                 }
             }.navigationTitle("本機課堂")
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showHistory = false } } }
+                .confirmationDialog("刪除這堂課？", isPresented: Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } }), titleVisibility: .visible) {
+                    Button("刪除錄音與逐字稿", role: .destructive) {
+                        if let item = pendingDeletion { controller.deleteLecture(item.id) }
+                        pendingDeletion = nil
+                    }
+                    Button("取消", role: .cancel) { pendingDeletion = nil }
+                } message: { Text("將刪除「\(pendingDeletion?.title ?? "")」的錄音、逐字稿、標記與本機匯出檔，無法復原。已分享出去的檔案不受影響。") }
         }
     }
 }

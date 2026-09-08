@@ -9,8 +9,8 @@ enum SpeechModel: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .base: return "Base · 較輕量"
-        case .small: return "Small · 預設"
-        case .turbo: return "Large v3 Turbo · 較高準確度"
+        case .small: return "Small · 較輕量"
+        case .turbo: return "Large v3 Turbo · 預設"
         }
     }
 }
@@ -43,19 +43,32 @@ actor WhisperEngine {
         currentModel = model
         progress("模型已就緒", 1)
     }
-    func transcribe(file: URL, start: Int, count: Int, offset: Double, language: String) async throws -> [TranscriptLine] {
+    func transcribe(file: URL, start: Int, count: Int, offset: Double, language: String,
+                    vocabulary: String, context: String, final: Bool,
+                    onDraft: @escaping @Sendable (String, Int) -> Void) async throws -> [TranscriptLine] {
         guard let kit else { throw LectureError.message("請先載入語音模型。") }
         let samples = try PCMRecorder.read(file, from: start, count: count)
         guard !samples.isEmpty else { return [] }
         let rms = sqrt(samples.reduce(Double(0)) { $0 + Double($1) * Double($1) } / Double(samples.count))
         if rms < 0.0001 { return [] }
+        // Whisper accepts one language token, not a simultaneous zh+en language selection.
+        // A Chinese-led mixed lecture uses zh plus a bilingual text prompt; task stays transcribe.
+        let prompt = [language == "mixed" ? "這是中文與 English 的課堂記錄。" : "",
+                      String(vocabulary.prefix(500)), String(context.suffix(160))]
+            .filter { !$0.isEmpty }.joined(separator: " ")
+        let tokens = kit.tokenizer.map { Array($0.encode(text: prompt).suffix(160)) }
         let options = DecodingOptions(task: .transcribe,
-            language: language == "auto" ? nil : language,
-            temperatureFallbackCount: 2,
+            language: language == "auto" ? nil : (language == "mixed" ? "zh" : language),
+            temperatureFallbackCount: final ? 2 : 1,
             usePrefillPrompt: true, detectLanguage: language == "auto",
             skipSpecialTokens: true, withoutTimestamps: false,
-            wordTimestamps: false, windowClipTime: 0, concurrentWorkerCount: 1)
-        let results = try await kit.transcribe(audioArray: samples, decodeOptions: options)
+            wordTimestamps: false, windowClipTime: 0,
+            promptTokens: prompt.isEmpty ? nil : tokens, concurrentWorkerCount: 1)
+        let relay = DraftRelay(onDraft)
+        let results = try await kit.transcribe(audioArray: samples, decodeOptions: options) { progress in
+            relay.publish(progress.text)
+            return nil
+        }
         let duration = Double(samples.count) / 16000
         return results.flatMap(\.segments).compactMap { segment in
             let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -65,5 +78,25 @@ actor WhisperEngine {
             guard end > begin else { return nil }
             return TranscriptLine(start: offset + begin, end: offset + end, text: text)
         }
+    }
+}
+
+// Decoder callbacks can arrive off the main actor. Throttle UI work and number updates
+// so a delayed callback can never overwrite a newer draft or a completed decode.
+private final class DraftRelay: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lastTime = Date.distantPast
+    private var revision = 0
+    private let callback: @Sendable (String, Int) -> Void
+    init(_ callback: @escaping @Sendable (String, Int) -> Void) { self.callback = callback }
+    func publish(_ raw: String) {
+        lock.lock(); defer { lock.unlock() }
+        let now = Date()
+        guard now.timeIntervalSince(lastTime) >= 0.15 else { return }
+        let text = raw.replacingOccurrences(of: "<\\|[^>]*\\|>", with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        lastTime = now; revision += 1
+        callback(text, revision)
     }
 }
