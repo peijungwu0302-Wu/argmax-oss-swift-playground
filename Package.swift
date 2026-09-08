@@ -144,12 +144,7 @@ let package = Package(
 )
 
 func isServerEnabled() -> Bool {
-    if let enabledValue = Context.environment["BUILD_ALL"] {
-        return enabledValue.lowercased() == "true" || enabledValue == "1"
-    }
-
-    // Default disabled, change to true temporarily for local development
-    return false
+    false
 }
 
 func swiftSettings() -> [SwiftSetting] {
