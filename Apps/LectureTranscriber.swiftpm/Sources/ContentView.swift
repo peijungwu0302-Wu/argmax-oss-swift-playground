@@ -15,6 +15,7 @@ struct ContentView: View {
     @State private var followLatest = true
     @State private var pendingDeletion: LectureSession?
     @State private var captionMode = true
+    @State private var compactMode = false
     private let paper = Color(red: 0.97, green: 0.95, blue: 0.90)
     private let ink = Color(red: 0.20, green: 0.19, blue: 0.16)
     private let gold = Color(red: 0.59, green: 0.40, blue: 0.08)
@@ -23,6 +24,9 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             GeometryReader { geometry in
+                if compactMode {
+                    compactWorkspace
+                } else {
                 ScrollView {
                     VStack(spacing: 20) {
                         recordingHeader
@@ -52,16 +56,17 @@ struct ContentView: View {
                     .frame(maxWidth: 1200)
                     .frame(maxWidth: .infinity)
                 }
+                }
             }
             .background(paper)
             .foregroundStyle(ink)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
-                    if captionMode && (controller.isRecording || !controller.caption.isEmpty) { captionPanel }
+                    if !compactMode && captionMode && (controller.isRecording || !controller.caption.isEmpty) { captionPanel }
                     bottomBar
                 }
             }
-            .navigationTitle("錄音")
+            .navigationTitle(compactMode ? "字幕" : "錄音")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -70,11 +75,16 @@ struct ContentView: View {
                     }.disabled(!controller.canManageSessions)
                 }
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
+                    Button { compactMode.toggle() } label: {
+                        Image(systemName: compactMode ? "arrow.up.left.and.arrow.down.right" : "rectangle.inset.filled")
+                    }.accessibilityLabel(compactMode ? "完整畫面" : "精簡字幕")
+                    if !compactMode {
                     Button { captionMode.toggle() } label: {
                         Image(systemName: captionMode ? "captions.bubble.fill" : "captions.bubble")
                     }.accessibilityLabel("字幕模式")
                     Button { controller.newLecture() } label: { Label("新課堂", systemImage: "square.and.pencil") }
                         .disabled(!controller.canManageSessions)
+                    }
                     Button { showSettings = true } label: { Label("錄音設定", systemImage: "slider.horizontal.3") }
                     Menu {
                         ForEach(TranscriptFormat.allCases) { format in
@@ -106,6 +116,27 @@ struct ContentView: View {
             } message: { Text(controller.errorMessage ?? "") }
         }
         .preferredColorScheme(.light)
+    }
+
+    private var compactWorkspace: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Circle().fill(controller.isRecording ? red : .gray).frame(width: 9, height: 9)
+                    Text(TranscriptExport.clock(controller.duration)).font(.title2.monospacedDigit())
+                    Spacer()
+                }
+                Text(controller.title.isEmpty ? "課堂字幕" : controller.title).font(.headline).lineLimit(1)
+                Toggle("中文翻譯", isOn: $controller.translationEnabled).tint(.green)
+                captionPanel.clipShape(RoundedRectangle(cornerRadius: 12))
+                Text(controller.status).font(.caption).foregroundStyle(.secondary)
+                if controller.translationEnabled {
+                    Text(controller.translationStatus).font(.caption).foregroundStyle(.secondary)
+                }
+                Text("在 iPad 視窗選單選「進入 Slide Over」，可與 Goodnotes 一起顯示。請保持字幕視窗可見；隱藏到背景會暫停錄音。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+        }.accessibilityIdentifier("compactCaptionWorkspace")
     }
 
     private var recordingHeader: some View {
@@ -141,7 +172,7 @@ struct ContentView: View {
                 }.pickerStyle(.segmented).disabled(!controller.canManageSessions).frame(maxWidth: 400)
                     .accessibilityIdentifier("mixedPrimaryLanguage")
             }
-            Text(RecognitionLanguage.isMixed(controller.language) ? "依實際主要語言辨識，保留另一語言；混說效果仍需核對。停止後可切換。" : "指定主要語言有助辨識。Apple 引擎使用系統支援的語言資源。")
+            Text(RecognitionLanguage.isMixed(controller.language) ? (controller.usesAppleSpeech ? "Apple 每次以一個主要語言辨識，不保證中英混說。單語課堂請選中文或英文。" : "依實際主要語言辨識；混說準確率仍需核對。停止後可切換。") : "指定主要語言有助辨識。Apple 引擎使用系統支援的語言資源。")
                 .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
             HStack(spacing: 8) {
                 if controller.isBusy || controller.isDecoding { ProgressView().controlSize(.small) }
@@ -260,6 +291,7 @@ struct ContentView: View {
 
     private var bottomBar: some View {
         VStack(spacing: 10) {
+            if !compactMode {
             HStack(spacing: 12) {
                 Button {
                     if let url = controller.exportNotes(translation: true) { sharedFile = SharedFile(url: url) }
@@ -272,6 +304,7 @@ struct ContentView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(controller.session?.lines.isEmpty != false)
             }.font(.callout)
+            }
             HStack(spacing: 12) {
                 Button {
                     Task {

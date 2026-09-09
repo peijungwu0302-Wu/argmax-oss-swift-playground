@@ -1,5 +1,7 @@
 # 課堂逐字稿 · iPad App Playground
 
+App 1.3.1 新增精簡字幕畫面，修正部分字詞時間資料缺失時漏掉文字的問題，並移除舊辨識文字的提示回饋。請讀 [1.3.1 使用與問題分析](UPDATE-1.3.1.zh-Hant.md)。仍需真機驗證英文辨識、混說與多工錄音。
+
 最新 App 1.3.0 已新增 Apple SpeechAnalyzer 即時引擎、CC 字幕、中英夾雜主要語言選擇，並改善 Whisper 字詞確認與翻譯排程。請先讀 [1.3 使用與差距說明](UPDATE-1.3.zh-Hant.md)。[1.2 改版說明](UPDATE-1.2.zh-Hant.md) 與以下內容保留先前版本的技術背景；新版模型載入位於右上角「錄音設定」，停止按鈕為「停止並儲存」。
 
 完整 App 位於 `LectureTranscriber.swiftpm`，套件固定使用已在 iPad 通過基本匯入測試的 WhisperKit 相容版本 `1.1.3`。

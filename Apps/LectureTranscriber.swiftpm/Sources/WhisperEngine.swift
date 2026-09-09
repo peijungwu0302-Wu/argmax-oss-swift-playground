@@ -46,7 +46,7 @@ actor WhisperEngine {
         progress("模型已就緒", 1)
     }
     func transcribe(file: URL, start: Int, count: Int, offset: Double, language: String,
-                    vocabulary: String, context: String, final: Bool,
+                    vocabulary: String, final: Bool,
                     onDraft: @escaping @Sendable (String, Int) -> Void) async throws -> SpeechDecode {
         guard let kit else { throw LectureError.message("請先載入語音模型。") }
         let samples = try PCMRecorder.read(file, from: start, count: count)
@@ -55,10 +55,11 @@ actor WhisperEngine {
         if rms < 0.0001 { return SpeechDecode(lines: [], endsWithPause: true) }
         // Mixed mode is an explicit primary-language choice, not a second recognizer.
         // Do not inject a made-up bilingual sentence or reinforce earlier mixed-mode mistakes.
-        let prompt = [String(vocabulary.prefix(500)), RecognitionLanguage.isMixed(language) ? "" : String(context.suffix(160))]
-            .filter { !$0.isEmpty }.joined(separator: " ")
+        // Repeatedly conditioning on our own transcript can reinforce a mistaken
+        // phrase even after the speaker has moved on. Keep only user vocabulary.
+        let prompt = String(vocabulary.prefix(500)).trimmingCharacters(in: .whitespacesAndNewlines)
         let tokens = kit.tokenizer.map { Array($0.encode(text: prompt).suffix(160)) }
-        let options = DecodingOptions(task: .transcribe,
+        var options = DecodingOptions(task: .transcribe,
             language: RecognitionLanguage.primary(language),
             temperatureFallbackCount: final ? 2 : 0,
             usePrefillPrompt: true, detectLanguage: language == "auto",
@@ -66,9 +67,20 @@ actor WhisperEngine {
             wordTimestamps: kit.textDecoder.supportsWordTimestamps, windowClipTime: 0,
             promptTokens: prompt.isEmpty ? nil : tokens, concurrentWorkerCount: 1)
         let relay = DraftRelay(onDraft)
-        let results = try await kit.transcribe(audioArray: samples, decodeOptions: options) { progress in
+        var results = try await kit.transcribe(audioArray: samples, decodeOptions: options) { progress in
             relay.publish(progress.text)
             return nil
+        }
+        // WhisperKit filters zero-duration aligned segments. If decoding did
+        // produce text but alignment removed every segment, retry once without
+        // word alignment rather than silently losing the recognized phrase.
+        if options.wordTimestamps && !relay.latestText.isEmpty
+            && results.flatMap(\.segments).allSatisfy({ $0.end <= $0.start || $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+            options.wordTimestamps = false
+            results = try await kit.transcribe(audioArray: samples, decodeOptions: options) { progress in
+                relay.publish(progress.text)
+                return nil
+            }
         }
         let duration = Double(samples.count) / 16000
         let lines: [TranscriptLine] = results.flatMap(\.segments).compactMap { segment in
@@ -95,6 +107,8 @@ private final class DraftRelay: @unchecked Sendable {
     private let lock = NSLock()
     private var lastTime = Date.distantPast
     private var revision = 0
+    private var text = ""
+    var latestText: String { lock.lock(); defer { lock.unlock() }; return text }
     private let callback: @Sendable (String, Int) -> Void
     init(_ callback: @escaping @Sendable (String, Int) -> Void) { self.callback = callback }
     func publish(_ raw: String) {
@@ -104,6 +118,7 @@ private final class DraftRelay: @unchecked Sendable {
         let text = raw.replacingOccurrences(of: "<\\|[^>]*\\|>", with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+        self.text = text
         lastTime = now; revision += 1
         callback(text, revision)
     }

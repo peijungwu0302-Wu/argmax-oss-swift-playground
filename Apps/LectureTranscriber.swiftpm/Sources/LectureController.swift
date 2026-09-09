@@ -232,7 +232,7 @@ final class LectureController: ObservableObject {
         defer { isDecoding = false; activeDecodeID = nil; liveDraft = "" }
         let decoded = try await engine.transcribe(file: store.audioURL(current, part), start: part.processedSamples - overlap,
             count: count, offset: offset, language: current.language,
-            vocabulary: current.vocabulary ?? "", context: current.lines.suffix(2).map(\.text).joined(separator: " "), final: final) { [weak self] text, revision in
+            vocabulary: current.vocabulary ?? "", final: final) { [weak self] text, revision in
                 Task { @MainActor in
                     guard let self, self.activeDecodeID == request, self.session?.id == current.id,
                           revision > self.draftRevision else { return }

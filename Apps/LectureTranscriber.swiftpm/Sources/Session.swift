@@ -42,7 +42,11 @@ struct WindowDecision {
         }
         let words = lines.flatMap { $0.words ?? [] }
         let oldWords = previous.flatMap { $0.words ?? [] }
-        if !words.isEmpty && !oldWords.isEmpty {
+        // Prefix agreement may only use complete word metadata. Otherwise a
+        // wordless segment in the middle could be silently skipped and consumed.
+        let completeWords = !lines.isEmpty && lines.allSatisfy { $0.words?.isEmpty == false }
+        let completeOldWords = !previous.isEmpty && previous.allSatisfy { $0.words?.isEmpty == false }
+        if completeWords && completeOldWords && !words.isEmpty && !oldWords.isEmpty {
             var common: [TranscriptWord] = []
             for (word, previousWord) in zip(words, oldWords) {
                 let lhs = word.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -128,9 +132,14 @@ struct LectureSession: Codable, Identifiable, Sendable {
 
 enum CaptionText {
     static func after(_ lines: [TranscriptLine], time: Double) -> [TranscriptLine] {
-        let words = lines.flatMap { $0.words ?? [] }
-        if !words.isEmpty { return self.lines(words.filter { ($0.start + $0.end) / 2 >= time }) }
-        return lines.filter { $0.end > time }
+        // Alignment metadata can be missing for only some segments. Preserve
+        // those segments using their own time range instead of flattening them away.
+        return lines.flatMap { line -> [TranscriptLine] in
+            if let words = line.words, !words.isEmpty {
+                return self.lines(words.filter { ($0.start + $0.end) / 2 >= time })
+            }
+            return line.end > time ? [line] : []
+        }
     }
     static func lines(_ words: [TranscriptWord]) -> [TranscriptLine] {
         var output: [TranscriptLine] = []; var group: [TranscriptWord] = []

@@ -16,6 +16,16 @@ final class LaunchTests: XCTestCase {
         primary.buttons["中文為主"].tap()
         XCTAssertTrue(primary.buttons["中文為主"].isSelected)
         XCTAssertTrue(app.buttons["字幕模式"].exists)
+        app.buttons["精簡字幕"].tap()
+        XCTAssertTrue(app.scrollViews["compactCaptionWorkspace"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.textFields["課堂名稱"].exists)
+        XCTAssertTrue(app.buttons["開始錄音"].exists)
+        let compactAttachment = XCTAttachment(screenshot: app.screenshot())
+        compactAttachment.name = "Compact captions for windowed use"
+        compactAttachment.lifetime = .keepAlways
+        add(compactAttachment)
+        app.buttons["完整畫面"].tap()
+        XCTAssertTrue(app.textFields["課堂名稱"].waitForExistence(timeout: 5))
         app.buttons["錄音設定"].tap()
         XCTAssertTrue(app.buttons["載入模型"].waitForExistence(timeout: 5))
         app.buttons["完成"].tap()

@@ -122,3 +122,16 @@ grouped.appendConfirmed(CaptionText.lines(Array(words.dropFirst(2).prefix(2))))
 check(grouped.lines.count == 1 && grouped.lines[0].id == stableID && grouped.lines[0].words?.count == 4, "Short stable prefixes grow into the same readable caption")
 check(grouped.translations?.isEmpty == true, "A growing caption must invalidate its previous partial translation")
 print("PASS: primary languages, word agreement, pause endpoints, overlap deduplication and CC captions")
+
+let unalignedEnglish = TranscriptLine(start: 2.4, end: 3.4, text: "English without alignment")
+let mixedMetadata = hypothesis + [unalignedEnglish]
+let filteredMetadata = CaptionText.after(mixedMetadata, time: 0.8)
+check(filteredMetadata.contains(where: { $0.id == unalignedEnglish.id }), "An unaligned English segment must survive alongside aligned segments")
+check(filteredMetadata.flatMap { $0.words ?? [] } == Array(words.dropFirst(2)), "Metadata fallback must still remove the aligned overlap")
+let unalignedBeginning = TranscriptLine(start: 0, end: 0.2, text: "Keep this opening")
+let metadataGap = [unalignedBeginning] + hypothesis
+let gapDecision = WindowDecision.make(lines: metadataGap, samples: 4 * 16000, offset: 0, final: false, previous: metadataGap)
+check(gapDecision.confirmed.first?.id == unalignedBeginning.id, "Word agreement must not consume an unaligned opening without saving it")
+let removedOld = CaptionText.after([TranscriptLine(start: 0, end: 0.5, text: "old"), unalignedEnglish], time: 0.8)
+check(removedOld == [unalignedEnglish], "Unaligned segment fallback still respects its segment boundary")
+print("PASS: partial alignment metadata does not erase English segments or skip unsaved audio")
