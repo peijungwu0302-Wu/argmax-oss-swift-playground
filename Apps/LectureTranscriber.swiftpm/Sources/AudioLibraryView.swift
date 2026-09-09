@@ -38,6 +38,9 @@ struct AudioLibraryView: View {
             .alert("音訊檔案", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
                 Button("知道了") { problem = nil }
             } message: { Text(problem ?? "") }
+            .onReceive(Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()) { _ in
+                if playing != nil && player?.isPlaying != true { playing = nil }
+            }
             .onDisappear { player?.stop(); player = nil; playing = nil }
     }
     private func fileSize(_ url: URL) -> Int64 {

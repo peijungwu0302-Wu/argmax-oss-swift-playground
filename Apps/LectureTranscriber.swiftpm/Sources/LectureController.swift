@@ -229,6 +229,7 @@ final class LectureController: ObservableObject {
                 session = LectureSession(title: cleanTitle.isEmpty ? "課堂 \(Date().formatted(date: .abbreviated, time: .shortened))" : cleanTitle,
                     model: model, language: language, vocabulary: vocabulary, recognitionEngine: recognitionEngine)
             }
+            session?.translationSource = translationSource
             guard var current = session else { return }
             let part = AudioPart(fileName: UUID().uuidString + ".pcm16", offset: current.duration,
                 languageChanges: usesAppleSpeech ? [AudioLanguageChange(sample: 0, language: current.language)] : nil,
@@ -529,6 +530,7 @@ final class LectureController: ObservableObject {
         isBusy = true; status = "正在匯入並轉成辨識音訊，請保持 App 開啟…"
         var imported = LectureSession(title: source.deletingPathExtension().lastPathComponent,
             model: model, language: language, vocabulary: vocabulary, recognitionEngine: recognitionEngine)
+        imported.translationSource = translationSource
         let part = AudioPart(fileName: UUID().uuidString + ".pcm16", offset: 0, recordingQuality: recordingQuality)
         let access = source.startAccessingSecurityScopedResource()
         defer { if access { source.stopAccessingSecurityScopedResource() }; isBusy = false }

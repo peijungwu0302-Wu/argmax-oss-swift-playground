@@ -47,12 +47,14 @@ final class AudioAndCaptionTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: original) }
         let controller = LectureController()
         controller.recognitionEngine = "sensevoice"
+        controller.translationSource = "ja"
         await controller.importAudio(original)
         let lecture = try XCTUnwrap(controller.session)
         defer { controller.deleteLecture(lecture.id) }
         XCTAssertEqual(lecture.parts[0].sampleCount, 32000)
         XCTAssertTrue(lecture.hasPendingAudio)
         XCTAssertEqual(lecture.recognitionEngine, "sensevoice")
+        XCTAssertEqual(lecture.translationSource, "ja")
         XCTAssertEqual(try Data(contentsOf: original), data)
         let file = try XCTUnwrap(controller.audioURL(lecture, lecture.parts[0]))
         let wav = try StoredAudio.playable(file, samples: 32000)
