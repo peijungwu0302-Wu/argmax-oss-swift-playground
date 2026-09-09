@@ -1,0 +1,828 @@
+{
+  "model": "paraformer",
+  "runtime": "1.13.7",
+  "python": "3.13.13",
+  "platform": "Windows",
+  "threads": 2,
+  "provider": "cpu",
+  "load_seconds": 5.773018199950457,
+  "model_files": [
+    {
+      "name": "decoder.int8.onnx",
+      "bytes": 71664561,
+      "sha256": "f3cca9f77bb9d93c8fcbfb63ae617b6b1ee96818df3aa3b151c40658fe38594f"
+    },
+    {
+      "name": "encoder.int8.onnx",
+      "bytes": 165462184,
+      "sha256": "81a70226a8934e6ed92aa1d4fc486b428b5398e2f2619ed4897b7294cab90e9a"
+    },
+    {
+      "name": "tokens.txt",
+      "bytes": 75756,
+      "sha256": "59aba8873a2ed1e122c25fee421e25f283b63290efbde85c1f01a853d83cb6e6"
+    }
+  ],
+  "clips": [
+    {
+      "file": "0.wav",
+      "sha256": "7d93384ca14702cc584a7a33fe2fed92e89e708549161cb12ea38c916882103b",
+      "trials": [
+        {
+          "paced": false,
+          "audio_seconds": 10.053125,
+          "wall_seconds": 2.3749121001455933,
+          "compute_seconds": 2.3737791005987674,
+          "compute_rtf": 0.23612350394516804,
+          "first_nonempty": {
+            "audio_supplied_seconds": 1.4,
+            "wall_seconds": 0.2505,
+            "text": "昨"
+          },
+          "max_processing_backlog_seconds": null,
+          "p95_chunk_compute_seconds": 0.1508190199965611,
+          "final_text": "昨天是 monday today is 零八二 the day after tomorrow 是星期三",
+          "events": [
+            {
+              "audio_supplied_seconds": 1.4,
+              "wall_seconds": 0.2505,
+              "text": "昨"
+            },
+            {
+              "audio_supplied_seconds": 2.0,
+              "wall_seconds": 0.4012,
+              "text": "昨天是"
+            },
+            {
+              "audio_supplied_seconds": 2.6,
+              "wall_seconds": 0.541,
+              "text": "昨天是 mon"
+            },
+            {
+              "audio_supplied_seconds": 3.2,
+              "wall_seconds": 0.676,
+              "text": "昨天是 monday"
+            },
+            {
+              "audio_supplied_seconds": 4.4,
+              "wall_seconds": 0.9074,
+              "text": "昨天是 monday today"
+            },
+            {
+              "audio_supplied_seconds": 5.0,
+              "wall_seconds": 1.0613,
+              "text": "昨天是 monday today is"
+            },
+            {
+              "audio_supplied_seconds": 6.2,
+              "wall_seconds": 1.2891,
+              "text": "昨天是 monday today is 零八二"
+            },
+            {
+              "audio_supplied_seconds": 7.4,
+              "wall_seconds": 1.5033,
+              "text": "昨天是 monday today is 零八二 the day"
+            },
+            {
+              "audio_supplied_seconds": 8.0,
+              "wall_seconds": 1.6683,
+              "text": "昨天是 monday today is 零八二 the day after"
+            },
+            {
+              "audio_supplied_seconds": 8.6,
+              "wall_seconds": 1.8255,
+              "text": "昨天是 monday today is 零八二 the day after tomorrow"
+            },
+            {
+              "audio_supplied_seconds": 9.2,
+              "wall_seconds": 1.9581,
+              "text": "昨天是 monday today is 零八二 the day after tomorrow 是"
+            },
+            {
+              "audio_supplied_seconds": 9.8,
+              "wall_seconds": 2.1097,
+              "text": "昨天是 monday today is 零八二 the day after tomorrow 是星期"
+            },
+            {
+              "audio_supplied_seconds": 10.4,
+              "wall_seconds": 2.2584,
+              "text": "昨天是 monday today is 零八二 the day after tomorrow 是星期三"
+            }
+          ]
+        },
+        {
+          "paced": false,
+          "audio_seconds": 10.053125,
+          "wall_seconds": 2.4992533000186086,
+          "compute_seconds": 2.497749599162489,
+          "compute_rtf": 0.248455042502952,
+          "first_nonempty": {
+            "audio_supplied_seconds": 1.4,
+            "wall_seconds": 0.2894,
+            "text": "昨"
+          },
+          "max_processing_backlog_seconds": null,
+          "p95_chunk_compute_seconds": 0.15421241999138147,
+          "final_text": "昨天是 monday today is 零八二 the day after tomorrow 是星期三",
+          "events": [
+            {
+              "audio_supplied_seconds": 1.4,
+              "wall_seconds": 0.2894,
+              "text": "昨"
+            },
+            {
+              "audio_supplied_seconds": 2.0,
+              "wall_seconds": 0.4569,
+              "text": "昨天是"
+            },
+            {
+              "audio_supplied_seconds": 2.6,
+              "wall_seconds": 0.5973,
+              "text": "昨天是 mon"
+            },
+            {
+              "audio_supplied_seconds": 3.2,
+              "wall_seconds": 0.7553,
+              "text": "昨天是 monday"
+            },
+            {
+              "audio_supplied_seconds": 4.4,
+              "wall_seconds": 1.0216,
+              "text": "昨天是 monday today"
+            },
+            {
+              "audio_supplied_seconds": 5.0,
+              "wall_seconds": 1.1779,
+              "text": "昨天是 monday today is"
+            },
+            {
+              "audio_supplied_seconds": 6.2,
+              "wall_seconds": 1.4563,
+              "text": "昨天是 monday today is 零八二"
+            },
+            {
+              "audio_supplied_seconds": 7.4,
+              "wall_seconds": 1.6976,
+              "text": "昨天是 monday today is 零八二 the day"
+            },
+            {
+              "audio_supplied_seconds": 8.0,
+              "wall_seconds": 1.8327,
+              "text": "昨天是 monday today is 零八二 the day after"
+            },
+            {
+              "audio_supplied_seconds": 8.6,
+              "wall_seconds": 1.9755,
+              "text": "昨天是 monday today is 零八二 the day after tomorrow"
+            },
+            {
+              "audio_supplied_seconds": 9.2,
+              "wall_seconds": 2.1023,
+              "text": "昨天是 monday today is 零八二 the day after tomorrow 是"
+            },
+            {
+              "audio_supplied_seconds": 9.8,
+              "wall_seconds": 2.2516,
+              "text": "昨天是 monday today is 零八二 the day after tomorrow 是星期"
+            },
+            {
+              "audio_supplied_seconds": 10.4,
+              "wall_seconds": 2.3859,
+              "text": "昨天是 monday today is 零八二 the day after tomorrow 是星期三"
+            }
+          ]
+        }
+      ],
+      "paced": {
+        "paced": true,
+        "audio_seconds": 10.053125,
+        "wall_seconds": 10.939361300086603,
+        "compute_seconds": 1.9899061999749392,
+        "compute_rtf": 0.19793906869505146,
+        "first_nonempty": {
+          "audio_supplied_seconds": 1.4,
+          "wall_seconds": 1.5258,
+          "text": "昨"
+        },
+        "max_processing_backlog_seconds": 0.13777530002407712,
+        "p95_chunk_compute_seconds": 0.12082045997958629,
+        "final_text": "昨天是 monday today is 零八二 the day after tomorrow 是星期三",
+        "events": [
+          {
+            "audio_supplied_seconds": 1.4,
+            "wall_seconds": 1.5258,
+            "text": "昨"
+          },
+          {
+            "audio_supplied_seconds": 2.0,
+            "wall_seconds": 2.1108,
+            "text": "昨天是"
+          },
+          {
+            "audio_supplied_seconds": 2.6,
+            "wall_seconds": 2.7239,
+            "text": "昨天是 mon"
+          },
+          {
+            "audio_supplied_seconds": 3.2,
+            "wall_seconds": 3.3058,
+            "text": "昨天是 monday"
+          },
+          {
+            "audio_supplied_seconds": 4.4,
+            "wall_seconds": 4.5177,
+            "text": "昨天是 monday today"
+          },
+          {
+            "audio_supplied_seconds": 5.0,
+            "wall_seconds": 5.1104,
+            "text": "昨天是 monday today is"
+          },
+          {
+            "audio_supplied_seconds": 6.2,
+            "wall_seconds": 6.3378,
+            "text": "昨天是 monday today is 零八二"
+          },
+          {
+            "audio_supplied_seconds": 7.4,
+            "wall_seconds": 7.5107,
+            "text": "昨天是 monday today is 零八二 the day"
+          },
+          {
+            "audio_supplied_seconds": 8.0,
+            "wall_seconds": 8.1174,
+            "text": "昨天是 monday today is 零八二 the day after"
+          },
+          {
+            "audio_supplied_seconds": 8.6,
+            "wall_seconds": 8.7206,
+            "text": "昨天是 monday today is 零八二 the day after tomorrow"
+          },
+          {
+            "audio_supplied_seconds": 9.2,
+            "wall_seconds": 9.3126,
+            "text": "昨天是 monday today is 零八二 the day after tomorrow 是"
+          },
+          {
+            "audio_supplied_seconds": 9.8,
+            "wall_seconds": 9.9182,
+            "text": "昨天是 monday today is 零八二 the day after tomorrow 是星期"
+          },
+          {
+            "audio_supplied_seconds": 10.4,
+            "wall_seconds": 10.5117,
+            "text": "昨天是 monday today is 零八二 the day after tomorrow 是星期三"
+          }
+        ]
+      }
+    },
+    {
+      "file": "1.wav",
+      "sha256": "8bfb42c963e623ebab31b81ff4404867d07d3102507c87ac14577c4c61663b8c",
+      "trials": [
+        {
+          "paced": false,
+          "audio_seconds": 5.1,
+          "wall_seconds": 1.1843381999060512,
+          "compute_seconds": 1.1837780005298555,
+          "compute_rtf": 0.2321133334372266,
+          "first_nonempty": {
+            "audio_supplied_seconds": 1.4,
+            "wall_seconds": 0.2091,
+            "text": "这这是"
+          },
+          "max_processing_backlog_seconds": null,
+          "p95_chunk_compute_seconds": 0.14484528508037328,
+          "final_text": "这这是第一种第二种叫呃与 always o s 什么意思啊",
+          "events": [
+            {
+              "audio_supplied_seconds": 1.4,
+              "wall_seconds": 0.2091,
+              "text": "这这是"
+            },
+            {
+              "audio_supplied_seconds": 2.0,
+              "wall_seconds": 0.3282,
+              "text": "这这是第一种第"
+            },
+            {
+              "audio_supplied_seconds": 2.6,
+              "wall_seconds": 0.476,
+              "text": "这这是第一种第二种"
+            },
+            {
+              "audio_supplied_seconds": 3.2,
+              "wall_seconds": 0.6193,
+              "text": "这这是第一种第二种叫"
+            },
+            {
+              "audio_supplied_seconds": 3.8,
+              "wall_seconds": 0.7633,
+              "text": "这这是第一种第二种叫呃与"
+            },
+            {
+              "audio_supplied_seconds": 4.4,
+              "wall_seconds": 0.8825,
+              "text": "这这是第一种第二种叫呃与 always"
+            },
+            {
+              "audio_supplied_seconds": 5.0,
+              "wall_seconds": 1.0035,
+              "text": "这这是第一种第二种叫呃与 always o s 什"
+            },
+            {
+              "audio_supplied_seconds": 5.6,
+              "wall_seconds": 1.1834,
+              "text": "这这是第一种第二种叫呃与 always o s 什么意思啊"
+            }
+          ]
+        },
+        {
+          "paced": false,
+          "audio_seconds": 5.1,
+          "wall_seconds": 1.2261022999882698,
+          "compute_seconds": 1.2255737998057157,
+          "compute_rtf": 0.24030858819719916,
+          "first_nonempty": {
+            "audio_supplied_seconds": 1.4,
+            "wall_seconds": 0.242,
+            "text": "这这是"
+          },
+          "max_processing_backlog_seconds": null,
+          "p95_chunk_compute_seconds": 0.15141632489394397,
+          "final_text": "这这是第一种第二种叫呃与 always o s 什么意思啊",
+          "events": [
+            {
+              "audio_supplied_seconds": 1.4,
+              "wall_seconds": 0.242,
+              "text": "这这是"
+            },
+            {
+              "audio_supplied_seconds": 2.0,
+              "wall_seconds": 0.3946,
+              "text": "这这是第一种第"
+            },
+            {
+              "audio_supplied_seconds": 2.6,
+              "wall_seconds": 0.528,
+              "text": "这这是第一种第二种"
+            },
+            {
+              "audio_supplied_seconds": 3.2,
+              "wall_seconds": 0.6501,
+              "text": "这这是第一种第二种叫"
+            },
+            {
+              "audio_supplied_seconds": 3.8,
+              "wall_seconds": 0.8157,
+              "text": "这这是第一种第二种叫呃与"
+            },
+            {
+              "audio_supplied_seconds": 4.4,
+              "wall_seconds": 0.9677,
+              "text": "这这是第一种第二种叫呃与 always"
+            },
+            {
+              "audio_supplied_seconds": 5.0,
+              "wall_seconds": 1.0959,
+              "text": "这这是第一种第二种叫呃与 always o s 什"
+            },
+            {
+              "audio_supplied_seconds": 5.6,
+              "wall_seconds": 1.225,
+              "text": "这这是第一种第二种叫呃与 always o s 什么意思啊"
+            }
+          ]
+        }
+      ],
+      "paced": {
+        "paced": true,
+        "audio_seconds": 5.1,
+        "wall_seconds": 5.900813100161031,
+        "compute_seconds": 1.0288670998997986,
+        "compute_rtf": 0.2017386470391762,
+        "first_nonempty": {
+          "audio_supplied_seconds": 1.4,
+          "wall_seconds": 1.5192,
+          "text": "这这是"
+        },
+        "max_processing_backlog_seconds": 0.12632650001905876,
+        "p95_chunk_compute_seconds": 0.11887269483413547,
+        "final_text": "这这是第一种第二种叫呃与 always o s 什么意思啊",
+        "events": [
+          {
+            "audio_supplied_seconds": 1.4,
+            "wall_seconds": 1.5192,
+            "text": "这这是"
+          },
+          {
+            "audio_supplied_seconds": 2.0,
+            "wall_seconds": 2.1192,
+            "text": "这这是第一种第"
+          },
+          {
+            "audio_supplied_seconds": 2.6,
+            "wall_seconds": 2.7199,
+            "text": "这这是第一种第二种"
+          },
+          {
+            "audio_supplied_seconds": 3.2,
+            "wall_seconds": 3.3166,
+            "text": "这这是第一种第二种叫"
+          },
+          {
+            "audio_supplied_seconds": 3.8,
+            "wall_seconds": 3.9263,
+            "text": "这这是第一种第二种叫呃与"
+          },
+          {
+            "audio_supplied_seconds": 4.4,
+            "wall_seconds": 4.5058,
+            "text": "这这是第一种第二种叫呃与 always"
+          },
+          {
+            "audio_supplied_seconds": 5.0,
+            "wall_seconds": 5.1139,
+            "text": "这这是第一种第二种叫呃与 always o s 什"
+          },
+          {
+            "audio_supplied_seconds": 5.6,
+            "wall_seconds": 5.7097,
+            "text": "这这是第一种第二种叫呃与 always o s 什么意思啊"
+          }
+        ]
+      }
+    },
+    {
+      "file": "2.wav",
+      "sha256": "20805bcc696b9b65f3357a2508a419d4f33b81006d47e1312e219b0fad934d1d",
+      "trials": [
+        {
+          "paced": false,
+          "audio_seconds": 4.69,
+          "wall_seconds": 1.0827057999558747,
+          "compute_seconds": 1.0821650996804237,
+          "compute_rtf": 0.23073882722397093,
+          "first_nonempty": {
+            "audio_supplied_seconds": 0.8,
+            "wall_seconds": 0.1168,
+            "text": "这个是"
+          },
+          "max_processing_backlog_seconds": null,
+          "p95_chunk_compute_seconds": 0.1263624400133267,
+          "final_text": "这个是频繁的啊不认识接下来 frequently 频繁的",
+          "events": [
+            {
+              "audio_supplied_seconds": 0.8,
+              "wall_seconds": 0.1168,
+              "text": "这个是"
+            },
+            {
+              "audio_supplied_seconds": 1.4,
+              "wall_seconds": 0.2307,
+              "text": "这个是频繁"
+            },
+            {
+              "audio_supplied_seconds": 2.0,
+              "wall_seconds": 0.3573,
+              "text": "这个是频繁的啊不"
+            },
+            {
+              "audio_supplied_seconds": 2.6,
+              "wall_seconds": 0.4966,
+              "text": "这个是频繁的啊不认识接下"
+            },
+            {
+              "audio_supplied_seconds": 3.2,
+              "wall_seconds": 0.6133,
+              "text": "这个是频繁的啊不认识接下来 fre"
+            },
+            {
+              "audio_supplied_seconds": 3.8,
+              "wall_seconds": 0.7332,
+              "text": "这个是频繁的啊不认识接下来 frequently"
+            },
+            {
+              "audio_supplied_seconds": 4.4,
+              "wall_seconds": 0.8614,
+              "text": "这个是频繁的啊不认识接下来 frequently 频繁"
+            },
+            {
+              "audio_supplied_seconds": 5.0,
+              "wall_seconds": 0.9796,
+              "text": "这个是频繁的啊不认识接下来 frequently 频繁的"
+            }
+          ]
+        },
+        {
+          "paced": false,
+          "audio_seconds": 4.69,
+          "wall_seconds": 1.1400128998793662,
+          "compute_seconds": 1.1393048001918942,
+          "compute_rtf": 0.24292213223707762,
+          "first_nonempty": {
+            "audio_supplied_seconds": 0.8,
+            "wall_seconds": 0.1402,
+            "text": "这个是"
+          },
+          "max_processing_backlog_seconds": null,
+          "p95_chunk_compute_seconds": 0.13848490505479277,
+          "final_text": "这个是频繁的啊不认识接下来 frequently 频繁的",
+          "events": [
+            {
+              "audio_supplied_seconds": 0.8,
+              "wall_seconds": 0.1402,
+              "text": "这个是"
+            },
+            {
+              "audio_supplied_seconds": 1.4,
+              "wall_seconds": 0.2678,
+              "text": "这个是频繁"
+            },
+            {
+              "audio_supplied_seconds": 2.0,
+              "wall_seconds": 0.4076,
+              "text": "这个是频繁的啊不"
+            },
+            {
+              "audio_supplied_seconds": 2.6,
+              "wall_seconds": 0.5587,
+              "text": "这个是频繁的啊不认识接下"
+            },
+            {
+              "audio_supplied_seconds": 3.2,
+              "wall_seconds": 0.682,
+              "text": "这个是频繁的啊不认识接下来 fre"
+            },
+            {
+              "audio_supplied_seconds": 3.8,
+              "wall_seconds": 0.81,
+              "text": "这个是频繁的啊不认识接下来 frequently"
+            },
+            {
+              "audio_supplied_seconds": 4.4,
+              "wall_seconds": 0.9302,
+              "text": "这个是频繁的啊不认识接下来 frequently 频繁"
+            },
+            {
+              "audio_supplied_seconds": 5.0,
+              "wall_seconds": 1.0479,
+              "text": "这个是频繁的啊不认识接下来 frequently 频繁的"
+            }
+          ]
+        }
+      ],
+      "paced": {
+        "paced": true,
+        "audio_seconds": 4.69,
+        "wall_seconds": 5.576230000006035,
+        "compute_seconds": 1.022732999874279,
+        "compute_rtf": 0.21806673771306584,
+        "first_nonempty": {
+          "audio_supplied_seconds": 0.8,
+          "wall_seconds": 0.9105,
+          "text": "这个是"
+        },
+        "max_processing_backlog_seconds": 0.1263446998782456,
+        "p95_chunk_compute_seconds": 0.1208290149574168,
+        "final_text": "这个是频繁的啊不认识接下来 frequently 频繁的",
+        "events": [
+          {
+            "audio_supplied_seconds": 0.8,
+            "wall_seconds": 0.9105,
+            "text": "这个是"
+          },
+          {
+            "audio_supplied_seconds": 1.4,
+            "wall_seconds": 1.5241,
+            "text": "这个是频繁"
+          },
+          {
+            "audio_supplied_seconds": 2.0,
+            "wall_seconds": 2.1263,
+            "text": "这个是频繁的啊不"
+          },
+          {
+            "audio_supplied_seconds": 2.6,
+            "wall_seconds": 2.714,
+            "text": "这个是频繁的啊不认识接下"
+          },
+          {
+            "audio_supplied_seconds": 3.2,
+            "wall_seconds": 3.3157,
+            "text": "这个是频繁的啊不认识接下来 fre"
+          },
+          {
+            "audio_supplied_seconds": 3.8,
+            "wall_seconds": 3.9128,
+            "text": "这个是频繁的啊不认识接下来 frequently"
+          },
+          {
+            "audio_supplied_seconds": 4.4,
+            "wall_seconds": 4.5137,
+            "text": "这个是频繁的啊不认识接下来 frequently 频繁"
+          },
+          {
+            "audio_supplied_seconds": 5.0,
+            "wall_seconds": 5.1105,
+            "text": "这个是频繁的啊不认识接下来 frequently 频繁的"
+          }
+        ]
+      }
+    },
+    {
+      "file": "3.wav",
+      "sha256": "5851e31f3e8e5f741635da9466e19fccfbabd117ebcdc92db242c92483aee064",
+      "trials": [
+        {
+          "paced": false,
+          "audio_seconds": 8.83,
+          "wall_seconds": 1.7693763000424951,
+          "compute_seconds": 1.7684899982996285,
+          "compute_rtf": 0.20028199301241545,
+          "first_nonempty": {
+            "audio_supplied_seconds": 1.4,
+            "wall_seconds": 0.2236,
+            "text": "第一句"
+          },
+          "max_processing_backlog_seconds": null,
+          "p95_chunk_compute_seconds": 0.12952930000610646,
+          "final_text": "第一句是个什么时态加了 yes s 是一般现代式对后面它实现些商品",
+          "events": [
+            {
+              "audio_supplied_seconds": 1.4,
+              "wall_seconds": 0.2236,
+              "text": "第一句"
+            },
+            {
+              "audio_supplied_seconds": 2.0,
+              "wall_seconds": 0.3443,
+              "text": "第一句是个什么时"
+            },
+            {
+              "audio_supplied_seconds": 2.6,
+              "wall_seconds": 0.4668,
+              "text": "第一句是个什么时态加了"
+            },
+            {
+              "audio_supplied_seconds": 3.2,
+              "wall_seconds": 0.5923,
+              "text": "第一句是个什么时态加了 yes s 是"
+            },
+            {
+              "audio_supplied_seconds": 3.8,
+              "wall_seconds": 0.7201,
+              "text": "第一句是个什么时态加了 yes s 是一般现"
+            },
+            {
+              "audio_supplied_seconds": 4.4,
+              "wall_seconds": 0.8448,
+              "text": "第一句是个什么时态加了 yes s 是一般现代式对"
+            },
+            {
+              "audio_supplied_seconds": 5.0,
+              "wall_seconds": 0.9677,
+              "text": "第一句是个什么时态加了 yes s 是一般现代式对后面它"
+            },
+            {
+              "audio_supplied_seconds": 5.6,
+              "wall_seconds": 1.1063,
+              "text": "第一句是个什么时态加了 yes s 是一般现代式对后面它实现些商"
+            },
+            {
+              "audio_supplied_seconds": 6.2,
+              "wall_seconds": 1.2485,
+              "text": "第一句是个什么时态加了 yes s 是一般现代式对后面它实现些商品"
+            }
+          ]
+        },
+        {
+          "paced": false,
+          "audio_seconds": 8.83,
+          "wall_seconds": 1.8671724000014365,
+          "compute_seconds": 1.8662361009046435,
+          "compute_rtf": 0.2113517668068679,
+          "first_nonempty": {
+            "audio_supplied_seconds": 1.4,
+            "wall_seconds": 0.2293,
+            "text": "第一句"
+          },
+          "max_processing_backlog_seconds": null,
+          "p95_chunk_compute_seconds": 0.1338591200299561,
+          "final_text": "第一句是个什么时态加了 yes s 是一般现代式对后面它实现些商品",
+          "events": [
+            {
+              "audio_supplied_seconds": 1.4,
+              "wall_seconds": 0.2293,
+              "text": "第一句"
+            },
+            {
+              "audio_supplied_seconds": 2.0,
+              "wall_seconds": 0.3576,
+              "text": "第一句是个什么时"
+            },
+            {
+              "audio_supplied_seconds": 2.6,
+              "wall_seconds": 0.4816,
+              "text": "第一句是个什么时态加了"
+            },
+            {
+              "audio_supplied_seconds": 3.2,
+              "wall_seconds": 0.6151,
+              "text": "第一句是个什么时态加了 yes s 是"
+            },
+            {
+              "audio_supplied_seconds": 3.8,
+              "wall_seconds": 0.7432,
+              "text": "第一句是个什么时态加了 yes s 是一般现"
+            },
+            {
+              "audio_supplied_seconds": 4.4,
+              "wall_seconds": 0.8639,
+              "text": "第一句是个什么时态加了 yes s 是一般现代式对"
+            },
+            {
+              "audio_supplied_seconds": 5.0,
+              "wall_seconds": 1.0005,
+              "text": "第一句是个什么时态加了 yes s 是一般现代式对后面它"
+            },
+            {
+              "audio_supplied_seconds": 5.6,
+              "wall_seconds": 1.1434,
+              "text": "第一句是个什么时态加了 yes s 是一般现代式对后面它实现些商"
+            },
+            {
+              "audio_supplied_seconds": 6.2,
+              "wall_seconds": 1.2834,
+              "text": "第一句是个什么时态加了 yes s 是一般现代式对后面它实现些商品"
+            }
+          ]
+        }
+      ],
+      "paced": {
+        "paced": true,
+        "audio_seconds": 8.83,
+        "wall_seconds": 9.631282299989834,
+        "compute_seconds": 1.9590306000318378,
+        "compute_rtf": 0.2218607701055309,
+        "first_nonempty": {
+          "audio_supplied_seconds": 1.4,
+          "wall_seconds": 1.5651,
+          "text": "第一句"
+        },
+        "max_processing_backlog_seconds": 0.16507429992780098,
+        "p95_chunk_compute_seconds": 0.15461129997856915,
+        "final_text": "第一句是个什么时态加了 yes s 是一般现代式对后面它实现些商品",
+        "events": [
+          {
+            "audio_supplied_seconds": 1.4,
+            "wall_seconds": 1.5651,
+            "text": "第一句"
+          },
+          {
+            "audio_supplied_seconds": 2.0,
+            "wall_seconds": 2.1554,
+            "text": "第一句是个什么时"
+          },
+          {
+            "audio_supplied_seconds": 2.6,
+            "wall_seconds": 2.7407,
+            "text": "第一句是个什么时态加了"
+          },
+          {
+            "audio_supplied_seconds": 3.2,
+            "wall_seconds": 3.3636,
+            "text": "第一句是个什么时态加了 yes s 是"
+          },
+          {
+            "audio_supplied_seconds": 3.8,
+            "wall_seconds": 3.9502,
+            "text": "第一句是个什么时态加了 yes s 是一般现"
+          },
+          {
+            "audio_supplied_seconds": 4.4,
+            "wall_seconds": 4.5432,
+            "text": "第一句是个什么时态加了 yes s 是一般现代式对"
+          },
+          {
+            "audio_supplied_seconds": 5.0,
+            "wall_seconds": 5.1552,
+            "text": "第一句是个什么时态加了 yes s 是一般现代式对后面它"
+          },
+          {
+            "audio_supplied_seconds": 5.6,
+            "wall_seconds": 5.7343,
+            "text": "第一句是个什么时态加了 yes s 是一般现代式对后面它实现些商"
+          },
+          {
+            "audio_supplied_seconds": 6.2,
+            "wall_seconds": 6.341,
+            "text": "第一句是个什么时态加了 yes s 是一般现代式对后面它实现些商品"
+          }
+        ]
+      }
+    }
+  ],
+  "peak_process_working_set_bytes": 496828416,
+  "timing_note": "First text is measured from file playback start, not voice onset. No ground truth, WER, endpoint finalization, Apple device, or translation measurement. Peak memory covers this whole Python process."
+}
