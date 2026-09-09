@@ -74,8 +74,9 @@ jobs:
       - name: Check AAC archive on macOS
         # The desktop codec check catches archive errors before simulator startup.
         run: |
-          swiftc Apps/LectureTranscriber.swiftpm/Sources/Session.swift Apps/LectureTranscriber.swiftpm/Sources/StoredAudio.swift AppTests/AudioArchive/main.swift -o "$RUNNER_TEMP/audio-tests"
-          "$RUNNER_TEMP/audio-tests"
+          set -o pipefail
+          swiftc Apps/LectureTranscriber.swiftpm/Sources/Session.swift Apps/LectureTranscriber.swiftpm/Sources/StoredAudio.swift AppTests/AudioArchive/main.swift -o "$RUNNER_TEMP/audio-tests" 2>&1 | tee "$RUNNER_TEMP/lecture-audio.log"
+          "$RUNNER_TEMP/audio-tests" 2>&1 | tee -a "$RUNNER_TEMP/lecture-audio.log"
       - name: Type-check App Playground manifest
         run: |
           XCODE_ROOT="$(xcode-select -p)/../.."
@@ -112,5 +113,6 @@ jobs:
           name: lecture-build-log
           path: |
             ${{ runner.temp }}/lecture-build.log
+            ${{ runner.temp }}/lecture-audio.log
             ${{ runner.temp }}/lecture-launch.log
             ${{ runner.temp }}/LaunchTests.xcresult

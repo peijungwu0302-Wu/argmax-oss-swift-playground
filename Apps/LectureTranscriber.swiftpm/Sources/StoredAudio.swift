@@ -65,7 +65,9 @@ enum StoredAudio {
         guard let converter else { throw LectureError.message("AAC 編碼器不可用。") }
         var rate = UInt32(bitRate)
         try checked(AudioConverterSetProperty(converter, kAudioConverterEncodeBitRate, UInt32(MemoryLayout<UInt32>.size), &rate), "設定 AAC 品質")
-        try checked(ExtAudioFileSetProperty(file, kExtAudioFileProperty_ConverterConfig, 0, nil), "套用 AAC 品質")
+        var configuration: CFArray? = nil
+        try checked(ExtAudioFileSetProperty(file, kExtAudioFileProperty_ConverterConfig,
+            UInt32(MemoryLayout<CFArray?>.size), &configuration), "套用 AAC 品質")
         for start in stride(from: 0, to: samples, by: 16000) {
             let count = min(16000, samples - start)
             let values = try read(source, from: start, count: count)
