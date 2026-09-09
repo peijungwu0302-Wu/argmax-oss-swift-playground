@@ -85,3 +85,23 @@ python -X utf8 AppTests/ModelBenchmarks/run_streaming.py paraformer C:\path\to\M
 ```powershell
 python -X utf8 AppTests/ModelBenchmarks/run_sensevoice.py C:\path\to\ModelBenchmarks
 ```
+
+
+## App 1.4.0：原生 Swift／C 接入測試
+
+使用與 App 相同的 `SenseVoiceEngine.swift`，在 GitHub macOS 26 執行固定版本 sherpa-onnx 1.13.7／ONNX Runtime 1.28.1。模型會由 App 的下載程式取得並通過 SHA-256 驗證；音訊使用前述 `0.wav`，10.05 秒。
+
+[原生測試與逐步前綴紀錄](https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/actions/runs/34401949384/job/102635707884) 的輸出：
+
+| 設定 | 輸出 |
+|---|---|
+| 自動 `auto` | 昨天是monday，today is禮拜2，the day after tomorrow是星期三。 |
+| 中文為主 `zh` | 昨天是monday，today is禮拜2，the day after tomorrow是星期三。 |
+| 英文為主 `en` | Z天是MdayTodayday is Liangthe day after tomorrow是星3。 |
+
+這是模型的原始辨識文字（中文已按 App 設定轉繁體），**不是標準答案**。英文為主在這個中文為主樣本中明顯劣化，不能宣稱三個選項「都辨識正確」。建議先用自動，再用自己的相同錄音比較主要語言提示。
+
+自動檢查只驗證下載／原生初始化、是否有中英文字輸出、逐步餵入草稿與最後是否完整消耗音訊，沒有計算 WER／CER。原生測試成功不能代表使用者實機、教室收音、翻譯、發熱或背景錄音已通過。完整事件 JSON 在該次執行的 `sensevoice-native-benchmark` 產物中。
+
+
+同一 App 的 [iOS 模擬器原生測試](https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/actions/runs/34402552126/job/102637693663) 也已實際下載、載入並辨識同一音檔，自動模式輸出與上表自動模式一致。10.528 秒是整個測試（包含網路下載、模型初始化與辨識）的耗時，不是音訊轉錄時間或字幕延遲。iOS 執行庫可運作仍不代表 M2／iPhone 15 Pro 真機效能已實測。

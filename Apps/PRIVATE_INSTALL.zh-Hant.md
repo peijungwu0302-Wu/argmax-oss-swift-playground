@@ -1,6 +1,8 @@
-# 私人安裝：iPad 與 Windows
+# 私人安裝：iPhone／iPad 與 Windows
 
-目標是安裝到自己的 iPad 主畫面，不公開上架 App Store。GitHub 帳號是保存原始碼用；安裝時的簽署使用自己的 Apple 帳號。
+目標是安裝到自己的 iPhone／iPad 主畫面，不公開上架 App Store。GitHub 帳號是保存原始碼用；安裝時的簽署使用自己的 Apple 帳號。
+
+以下 iPad 步驟同樣適用 iPhone；iPhone 不支援 Swift Playgrounds，直接使用通用 IPA。1.4.0 的兩種裝置共用程式，並非兩套獨立專案。
 
 ## Windows 路線：AltStore Classic
 
@@ -18,9 +20,8 @@ IPA 已建置，但沒有 Apple 開發者簽章，不能在「檔案」App 點�
 
 若之後希望透過 Apple 的 TestFlight 私人安裝與更新，也不必公開上架；但需 Apple Developer Program 會員（每年 99 美元或当地定價），每個測試版本最長 90 天。這不是目前已替你開通的服務，也不是本次必要支出。[會員說明](https://developer.apple.com/programs/enroll/)／[TestFlight 說明](https://developer.apple.com/help/app-store-connect/test-a-beta-version/testflight-overview/)
 
-## 後續改善的優先次序
+## 本版與後續優先次序
 
-1. 實測目前 Turbo：分別使用中文、英文、中英混說各一分鐘，記錄第一段草稿出現時間、結束時落後秒數和錯字。比較同一段錄音，才有可用的速度／準確率結論。
-2. 比較 Apple SpeechAnalyzer。Apple 表示這套技術用於 Notes 和 Voice Memos，支援低延遲本機轉錄及可修正草稿。可評估 Apple 即時字幕配 Turbo 校對；先確認中文支援、中英切換及兩套引擎的耗能，不能預先保證更準或更快。此版本尚未整合 Apple 引擎。[Apple 官方介紹](https://developer.apple.com/videos/play/wwdc2025/277/)
-3. 加入語音活動偵測、依裝置速度調節處理間隔，減少靜音推論和長課堂發熱；保留原始音訊與補辨識能力。
-4. 加入錄音播放與文字時間軸連動、完整課堂備份／還原，以及逐堂重新辨識。背景錄音、斷線麥克風與低儲存空間需要獨立真機測試。
+App 1.4.0 已有 Apple 即時語音、WhisperKit 與 SenseVoice 實驗引擎。先用同一段中英混說比較 SenseVoice 自動、中文為主、英文為主；純單語則可沿用 Apple。實測與限制見 [1.4.0 說明](UPDATE-1.4.0.zh-Hant.md)。
+
+優先改善 iPad 的字幕穩定性、混語品質與耗電；iPhone 本次提供通用安裝檔，暫不增加手機專屬功能。背景錄音、跨 App 字幕、完整備份還原與錄音播放時間軸均不是本版已完成的功能。
