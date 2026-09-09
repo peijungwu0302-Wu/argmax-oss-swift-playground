@@ -1,5 +1,6 @@
 import XCTest
 import AVFoundation
+import CryptoKit
 @testable import LectureTranscriber
 
 final class AudioAndCaptionTests: XCTestCase {
@@ -36,6 +37,26 @@ final class AudioAndCaptionTests: XCTestCase {
         }
         XCTAssertThrowsError(try PCMRecorder.archive(source, samples: count + 16000, bitRate: 32000))
         XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+    }
+
+    func testSenseVoiceNativeIOSBilingualAudio() async throws {
+        let url = URL(string: "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/test_wavs/0.wav")!
+        let (data, response) = try await URLSession.shared.data(from: url)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        XCTAssertEqual(digest, "7d93384ca14702cc584a7a33fe2fed92e89e708549161cb12ea38c916882103b")
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+        try data.write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let samples = try StoredAudio.read(file, from: 0, count: 160850)
+        let engine = SenseVoiceEngine()
+        try await engine.load(language: "auto") { message, _ in print(message) }
+        let text = try await engine.transcribe(samples)
+        await engine.unload()
+        XCTAssertNotNil(text.range(of: "[A-Za-z]", options: .regularExpression))
+        XCTAssertNotNil(text.range(of: "[\u{4e00}-\u{9fff}]", options: .regularExpression))
+        print("PASS: iOS native SenseVoice bilingual output: \(text)")
+        // This verifies the iOS binary/runtime, not WER or real-device latency.
     }
 
     @MainActor
