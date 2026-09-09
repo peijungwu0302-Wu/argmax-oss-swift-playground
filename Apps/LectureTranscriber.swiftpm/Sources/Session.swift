@@ -43,12 +43,22 @@ struct WindowDecision {
         let words = lines.flatMap { $0.words ?? [] }
         let oldWords = previous.flatMap { $0.words ?? [] }
         if !words.isEmpty && !oldWords.isEmpty {
-            let common = zip(words, oldWords).prefix {
-                $0.0.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == $0.1.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                && abs($0.0.start - $0.1.start) < 0.8 && abs($0.0.end - $0.1.end) < 0.8
-            }.map { $0.0 }
+            var common: [TranscriptWord] = []
+            for (word, previousWord) in zip(words, oldWords) {
+                let lhs = word.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                let rhs = previousWord.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                guard lhs == rhs, abs(word.start - previousWord.start) < 0.8,
+                      abs(word.end - previousWord.end) < 0.8 else { break }
+                common.append(word)
+            }
             // Keep two agreed words and 0.8 seconds of right context open for correction.
-            let stable = Array(common.prefix(max(0, common.count - 2)).prefix { $0.end <= offset + Double(samples) / 16000 - 0.8 })
+            let stableCount = max(0, common.count - 2)
+            let wordCutoff = offset + Double(samples) / 16000.0 - 0.8
+            var stable: [TranscriptWord] = []
+            for word in common.prefix(stableCount) {
+                guard word.end <= wordCutoff else { break }
+                stable.append(word)
+            }
             if let last = stable.last, last.end > offset {
                 let consumed = min(samples, max(1, Int(((last.end - offset) * 16000).rounded())))
                 return WindowDecision(confirmed: CaptionText.lines(stable), provisional: CaptionText.lines(Array(words.dropFirst(stable.count))), consumed: consumed)

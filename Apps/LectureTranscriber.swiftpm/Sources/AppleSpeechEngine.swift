@@ -45,14 +45,16 @@ final class AppleSpeechEngine: LiveSpeechEngine {
         guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: requested) else {
             throw LectureError.message("Apple 即時引擎目前不支援所選語言 \(requested.identifier)。請改用 WhisperKit；不會擅自改成其他中文地區。")
         }
-        let module = SpeechTranscriber(locale: locale, preset: .timeIndexedProgressiveTranscription)
-        if let request = try await AssetInventory.assetInstallationRequest(supporting: [module]) {
+        let speechModule = SpeechTranscriber(locale: locale, preset: .timeIndexedProgressiveTranscription)
+        let installation = try await AssetInventory.assetInstallationRequest(supporting: [speechModule])
+        if let request = installation {
             try await request.downloadAndInstall()
         }
-        guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [module], considering: inputFormat) else {
+        let compatibleFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [speechModule], considering: inputFormat)
+        guard let format = compatibleFormat else {
             throw LectureError.message("Apple 語音資源尚未就緒，請保持連網並重新載入模型。")
         }
-        transcriber = module; outputFormat = format; preparedLanguage = language
+        transcriber = speechModule; outputFormat = format; preparedLanguage = language
     }
 
     func start(language: String, onResult: @escaping @MainActor (SpeechUpdate) -> Void) async throws {
