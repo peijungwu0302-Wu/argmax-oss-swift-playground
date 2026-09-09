@@ -127,6 +127,7 @@ struct ContentView: View {
                     Spacer()
                 }
                 Text(controller.title.isEmpty ? "課堂字幕" : controller.title).font(.headline).lineLimit(1)
+                if controller.usesAppleSpeech { appleLanguageControls }
                 Toggle("中文翻譯", isOn: $controller.translationEnabled).tint(.green)
                 captionPanel.clipShape(RoundedRectangle(cornerRadius: 12))
                 Text(controller.status).font(.caption).foregroundStyle(.secondary)
@@ -137,6 +138,26 @@ struct ContentView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
         }.accessibilityIdentifier("compactCaptionWorkspace")
+    }
+
+    private var appleLanguageControls: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Picker("Apple 辨識語言", selection: Binding(get: {
+                RecognitionLanguage.primary(controller.language) ?? "zh"
+            }, set: { controller.selectAppleLanguage($0) })) {
+                Text("中文").tag("zh")
+                Text("English").tag("en")
+            }.pickerStyle(.segmented).accessibilityIdentifier("liveAppleLanguage")
+                .disabled(controller.isBusy || controller.isSummarizing || controller.pendingAppleLanguage != nil
+                    || (!controller.isRecording && !controller.canManageSessions))
+            if let pending = controller.pendingAppleLanguage {
+                Text("切換為\(pending == "en" ? "英文" : "中文")中 · 錄音持續保存")
+                    .font(.caption).foregroundStyle(gold)
+            } else {
+                Text("錄音中可切換；請在語言改變前或停頓處按下。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
     }
 
     private var recordingHeader: some View {
@@ -153,12 +174,15 @@ struct ContentView: View {
                     .minimumScaleFactor(0.6).lineLimit(1)
                     .accessibilityLabel("錄音時間 \(TranscriptExport.clock(controller.duration))")
             }
+            if controller.usesAppleSpeech {
+                appleLanguageControls.frame(maxWidth: 560)
+            } else {
             Picker("辨識語言", selection: Binding(get: {
                 RecognitionLanguage.isMixed(controller.language) ? "mixed" : controller.language
             }, set: { value in
                 controller.setLanguage(value == "mixed" && controller.language == "en" ? "mixed-en" : value)
             })) {
-                if !controller.usesAppleSpeech { Text("自動").tag("auto") }
+                Text("自動").tag("auto")
                 Text("中英夾雜").tag("mixed")
                 Text("中文").tag("zh")
                 Text("英文").tag("en")
@@ -174,6 +198,7 @@ struct ContentView: View {
             }
             Text(RecognitionLanguage.isMixed(controller.language) ? (controller.usesAppleSpeech ? "Apple 每次以一個主要語言辨識，不保證中英混說。單語課堂請選中文或英文。" : "依實際主要語言辨識；混說準確率仍需核對。停止後可切換。") : "指定主要語言有助辨識。Apple 引擎使用系統支援的語言資源。")
                 .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            }
             HStack(spacing: 8) {
                 if controller.isBusy || controller.isDecoding { ProgressView().controlSize(.small) }
                 Text(controller.status).font(.caption).foregroundStyle(.secondary)

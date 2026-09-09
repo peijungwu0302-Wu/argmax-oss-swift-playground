@@ -9,16 +9,20 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.textFields["課堂名稱"].exists)
         XCTAssertTrue(app.staticTexts["即時逐字稿"].exists)
         XCTAssertTrue(app.switches["translationToggle"].exists)
-        let primary = app.segmentedControls["mixedPrimaryLanguage"]
+        let primary = app.segmentedControls["liveAppleLanguage"]
         XCTAssertTrue(primary.waitForExistence(timeout: 5))
-        primary.buttons["英文為主"].tap()
-        XCTAssertTrue(primary.buttons["英文為主"].isSelected)
-        primary.buttons["中文為主"].tap()
-        XCTAssertTrue(primary.buttons["中文為主"].isSelected)
+        primary.buttons["English"].tap()
+        XCTAssertTrue(primary.buttons["English"].isSelected)
+        primary.buttons["中文"].tap()
+        XCTAssertTrue(primary.buttons["中文"].isSelected)
         XCTAssertTrue(app.buttons["字幕模式"].exists)
         app.buttons["精簡字幕"].tap()
         XCTAssertTrue(app.scrollViews["compactCaptionWorkspace"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.textFields["課堂名稱"].exists)
+        let compactLanguage = app.segmentedControls["liveAppleLanguage"]
+        compactLanguage.buttons["English"].tap()
+        XCTAssertTrue(compactLanguage.buttons["English"].isSelected)
+        compactLanguage.buttons["中文"].tap()
         XCTAssertTrue(app.buttons["開始錄音"].exists)
         let compactAttachment = XCTAttachment(screenshot: app.screenshot())
         compactAttachment.name = "Compact captions for windowed use"

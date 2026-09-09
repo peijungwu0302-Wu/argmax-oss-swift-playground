@@ -30,6 +30,17 @@ struct AudioPart: Codable, Identifiable, Sendable {
     var offset: Double
     var sampleCount: Int = 0
     var processedSamples: Int = 0
+    var languageChanges: [AudioLanguageChange]? = nil
+    func language(at sample: Int, fallback: String) -> String {
+        languageChanges?.last(where: { $0.sample <= sample })?.language ?? fallback
+    }
+    func nextLanguageBoundary(after sample: Int) -> Int? {
+        languageChanges?.first(where: { $0.sample > sample })?.sample
+    }
+}
+struct AudioLanguageChange: Codable, Equatable, Sendable {
+    var sample: Int
+    var language: String
 }
 
 struct WindowDecision {

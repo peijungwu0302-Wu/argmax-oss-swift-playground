@@ -8,7 +8,7 @@ final class LectureController: ObservableObject {
     @Published var history: [LectureSession] = []
     @Published var model = SpeechModel.turbo.rawValue
     @Published var recognitionEngine = "apple"
-    @Published var language = "mixed"
+    @Published var language = "zh"
     @Published var vocabulary = ""
     @Published var title = ""
     @Published var status = "先載入模型，再開始錄音"
@@ -30,6 +30,7 @@ final class LectureController: ObservableObject {
     @Published var translatedDraft = ""
     @Published var translationDraftSource = ""
     @Published var liveDraftStart: Double = 0
+    @Published private(set) var pendingAppleLanguage: String?
     @Published var isSummarizing = false
     @Published var summaryStatus = ""
 
@@ -37,6 +38,7 @@ final class LectureController: ObservableObject {
     private let recorder = PCMRecorder()
     private var appleSpeech: (any LiveSpeechEngine)?
     private var appleCursor = 0
+    private var appleRangeStart = 0
     private var store: SessionStore?
     private var worker: Task<Void, Never>?
     private var meter: Timer?
@@ -90,6 +92,26 @@ final class LectureController: ObservableObject {
     func setLanguage(_ value: String) {
         guard canManageSessions else { return }
         language = value; session?.language = value; loadedModel = nil; persist()
+    }
+    func selectAppleLanguage(_ value: String) {
+        guard usesAppleSpeech, value == "zh" || value == "en", !isBusy,
+              !isSummarizing, pendingAppleLanguage == nil else { return }
+        guard isRecording else { setLanguage(value); return }
+        guard RecognitionLanguage.primary(language) != value,
+              let id = activePartID, let index = session?.parts.firstIndex(where: { $0.id == id }) else { return }
+        updateAudioCount()
+        guard let part = session?.parts[index] else { return }
+        // Fix the boundary at the button press. Capture continues into the same
+        // file while the old analyzer drains and the next language initializes.
+        let boundary = max(max(appleCursor, part.sampleCount), appleRangeStart + 1)
+        var changes = part.languageChanges ?? [AudioLanguageChange(sample: 0, language: language)]
+        changes.removeAll { $0.sample >= boundary }
+        changes.append(AudioLanguageChange(sample: boundary, language: value))
+        session?.parts[index].languageChanges = changes
+        session?.language = value
+        pendingAppleLanguage = value
+        status = "正在切換為\(value == "en" ? "英文" : "中文")；錄音持續保存，字幕稍後接續…"
+        persist()
     }
     func setRecognitionEngine(_ value: String) {
         guard canManageSessions else { return }
@@ -146,7 +168,8 @@ final class LectureController: ObservableObject {
                     model: model, language: language, vocabulary: vocabulary, recognitionEngine: recognitionEngine)
             }
             guard var current = session else { return }
-            let part = AudioPart(fileName: UUID().uuidString + ".pcm", offset: current.duration)
+            let part = AudioPart(fileName: UUID().uuidString + ".pcm", offset: current.duration,
+                languageChanges: usesAppleSpeech ? [AudioLanguageChange(sample: 0, language: current.language)] : nil)
             current.parts.append(part)
             try store.save(current)
             session = current
@@ -185,6 +208,7 @@ final class LectureController: ObservableObject {
     }
 
     private func streamLoop() async {
+        defer { pendingAppleLanguage = nil }
         do {
             if usesAppleSpeech {
                 try await streamApple()
@@ -383,10 +407,12 @@ final class LectureController: ObservableObject {
     private func startApple(_ part: AudioPart, current: LectureSession) async throws {
         guard let appleSpeech else { throw LectureError.message("請先載入 Apple 語音模型。") }
         appleCursor = part.processedSamples
+        appleRangeStart = part.processedSamples
         let from = part.processedSamples
         let offset = part.offset + Double(from) / 16000
         let generation = UUID(); activeDecodeID = generation
-        try await appleSpeech.start(language: current.language) { [weak self] result in
+        let selectedLanguage = part.language(at: from, fallback: current.language)
+        try await appleSpeech.start(language: selectedLanguage) { [weak self] result in
             guard let self, self.activeDecodeID == generation, self.session?.id == current.id,
                   let index = self.session?.parts.firstIndex(where: { $0.id == part.id }),
                   result.start.isFinite, result.end.isFinite else { return }
@@ -406,11 +432,15 @@ final class LectureController: ObservableObject {
                 self.liveDraftStart = offset + result.start; self.liveDraft = text
             }
         }
+        language = selectedLanguage
+        translatedDraft = ""; translationDraftSource = ""
     }
     private func feedApple(_ partID: UUID) async throws {
         guard let store, let appleSpeech else { return }
         while let current = session, let part = current.parts.first(where: { $0.id == partID }), appleCursor < part.sampleCount {
-            let count = min(4000, part.sampleCount - appleCursor)
+            let end = min(part.sampleCount, part.nextLanguageBoundary(after: appleRangeStart) ?? part.sampleCount)
+            guard appleCursor < end else { break }
+            let count = min(4000, end - appleCursor)
             let samples = try PCMRecorder.read(store.audioURL(current, part), from: appleCursor, count: count)
             try await appleSpeech.append(samples)
             appleCursor += count
@@ -425,13 +455,25 @@ final class LectureController: ObservableObject {
     }
     private func streamApple() async throws {
         guard let partID = activePartID else { return }
-        while isRecording {
+        while true {
             updateAudioCount()
             try await feedApple(partID)
+            guard let current = session, let part = current.parts.first(where: { $0.id == partID }) else { return }
+            if let boundary = part.nextLanguageBoundary(after: appleRangeStart), appleCursor >= boundary {
+                try await completeApple(partID)
+                guard let updated = session, let remaining = updated.parts.first(where: { $0.id == partID }) else { return }
+                if !isRecording && remaining.sampleCount <= appleCursor { return }
+                try await startApple(remaining, current: updated)
+                pendingAppleLanguage = nil; loadedModel = "apple"
+                status = "正在錄音 · Apple \(RecognitionLanguage.primary(language) == "en" ? "英文" : "中文")"
+                continue
+            }
+            if !isRecording {
+                try await completeApple(partID)
+                return
+            }
             try await Task.sleep(nanoseconds: 100_000_000)
         }
-        try await feedApple(partID)
-        try await completeApple(partID)
     }
     func saveTranslation(sessionID: UUID, line: TranscriptLine, text: String) {
         guard session?.id == sessionID, session?.lines.contains(line) == true else { return }

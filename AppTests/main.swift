@@ -135,3 +135,13 @@ check(gapDecision.confirmed.first?.id == unalignedBeginning.id, "Word agreement 
 let removedOld = CaptionText.after([TranscriptLine(start: 0, end: 0.5, text: "old"), unalignedEnglish], time: 0.8)
 check(removedOld == [unalignedEnglish], "Unaligned segment fallback still respects its segment boundary")
 print("PASS: partial alignment metadata does not erase English segments or skip unsaved audio")
+var languagePart = AudioPart(fileName: "switch.pcm", offset: 0, sampleCount: 160000,
+    languageChanges: [AudioLanguageChange(sample: 0, language: "zh"), AudioLanguageChange(sample: 64000, language: "en"), AudioLanguageChange(sample: 128000, language: "zh")])
+check(languagePart.language(at: 63999, fallback: "auto") == "zh", "Audio before the switch keeps the original recognizer language")
+check(languagePart.language(at: 64000, fallback: "auto") == "en", "Audio at the switch boundary uses the selected language")
+check(languagePart.nextLanguageBoundary(after: 0) == 64000 && languagePart.nextLanguageBoundary(after: 64000) == 128000, "A recognizer cannot be fed audio beyond its language interval")
+check(languagePart.nextLanguageBoundary(after: 128000) == nil, "The last language runs through the remaining audio")
+let recoveredLanguagePart = try JSONDecoder().decode(AudioPart.self, from: JSONEncoder().encode(languagePart))
+check(recoveredLanguagePart.languageChanges == languagePart.languageChanges, "Language boundaries survive interruption and reopening")
+check(AudioPart(fileName: "legacy.pcm", offset: 0).language(at: 100, fallback: "en") == "en", "Legacy audio without a language timeline uses the saved language")
+print("PASS: durable language intervals for continuous Apple capture and recovery")
