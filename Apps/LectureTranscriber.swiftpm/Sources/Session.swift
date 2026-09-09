@@ -5,7 +5,20 @@ struct TranscriptLine: Codable, Identifiable, Equatable, Sendable {
     var start: Double
     var end: Double
     var text: String
+    var words: [TranscriptWord]? = nil
 }
+struct TranscriptWord: Codable, Equatable, Sendable {
+    var text: String
+    var start: Double
+    var end: Double
+}
+enum RecognitionLanguage {
+    static func primary(_ value: String) -> String? {
+        switch value { case "mixed", "zh": return "zh"; case "mixed-en", "en": return "en"; default: return nil }
+    }
+    static func isMixed(_ value: String) -> Bool { value == "mixed" || value == "mixed-en" }
+}
+struct SpeechDecode: Sendable { var lines: [TranscriptLine]; var endsWithPause: Bool }
 struct Bookmark: Codable, Identifiable, Sendable {
     var id = UUID()
     var seconds: Double
@@ -23,7 +36,24 @@ struct WindowDecision {
     var confirmed: [TranscriptLine]
     var provisional: [TranscriptLine]
     var consumed: Int
-    static func make(lines: [TranscriptLine], samples: Int, offset: Double, final: Bool, previous: [TranscriptLine] = []) -> WindowDecision {
+    static func make(lines: [TranscriptLine], samples: Int, offset: Double, final: Bool, previous: [TranscriptLine] = [], utteranceEnded: Bool = false) -> WindowDecision {
+        if final || utteranceEnded {
+            return WindowDecision(confirmed: lines, provisional: [], consumed: samples)
+        }
+        let words = lines.flatMap { $0.words ?? [] }
+        let oldWords = previous.flatMap { $0.words ?? [] }
+        if !words.isEmpty && !oldWords.isEmpty {
+            let common = zip(words, oldWords).prefix {
+                $0.0.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == $0.1.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                && abs($0.0.start - $0.1.start) < 0.8 && abs($0.0.end - $0.1.end) < 0.8
+            }.map { $0.0 }
+            // Keep two agreed words and 0.8 seconds of right context open for correction.
+            let stable = Array(common.prefix(max(0, common.count - 2)).prefix { $0.end <= offset + Double(samples) / 16000 - 0.8 })
+            if let last = stable.last, last.end > offset {
+                let consumed = min(samples, max(1, Int(((last.end - offset) * 16000).rounded())))
+                return WindowDecision(confirmed: CaptionText.lines(stable), provisional: CaptionText.lines(Array(words.dropFirst(stable.count))), consumed: consumed)
+            }
+        }
         let cutoff = offset + Double(samples) / 16000 - 2
         var confirmed = samples >= 12 * 16000 ? lines.filter { $0.end <= cutoff } : []
         // Earlier confirmation requires agreement across successive decodes, with right context.
@@ -55,6 +85,7 @@ struct LectureSession: Codable, Identifiable, Sendable {
     var model: String
     var language: String
     var vocabulary: String? = nil
+    var recognitionEngine: String? = nil
     var parts: [AudioPart] = []
     var lines: [TranscriptLine] = []
     var bookmarks: [Bookmark] = []
@@ -67,8 +98,88 @@ struct LectureSession: Codable, Identifiable, Sendable {
     func translation(for line: TranscriptLine) -> TranslatedLine? {
         translations?.first { $0.id == line.id && $0.source == line.text }
     }
+    mutating func appendConfirmed(_ additions: [TranscriptLine]) {
+        for addition in additions {
+            if let last = lines.last, let oldWords = last.words, let newWords = addition.words,
+               !oldWords.isEmpty, !newWords.isEmpty, addition.start - last.end < 0.7,
+               addition.start >= last.end - 0.08, addition.end - last.start <= 6,
+               !"。！？.!?".contains(last.text.last ?? " "), last.text.count + addition.text.count <= 100 {
+                let joined = oldWords + newWords
+                lines[lines.count - 1].text = joined.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
+                lines[lines.count - 1].end = addition.end
+                lines[lines.count - 1].words = joined
+                translations?.removeAll { $0.id == last.id }
+            } else { lines.append(addition) }
+        }
+    }
     var duration: Double { parts.reduce(0) { $0 + Double($1.sampleCount) / 16000 } }
     var hasPendingAudio: Bool { parts.contains { $0.processedSamples < $0.sampleCount } }
+}
+
+enum CaptionText {
+    static func after(_ lines: [TranscriptLine], time: Double) -> [TranscriptLine] {
+        let words = lines.flatMap { $0.words ?? [] }
+        if !words.isEmpty { return self.lines(words.filter { ($0.start + $0.end) / 2 >= time }) }
+        return lines.filter { $0.end > time }
+    }
+    static func lines(_ words: [TranscriptWord]) -> [TranscriptLine] {
+        var output: [TranscriptLine] = []; var group: [TranscriptWord] = []
+        for word in words {
+            if let last = group.last, word.start - last.end > 0.7 {
+                output.append(line(group)); group = []
+            }
+            group.append(word)
+            let text = group.map(\.text).joined()
+            if text.count >= 48 || "。！？.!?".contains(word.text.last ?? " ") {
+                output.append(line(group)); group = []
+            }
+        }
+        if !group.isEmpty { output.append(line(group)) }
+        return output
+    }
+    private static func line(_ words: [TranscriptWord]) -> TranscriptLine {
+        TranscriptLine(start: words.first!.start, end: words.last!.end,
+                       text: words.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines), words: words)
+    }
+    static func screen(_ text: String, width: Int = 44) -> String {
+        guard width > 0 else { return "" }
+        // Wrap Latin words as units and CJK as characters; display only the latest two lines.
+        var tokens: [String] = []; var latin = ""
+        for character in text {
+            if character.isASCII && !character.isWhitespace { latin.append(character) }
+            else {
+                if !latin.isEmpty { tokens.append(latin); latin = "" }
+                tokens.append(String(character))
+            }
+        }
+        if !latin.isEmpty { tokens.append(latin) }
+        var lines: [String] = []; var current = ""; var used = 0
+        for token in tokens {
+            let cost = token.reduce(0) { $0 + ($1.isASCII ? 1 : 2) }
+            if used + cost > width && !current.isEmpty { lines.append(current); current = ""; used = 0 }
+            if current.isEmpty && token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
+            current += token; used += cost
+        }
+        if !current.isEmpty { lines.append(current) }
+        return lines.suffix(2).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+enum SpeechBoundary {
+    static func endsWithPause(_ samples: [Float]) -> Bool {
+        guard samples.count >= 16000 else { return false }
+        let block = 320
+        var energies: [Double] = []
+        for start in stride(from: 0, through: samples.count - block, by: block) {
+            let value = samples[start..<(start + block)].reduce(0.0) { $0 + Double($1 * $1) }
+            energies.append(sqrt(value / Double(block)))
+        }
+        let peak = energies.max() ?? 0
+        if peak < 0.0001 { return true }
+        let threshold = max(0.0003, min(0.003, peak * 0.08))
+        return energies.count >= 30 && energies.suffix(30).allSatisfy { $0 < threshold }
+            && energies.dropLast(30).contains { $0 > threshold * 3 }
+    }
 }
 
 struct TranslatedLine: Codable, Identifiable, Sendable {

@@ -18,6 +18,7 @@ actor WhisperEngine {
     private var kit: WhisperKit?
     private var currentModel: String?
     func unload() { kit = nil; currentModel = nil }
+    func supportsWordTiming() -> Bool { kit?.textDecoder.supportsWordTimestamps ?? false }
     func load(_ model: String, progress: @escaping @Sendable (String, Double?) -> Void) async throws {
         if currentModel == model, kit != nil { return }
         kit = nil; currentModel = nil
@@ -46,24 +47,23 @@ actor WhisperEngine {
     }
     func transcribe(file: URL, start: Int, count: Int, offset: Double, language: String,
                     vocabulary: String, context: String, final: Bool,
-                    onDraft: @escaping @Sendable (String, Int) -> Void) async throws -> [TranscriptLine] {
+                    onDraft: @escaping @Sendable (String, Int) -> Void) async throws -> SpeechDecode {
         guard let kit else { throw LectureError.message("請先載入語音模型。") }
         let samples = try PCMRecorder.read(file, from: start, count: count)
-        guard !samples.isEmpty else { return [] }
+        guard !samples.isEmpty else { return SpeechDecode(lines: [], endsWithPause: false) }
         let rms = sqrt(samples.reduce(Double(0)) { $0 + Double($1) * Double($1) } / Double(samples.count))
-        if rms < 0.0001 { return [] }
-        // Whisper accepts one language token, not a simultaneous zh+en language selection.
-        // A Chinese-led mixed lecture uses zh plus a bilingual text prompt; task stays transcribe.
-        let prompt = [language == "mixed" ? "這是中文與 English 的課堂記錄。" : "",
-                      String(vocabulary.prefix(500)), String(context.suffix(160))]
+        if rms < 0.0001 { return SpeechDecode(lines: [], endsWithPause: true) }
+        // Mixed mode is an explicit primary-language choice, not a second recognizer.
+        // Do not inject a made-up bilingual sentence or reinforce earlier mixed-mode mistakes.
+        let prompt = [String(vocabulary.prefix(500)), RecognitionLanguage.isMixed(language) ? "" : String(context.suffix(160))]
             .filter { !$0.isEmpty }.joined(separator: " ")
         let tokens = kit.tokenizer.map { Array($0.encode(text: prompt).suffix(160)) }
         let options = DecodingOptions(task: .transcribe,
-            language: language == "auto" ? nil : (language == "mixed" ? "zh" : language),
-            temperatureFallbackCount: final ? 2 : 1,
+            language: RecognitionLanguage.primary(language),
+            temperatureFallbackCount: final ? 2 : 0,
             usePrefillPrompt: true, detectLanguage: language == "auto",
             skipSpecialTokens: true, withoutTimestamps: false,
-            wordTimestamps: false, windowClipTime: 0,
+            wordTimestamps: kit.textDecoder.supportsWordTimestamps, windowClipTime: 0,
             promptTokens: prompt.isEmpty ? nil : tokens, concurrentWorkerCount: 1)
         let relay = DraftRelay(onDraft)
         let results = try await kit.transcribe(audioArray: samples, decodeOptions: options) { progress in
@@ -71,14 +71,21 @@ actor WhisperEngine {
             return nil
         }
         let duration = Double(samples.count) / 16000
-        return results.flatMap(\.segments).compactMap { segment in
+        let lines: [TranscriptLine] = results.flatMap(\.segments).compactMap { segment in
             let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return nil }
             let begin = min(duration, max(0, Double(segment.start)))
             let end = min(duration, max(begin, Double(segment.end)))
             guard end > begin else { return nil }
-            return TranscriptLine(start: offset + begin, end: offset + end, text: text)
+            let words = segment.words?.compactMap { word -> TranscriptWord? in
+                let start = min(duration, max(0, Double(word.start)))
+                let finish = min(duration, max(start, Double(word.end)))
+                guard finish > start else { return nil }
+                return TranscriptWord(text: word.word, start: offset + start, end: offset + finish)
+            }
+            return TranscriptLine(start: offset + begin, end: offset + end, text: text, words: words)
         }
+        return SpeechDecode(lines: lines, endsWithPause: SpeechBoundary.endsWithPause(samples))
     }
 }
 

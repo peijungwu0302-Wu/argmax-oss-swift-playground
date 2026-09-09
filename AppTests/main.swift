@@ -97,3 +97,28 @@ let storedMeeting = try JSONDecoder().decode(LectureSession.self, from: JSONEnco
 check(storedMeeting.translations?.first?.text == meeting.translations?.first?.text && storedMeeting.minutes == meeting.minutes, "Translations and notes survive reopening")
 check(MeetingNotes.outline(meeting).contains("未使用 AI") && MeetingNotes.outline(meeting).contains(meeting.sourceText), "Fallback is explicitly original text and retains the entire transcript")
 print("PASS: bilingual translation identity, stale notes, legacy decoding and bounded Unicode chunks")
+check(RecognitionLanguage.primary("mixed") == "zh" && RecognitionLanguage.primary("mixed-en") == "en", "Mixed mode must honor the user's primary-language choice")
+check(RecognitionLanguage.primary("auto") == nil, "Automatic mode must not secretly force Chinese")
+check(oldSession.recognitionEngine == nil && oldSession.lines.allSatisfy { $0.words == nil }, "Legacy recordings keep their original engine and decode without word metadata")
+let words = (0..<6).map { TranscriptWord(text: " word\($0)", start: Double($0) * 0.4, end: Double($0 + 1) * 0.4) }
+let hypothesis = CaptionText.lines(words)
+let eager = WindowDecision.make(lines: hypothesis, samples: 4 * 16000, offset: 0, final: false, previous: hypothesis)
+check(eager.confirmed.flatMap { $0.words ?? [] } == Array(words.prefix(4)), "Stable words become durable without waiting for the whole sentence")
+check(eager.provisional.flatMap { $0.words ?? [] } == Array(words.suffix(2)), "Two agreed tail words stay available for correction")
+let endpoint = WindowDecision.make(lines: hypothesis, samples: 4 * 16000, offset: 0, final: false, utteranceEnded: true)
+check(endpoint.consumed == 64000 && endpoint.provisional.isEmpty, "A detected utterance ending flushes the short phrase")
+check(SpeechBoundary.endsWithPause(Array(repeating: 0.1, count: 16000) + Array(repeating: 0, count: 9600)), "A 600 ms quiet tail after speech is an endpoint")
+check(!SpeechBoundary.endsWithPause(Array(repeating: 0.1, count: 16000) + Array(repeating: 0, count: 4800)), "A brief hesitation must not end the utterance")
+check(!SpeechBoundary.endsWithPause(Array(repeating: 0.003, count: 32000)), "Constant background noise is not a speech-to-silence transition")
+let retained = CaptionText.after(hypothesis, time: 0.8).flatMap { $0.words ?? [] }
+check(retained == Array(words.dropFirst(2)), "Rewound context must not duplicate already confirmed words")
+let cc = CaptionText.screen(String(repeating: "中文 English ", count: 12) + "final", width: 20)
+check(cc.components(separatedBy: "\n").count <= 2 && cc.hasSuffix("final") && !cc.contains("Eng\n"), "CC shows the newest two lines without splitting English words")
+var grouped = LectureSession(title: "片段", model: "test", language: "mixed-en", recognitionEngine: "whisper")
+grouped.appendConfirmed(CaptionText.lines(Array(words.prefix(2))))
+let stableID = grouped.lines[0].id
+grouped.translations = [TranslatedLine(id: stableID, source: grouped.lines[0].text, text: "舊翻譯")]
+grouped.appendConfirmed(CaptionText.lines(Array(words.dropFirst(2).prefix(2))))
+check(grouped.lines.count == 1 && grouped.lines[0].id == stableID && grouped.lines[0].words?.count == 4, "Short stable prefixes grow into the same readable caption")
+check(grouped.translations?.isEmpty == true, "A growing caption must invalidate its previous partial translation")
+print("PASS: primary languages, word agreement, pause endpoints, overlap deduplication and CC captions")

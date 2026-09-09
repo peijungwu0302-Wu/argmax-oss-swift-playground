@@ -14,6 +14,7 @@ struct ContentView: View {
     @State private var editedLine: TranscriptLine?
     @State private var followLatest = true
     @State private var pendingDeletion: LectureSession?
+    @State private var captionMode = true
     private let paper = Color(red: 0.97, green: 0.95, blue: 0.90)
     private let ink = Color(red: 0.20, green: 0.19, blue: 0.16)
     private let gold = Color(red: 0.59, green: 0.40, blue: 0.08)
@@ -54,7 +55,12 @@ struct ContentView: View {
             }
             .background(paper)
             .foregroundStyle(ink)
-            .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(spacing: 0) {
+                    if captionMode && (controller.isRecording || !controller.caption.isEmpty) { captionPanel }
+                    bottomBar
+                }
+            }
             .navigationTitle("錄音")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -64,6 +70,9 @@ struct ContentView: View {
                     }.disabled(!controller.canManageSessions)
                 }
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
+                    Button { captionMode.toggle() } label: {
+                        Image(systemName: captionMode ? "captions.bubble.fill" : "captions.bubble")
+                    }.accessibilityLabel("字幕模式")
                     Button { controller.newLecture() } label: { Label("新課堂", systemImage: "square.and.pencil") }
                         .disabled(!controller.canManageSessions)
                     Button { showSettings = true } label: { Label("錄音設定", systemImage: "slider.horizontal.3") }
@@ -113,13 +122,26 @@ struct ContentView: View {
                     .minimumScaleFactor(0.6).lineLimit(1)
                     .accessibilityLabel("錄音時間 \(TranscriptExport.clock(controller.duration))")
             }
-            Picker("辨識語言", selection: $controller.language) {
-                Text("自動").tag("auto")
+            Picker("辨識語言", selection: Binding(get: {
+                RecognitionLanguage.isMixed(controller.language) ? "mixed" : controller.language
+            }, set: { value in
+                controller.setLanguage(value == "mixed" && controller.language == "en" ? "mixed-en" : value)
+            })) {
+                if !controller.usesAppleSpeech { Text("自動").tag("auto") }
                 Text("中英夾雜").tag("mixed")
                 Text("中文").tag("zh")
                 Text("英文").tag("en")
-            }.pickerStyle(.segmented).disabled(controller.settingsLocked).frame(maxWidth: 560)
-            Text(controller.language == "mixed" ? "中文為主、夾雜英文術語；英語為主的課堂請選英文。" : "指定主要語言有助辨識；自動模式會偵測主要語言。")
+            }.pickerStyle(.segmented).disabled(!controller.canManageSessions).frame(maxWidth: 560)
+            if RecognitionLanguage.isMixed(controller.language) {
+                Picker("混說主要語言", selection: Binding(get: {
+                    RecognitionLanguage.primary(controller.language) ?? "zh"
+                }, set: { controller.setLanguage($0 == "en" ? "mixed-en" : "mixed") })) {
+                    Text("中文為主").tag("zh")
+                    Text("英文為主").tag("en")
+                }.pickerStyle(.segmented).disabled(!controller.canManageSessions).frame(maxWidth: 400)
+                    .accessibilityIdentifier("mixedPrimaryLanguage")
+            }
+            Text(RecognitionLanguage.isMixed(controller.language) ? "依實際主要語言辨識，保留另一語言；混說效果仍需核對。停止後可切換。" : "指定主要語言有助辨識。Apple 引擎使用系統支援的語言資源。")
                 .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
             HStack(spacing: 8) {
                 if controller.isBusy || controller.isDecoding { ProgressView().controlSize(.small) }
@@ -131,6 +153,26 @@ struct ContentView: View {
                     .accessibilityLabel("麥克風音量")
             }
         }
+    }
+
+    private var captionPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("即時字幕", systemImage: "captions.bubble.fill").font(.caption.bold())
+                Spacer()
+                Text(controller.displayedDraft.isEmpty ? "已確認" : "辨識中 · 可修正").font(.caption)
+            }.foregroundStyle(.white.opacity(0.7))
+            Text(controller.caption.isEmpty ? "等待語音…" : controller.caption)
+                .font(.system(size: 25, weight: .medium)).lineLimit(2).minimumScaleFactor(0.6)
+                .frame(maxWidth: .infinity, alignment: .leading).foregroundStyle(.white)
+            if controller.translationEnabled && !controller.translationCaption.isEmpty {
+                Text(controller.translationCaption).font(.title3).lineLimit(2).minimumScaleFactor(0.6)
+                    .foregroundStyle(Color(red: 1, green: 0.85, blue: 0.45))
+                if !controller.translatedDraft.isEmpty {
+                    Text("翻譯草稿 · 稍晚於原文更新").font(.caption2).foregroundStyle(.white.opacity(0.65))
+                }
+            }
+        }.padding(16).background(Color(red: 0.13, green: 0.13, blue: 0.14))
     }
 
     private var translationCard: some View {
@@ -267,22 +309,31 @@ struct ContentView: View {
         NavigationStack {
             Form {
                 Section("語音辨識") {
+                    Picker("辨識引擎", selection: Binding(get: { controller.recognitionEngine }, set: { value in
+                        controller.setRecognitionEngine(value)
+                        if value == "apple" && controller.language == "auto" { controller.setLanguage("mixed") }
+                    })) {
+                        Text("Apple 即時語音 · iPadOS 26").tag("apple")
+                        Text("WhisperKit · Turbo 等模型").tag("whisper")
+                    }.disabled(!controller.canManageSessions)
+                    if !controller.usesAppleSpeech {
                     Picker("語音模型", selection: $controller.model) {
                         ForEach(SpeechModel.allCases) { Text($0.title).tag($0.rawValue) }
                     }.disabled(controller.settingsLocked)
+                    }
                     Button { Task { await controller.prepareModel() } } label: {
-                        Label(controller.loadedModel == controller.model ? "模型已就緒" : "載入模型", systemImage: "arrow.down.circle")
+                        Label(controller.loadedModel != nil ? "模型已就緒" : "載入模型", systemImage: "arrow.down.circle")
                     }.disabled(!controller.canManageSessions)
-                    Text("你的 M2 iPad 先使用 Turbo。開始錄音時也會自動載入，第一次需要網路下載。")
+                    Text("新課堂預設 Apple 即時語音；若語言不支援或品質不佳，可切回 WhisperKit Turbo 比較。開始錄音時也會自動載入，第一次需要網路下載。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("課堂專有名詞") {
                     TextField("例如：CRISPR、Cas9、gene editing", text: $controller.vocabulary, axis: .vertical)
-                        .lineLimit(3...5).disabled(controller.settingsLocked)
+                        .lineLimit(3...5).disabled(controller.settingsLocked || controller.usesAppleSpeech)
                         .onChange(of: controller.vocabulary) { value in
                             if value.count > 500 { controller.vocabulary = String(value.prefix(500)) }
                         }
-                    Text("這是辨識提示，不能保證人名與術語正確。").font(.caption)
+                    Text("目前專有名詞提示只用於 WhisperKit；不能保證人名與術語正確。").font(.caption)
                 }
                 Section("辨識狀態") {
                     if let seconds = controller.lastDecodeSeconds {

@@ -7,6 +7,7 @@ final class LectureController: ObservableObject {
     @Published var session: LectureSession?
     @Published var history: [LectureSession] = []
     @Published var model = SpeechModel.turbo.rawValue
+    @Published var recognitionEngine = "apple"
     @Published var language = "mixed"
     @Published var vocabulary = ""
     @Published var title = ""
@@ -27,11 +28,15 @@ final class LectureController: ObservableObject {
     @Published var translationEnabled = false
     @Published var translationStatus = "開啟後，英語內容會分段翻成繁體中文"
     @Published var translatedDraft = ""
+    @Published var translationDraftSource = ""
+    @Published var liveDraftStart: Double = 0
     @Published var isSummarizing = false
     @Published var summaryStatus = ""
 
     private let engine = WhisperEngine()
     private let recorder = PCMRecorder()
+    private var appleSpeech: (any LiveSpeechEngine)?
+    private var appleCursor = 0
     private var store: SessionStore?
     private var worker: Task<Void, Never>?
     private var meter: Timer?
@@ -74,6 +79,23 @@ final class LectureController: ObservableObject {
     var canManageSessions: Bool { !isRecording && !isBusy && !isSummarizing && worker == nil }
     var displayedDraft: String { liveDraft.isEmpty ? provisional.map(\.text).joined(separator: " ") : liveDraft }
     var draftBehindSeconds: Double { max(0, duration - draftAudioEnd) }
+    var usesAppleSpeech: Bool { (session?.recognitionEngine ?? recognitionEngine) == "apple" }
+    var draftStart: Double { liveDraft.isEmpty ? (provisional.first?.start ?? duration) : liveDraftStart }
+    var caption: String { CaptionText.screen(displayedDraft.isEmpty ? (session?.lines.last?.text ?? "") : displayedDraft) }
+    var translationCaption: String {
+        if !translatedDraft.isEmpty { return CaptionText.screen(translatedDraft) }
+        guard let current = session else { return "" }
+        return CaptionText.screen(current.lines.reversed().compactMap { current.translation(for: $0)?.text }.first ?? "")
+    }
+    func setLanguage(_ value: String) {
+        guard canManageSessions else { return }
+        language = value; session?.language = value; loadedModel = nil; persist()
+    }
+    func setRecognitionEngine(_ value: String) {
+        guard canManageSessions else { return }
+        recognitionEngine = value; session?.recognitionEngine = value; loadedModel = nil
+        persist()
+    }
 
     func prepareModel() async {
         guard canManageSessions else { return }
@@ -83,6 +105,16 @@ final class LectureController: ObservableObject {
         catch { fail("模型載入失敗。請確認網路、儲存空間，再按一次載入。", error) }
     }
     private func loadModel(_ name: String) async throws {
+        if usesAppleSpeech {
+            guard #available(iOS 26.0, *) else { throw LectureError.message("Apple 即時引擎需要 iPadOS 26；請在錄音設定改用 WhisperKit。") }
+            status = "正在準備 Apple 語音模型，首次需下載語言資源…"
+            await engine.unload()
+            if appleSpeech == nil { appleSpeech = AppleSpeechEngine() }
+            try await appleSpeech?.prepare(language: session?.language ?? language)
+            loadedModel = "apple"; status = "Apple 即時語音已就緒"; progress = nil
+            return
+        }
+        await appleSpeech?.cancel(); appleSpeech = nil
         status = "正在載入模型…"
         try await engine.load(name) { [weak self] text, fraction in
             Task { @MainActor in
@@ -111,13 +143,14 @@ final class LectureController: ObservableObject {
             if session == nil {
                 let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
                 session = LectureSession(title: cleanTitle.isEmpty ? "課堂 \(Date().formatted(date: .abbreviated, time: .shortened))" : cleanTitle,
-                    model: model, language: language, vocabulary: vocabulary)
+                    model: model, language: language, vocabulary: vocabulary, recognitionEngine: recognitionEngine)
             }
             guard var current = session else { return }
             let part = AudioPart(fileName: UUID().uuidString + ".pcm", offset: current.duration)
             current.parts.append(part)
             try store.save(current)
             session = current
+            if usesAppleSpeech { try await startApple(part, current: current) }
             do { try recorder.start(at: store.audioURL(current, part)) }
             catch {
                 // A failed start may still have created a recoverable empty PCM file.
@@ -134,7 +167,7 @@ final class LectureController: ObservableObject {
                 Task { @MainActor in self?.tick() }
             }
             worker = Task { [weak self] in await self?.streamLoop() }
-        } catch { fail("無法開始錄音。", error) }
+        } catch { await appleSpeech?.cancel(); fail("無法開始錄音。", error) }
     }
 
     private func tick() {
@@ -153,6 +186,9 @@ final class LectureController: ObservableObject {
 
     private func streamLoop() async {
         do {
+            if usesAppleSpeech {
+                try await streamApple()
+            } else {
             while isRecording {
                 updateAudioCount()
                 guard let current = session, let part = current.parts.last else { break }
@@ -165,10 +201,12 @@ final class LectureController: ObservableObject {
                     try await Task.sleep(nanoseconds: 250_000_000)
                 }
             }
+            }
         } catch is CancellationError {
             // Cancellation never marks unfinished audio as confirmed.
         } catch {
             stopCapture()
+            await appleSpeech?.cancel()
             fail("辨識暫停，已錄聲音保留在本機，可按「補辨識」。", error)
         }
         isDecoding = false
@@ -176,20 +214,23 @@ final class LectureController: ObservableObject {
         reloadHistory()
     }
 
-    // Keep two seconds of right context, then advance at the last confirmed segment end.
-    // The last partial window is always decoded again when paused/stopped.
+    // Whisper: confirm agreed words or a pause; retain unfinished audio for another pass.
     private func decodePart(_ id: UUID, final: Bool) async throws {
         guard let store, let current = session, let part = current.parts.first(where: { $0.id == id }) else { return }
         let available = part.sampleCount - part.processedSamples
         guard available > 0 else { return }
-        let count = min(26 * 16000, available)
-        let offset = part.offset + Double(part.processedSamples) / 16000
+        let hasWordTiming = await engine.supportsWordTiming()
+        let overlap = hasWordTiming ? min(4000, part.processedSamples) : 0
+        let count = min(26 * 16000, available + overlap)
+        let offset = part.offset + Double(part.processedSamples - overlap) / 16000
+        let cursorTime = part.offset + Double(part.processedSamples) / 16000
         isDecoding = true
         let request = UUID()
-        activeDecodeID = request; draftRevision = 0; liveDraft = ""
+        activeDecodeID = request; draftRevision = 0
+        liveDraftStart = cursorTime
         let started = Date()
         defer { isDecoding = false; activeDecodeID = nil; liveDraft = "" }
-        let lines = try await engine.transcribe(file: store.audioURL(current, part), start: part.processedSamples,
+        let decoded = try await engine.transcribe(file: store.audioURL(current, part), start: part.processedSamples - overlap,
             count: count, offset: offset, language: current.language,
             vocabulary: current.vocabulary ?? "", context: current.lines.suffix(2).map(\.text).joined(separator: " "), final: final) { [weak self] text, revision in
                 Task { @MainActor in
@@ -202,14 +243,15 @@ final class LectureController: ObservableObject {
         guard session?.id == current.id, let index = session?.parts.firstIndex(where: { $0.id == id }) else { return }
         lastDecodeSeconds = Date().timeIntervalSince(started)
         draftAudioEnd = offset + Double(count) / 16000
-        let decision = WindowDecision.make(lines: lines, samples: count, offset: offset, final: final && count == available,
-                                           previous: previousHypothesis)
+        let lines = overlap > 0 ? CaptionText.after(decoded.lines, time: cursorTime) : decoded.lines
+        let decision = WindowDecision.make(lines: lines, samples: count, offset: offset, final: final && count - overlap == available,
+                                           previous: previousHypothesis, utteranceEnded: decoded.endsWithPause)
         provisional = decision.provisional
         previousHypothesis = decision.provisional
-        if decision.consumed > 0 {
+        if decision.consumed > overlap {
             // Audio count may have increased while decoding; mutate the live session.
-            session?.lines.append(contentsOf: decision.confirmed)
-            session?.parts[index].processedSamples += decision.consumed
+            session?.appendConfirmed(decision.confirmed)
+            session?.parts[index].processedSamples += decision.consumed - overlap
             guard let updated = session else { return }
             try store.save(updated)
             lastSaved = Date()
@@ -257,7 +299,11 @@ final class LectureController: ObservableObject {
 
     private func finishPending() async throws {
         while let part = session?.parts.first(where: { $0.processedSamples < $0.sampleCount }) {
-            try await decodePart(part.id, final: true)
+            if usesAppleSpeech, let current = session {
+                try await startApple(part, current: current)
+                try await feedApple(part.id)
+                try await completeApple(part.id)
+            } else { try await decodePart(part.id, final: true) }
         }
         provisional = []
         liveDraft = ""; previousHypothesis = []
@@ -283,6 +329,7 @@ final class LectureController: ObservableObject {
     func updateLine(_ id: UUID, text: String) {
         guard let index = session?.lines.firstIndex(where: { $0.id == id }) else { return }
         session?.lines[index].text = text
+        session?.lines[index].words = nil
         session?.translations?.removeAll { $0.id == id }
         persist()
     }
@@ -301,6 +348,7 @@ final class LectureController: ObservableObject {
     func open(_ saved: LectureSession) {
         guard canManageSessions else { return }
         session = saved; title = saved.title; model = saved.model; language = saved.language
+        recognitionEngine = saved.recognitionEngine ?? "whisper"
         vocabulary = saved.vocabulary ?? ""
         provisional = []; search = ""
         translatedDraft = ""; summaryStatus = ""
@@ -331,6 +379,59 @@ final class LectureController: ObservableObject {
         guard let session, let store else { return }
         do { try store.save(session); lastSaved = Date() }
         catch { errorMessage = "自動儲存失敗：\(error.localizedDescription)。請先暫停並檢查剩餘空間。" }
+    }
+    private func startApple(_ part: AudioPart, current: LectureSession) async throws {
+        guard let appleSpeech else { throw LectureError.message("請先載入 Apple 語音模型。") }
+        appleCursor = part.processedSamples
+        let from = part.processedSamples
+        let offset = part.offset + Double(from) / 16000
+        let generation = UUID(); activeDecodeID = generation
+        try await appleSpeech.start(language: current.language) { [weak self] result in
+            guard let self, self.activeDecodeID == generation, self.session?.id == current.id,
+                  let index = self.session?.parts.firstIndex(where: { $0.id == part.id }),
+                  result.start.isFinite, result.end.isFinite else { return }
+            let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.draftAudioEnd = offset + result.end
+            if result.isFinal {
+                if !text.isEmpty {
+                    self.session?.lines.append(TranscriptLine(start: offset + result.start, end: offset + result.end, text: text))
+                }
+                let through = result.finalizedThrough.isFinite ? result.finalizedThrough : result.end
+                let durable = from + Int(max(0, through) * 16000)
+                let count = self.session?.parts[index].sampleCount ?? 0
+                let previous = self.session?.parts[index].processedSamples ?? 0
+                self.session?.parts[index].processedSamples = min(count, max(previous, durable))
+                self.liveDraft = ""; self.provisional = []; self.persist()
+            } else {
+                self.liveDraftStart = offset + result.start; self.liveDraft = text
+            }
+        }
+    }
+    private func feedApple(_ partID: UUID) async throws {
+        guard let store, let appleSpeech else { return }
+        while let current = session, let part = current.parts.first(where: { $0.id == partID }), appleCursor < part.sampleCount {
+            let count = min(4000, part.sampleCount - appleCursor)
+            let samples = try PCMRecorder.read(store.audioURL(current, part), from: appleCursor, count: count)
+            try await appleSpeech.append(samples)
+            appleCursor += count
+        }
+    }
+    private func completeApple(_ partID: UUID) async throws {
+        try await appleSpeech?.finish()
+        if let index = session?.parts.firstIndex(where: { $0.id == partID }) {
+            session?.parts[index].processedSamples = appleCursor
+        }
+        activeDecodeID = nil; liveDraft = ""; provisional = []; persist()
+    }
+    private func streamApple() async throws {
+        guard let partID = activePartID else { return }
+        while isRecording {
+            updateAudioCount()
+            try await feedApple(partID)
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        try await feedApple(partID)
+        try await completeApple(partID)
     }
     func saveTranslation(sessionID: UUID, line: TranscriptLine, text: String) {
         guard session?.id == sessionID, session?.lines.contains(line) == true else { return }

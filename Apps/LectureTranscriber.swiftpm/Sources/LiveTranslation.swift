@@ -34,6 +34,7 @@ private struct TranslationWorker: ViewModifier {
                     var previousDraft = ""
                     var previousSession: UUID?
                     var lastDraftAt = Date.distantPast
+                    var draftWasLast = false
                     while !Task.isCancelled && controller.translationEnabled {
                         guard let lecture = controller.session else {
                             controller.translationStatus = "翻譯已就緒 · 開始錄音後會逐段顯示"
@@ -47,24 +48,34 @@ private struct TranslationWorker: ViewModifier {
                             try await Task.sleep(nanoseconds: 500_000_000)
                             continue
                         }
-                        if let line = lecture.lines.first(where: { lecture.translation(for: $0) == nil }) {
+                        let draft = controller.displayedDraft
+                        let start = controller.draftStart
+                        let pending = lecture.lines.first(where: { lecture.translation(for: $0) == nil })
+                        if !draft.isEmpty && draft != previousDraft && Date().timeIntervalSince(lastDraftAt) >= 1
+                            && (!draftWasLast || pending == nil) {
+                            previousDraft = draft; lastDraftAt = Date(); draftWasLast = true
+                            let result = try await translate(draft, with: translator)
+                            try Task.checkCancellation()
+                            // A growing phrase can use an earlier prefix translation. A corrected
+                            // or different phrase cannot, even if its recording ID is unchanged.
+                            if controller.translationEnabled && controller.session?.id == lecture.id
+                                && abs(controller.draftStart - start) < 0.3
+                                && controller.displayedDraft.hasPrefix(draft) {
+                                controller.translatedDraft = result
+                                controller.translationDraftSource = draft
+                            }
+                            continue
+                        }
+                        if let line = pending {
+                            draftWasLast = false
                             controller.translationStatus = "正在翻譯 \(TranscriptExport.clock(line.start)) 的段落…"
                             let text = try await translate(line.text, with: translator)
                             try Task.checkCancellation()
                             guard controller.translationEnabled else { return }
                             controller.saveTranslation(sessionID: lecture.id, line: line, text: text)
-                            controller.translatedDraft = ""
                             continue
                         }
-                        let draft = controller.displayedDraft
-                        if !draft.isEmpty && draft != previousDraft && Date().timeIntervalSince(lastDraftAt) >= 3 {
-                            previousDraft = draft; lastDraftAt = Date()
-                            let result = try await translate(draft, with: translator)
-                            try Task.checkCancellation()
-                            if controller.translationEnabled && controller.session?.id == lecture.id && controller.displayedDraft == draft {
-                                controller.translatedDraft = result
-                            }
-                        } else if draft.isEmpty { controller.translatedDraft = "" }
+                        if draft.isEmpty || !draft.hasPrefix(controller.translationDraftSource) { controller.translatedDraft = "" }
                         controller.translationStatus = "裝置端翻譯已就緒 · 中文原文保留，英語翻成中文"
                         try await Task.sleep(nanoseconds: 500_000_000)
                     }
