@@ -1,5 +1,5 @@
-> **課堂逐字稿 App 1.4.0（此分支）**：新增 SenseVoice 中英混說實驗引擎；Apple 中／英文即時切換、字幕／翻譯狀態修正、可選 AAC 錄音儲存。
-> [下載 iPad Playground ZIP](Deliverables/LectureTranscriber.zip) · [上課前設定](Apps/START-APPLE-LIVE.zh-Hant.md) · [Windows 私人安裝](Apps/PRIVATE_INSTALL.zh-Hant.md) · [本版修正與限制](Apps/UPDATE-1.4.0.zh-Hant.md)
+> **課堂逐字稿 App 1.4.1（iPad 修復）**：SenseVoice 改用 Core ML，移除造成 Playgrounds `unzip` 錯誤的二進位套件。iPhone 私人安裝版維持 1.4.0。
+> [下載 iPad ZIP](Deliverables/LectureTranscriber.zip) · [修復、使用與測試界線](Apps/UPDATE-1.4.1.zh-Hant.md) · [Windows 私人安裝](Apps/PRIVATE_INSTALL.zh-Hant.md)
 
 
 <div align="center">
