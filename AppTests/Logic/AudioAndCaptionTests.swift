@@ -9,7 +9,10 @@ final class AudioAndCaptionTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: folder) }
         let source = folder.appendingPathComponent("test.pcm16")
         let count = 3 * 16000 + 173 // Deliberately not a whole AAC frame.
-        let samples = (0..<count).map { Float(0.2 * sin(Double($0) * 2 * .pi * 440 / 16000)) }
+        let angularFrequency: Double = 2.0 * Double.pi * 440.0 / 16000.0
+        let samples: [Float] = (0..<count).map { index in
+            Float(0.2 * sin(Double(index) * angularFrequency))
+        }
         try AudioStorage.encodePCM16(samples).write(to: source)
         let middle = try PCMRecorder.read(source, from: 8000, count: 4000)
         XCTAssertEqual(middle.count, 4000)
@@ -19,7 +22,12 @@ final class AudioAndCaptionTests: XCTestCase {
             let archive = try PCMRecorder.archive(source, samples: count, bitRate: rate)
             let decoded = try PCMRecorder.read(archive, from: 0, count: count)
             XCTAssertEqual(decoded.count, count, "AAC must retain the original final samples")
-            let error = zip(decoded, samples).reduce(Float(0)) { $0 + pow($1.0 - $1.1, 2) } / Float(count)
+            var squaredError: Float = 0
+            for index in 0..<count {
+                let difference: Float = decoded[index] - samples[index]
+                squaredError += difference * difference
+            }
+            let error: Float = squaredError / Float(count)
             XCTAssertLessThan(error, 0.002, "AAC decoding must retain the signal and timing")
             let size = try FileManager.default.attributesOfItem(atPath: archive.path)[.size] as! NSNumber
             XCTAssertLessThan(size.intValue, count * 2)
