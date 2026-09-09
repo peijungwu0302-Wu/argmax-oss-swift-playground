@@ -1,5 +1,5 @@
 > **課堂逐字稿 App 1.5.0**：iPhone／iPad 共用 IPA，固定 Bundle ID。新增音訊大小、播放／分享／匯入、日文翻譯、可編輯會議提示詞與背景收音。
-> [下載 iPad ZIP](Deliverables/LectureTranscriber.zip) · [新版操作與測試](Apps/UPDATE-1.5.0.zh-Hant.md) · [Windows 私人安裝](Apps/PRIVATE_INSTALL.zh-Hant.md)
+> [直接下載 iPhone／iPad IPA](Deliverables/LectureTranscriber-1.5.0-unsigned.ipa) · [下載 iPad ZIP](Deliverables/LectureTranscriber.zip) · [新版操作與測試](Apps/UPDATE-1.5.0.zh-Hant.md) · [Windows 私人安裝](Apps/PRIVATE_INSTALL.zh-Hant.md)
 
 <div align="center">
 

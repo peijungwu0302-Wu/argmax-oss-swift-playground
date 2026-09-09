@@ -1,12 +1,12 @@
 # 1.5.0：通用 IPA、音訊檔案與字幕改善
 
-[下載 iPhone／iPad 通用 IPA](https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/actions/runs/34414929516/artifacts/10128984622) · [下載 iPad Playground ZIP](https://raw.githubusercontent.com/peijungwu0302-Wu/argmax-oss-swift-playground/249462051612488fcc093788d75c214ee2564487/Deliverables/LectureTranscriber.zip) · [全部測試結果](https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/actions/runs/34414929516)
+[免登入直接下載 iPhone／iPad 通用 IPA](../Deliverables/LectureTranscriber-1.5.0-unsigned.ipa) · [下載 iPad Playground ZIP](https://raw.githubusercontent.com/peijungwu0302-Wu/argmax-oss-swift-playground/249462051612488fcc093788d75c214ee2564487/Deliverables/LectureTranscriber.zip) · [全部測試結果](https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/actions/runs/34414929516)
 
 ## 同一份 IPA 更新 iPhone／iPad
 
 本版為 1.5.0，build 10。iPhone 與 iPad 共用原始碼、IPA 和 `com.peijungwu0302.lecturetranscriber`；沒有加入小工具、通知服務或其他 App Extension。打包程式會檢查 Bundle ID、裝置家族 `[1, 2]`、圖示、背景音訊與無擴充套件。
 
-IPA 沒有 Apple 簽章，需由 Windows／AltStore 等私人簽署流程安裝。GitHub artifact 是外層 ZIP；解壓得到 `LectureTranscriber-unsigned.ipa`。請用相同 Apple 帳號、相同簽署工具和相同識別設定更新原 App。不要換 Bundle ID 做分身，也不要先刪除有重要錄音的 App。簽署工具可能修改最終識別碼，不能只看原始碼就保證與你目前安裝的 App 相同。
+IPA 沒有 Apple 簽章，需由 Windows／AltStore 等私人簽署流程安裝。公開下載檔本身就是 `LectureTranscriber-1.5.0-unsigned.ipa`，不需登入 GitHub 或再解開外層 artifact ZIP。請用相同 Apple 帳號、相同簽署工具和相同識別設定更新原 App。不要換 Bundle ID 做分身，也不要先刪除有重要錄音的 App。簽署工具可能修改最終識別碼，不能只看原始碼就保證與你目前安裝的 App 相同。
 
 穩定 Bundle ID 可避免因每版改名而產生不同 App，但無法取消平台限制。免費帳號通常是每台裝置最多 3 個側載 App、簽署有效期 7 天；App IDs 另有同時最多 10 個、約一週到期的限制。這個 App 本身只有一個識別碼，每台安裝占一個 App 位置。來源：[AltStore 使用說明](https://faq.altstore.io/altstore-classic/your-altstore)、[App IDs](https://faq.altstore.io/altstore-classic/app-ids)。
 

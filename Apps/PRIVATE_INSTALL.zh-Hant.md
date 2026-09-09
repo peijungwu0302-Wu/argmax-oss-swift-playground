@@ -10,7 +10,7 @@
 2. 依 [AltStore 官方 Windows 安裝說明](https://faq.altstore.io/altstore-classic/how-to-install-altstore-windows) 安裝 AltServer 與所需的 Apple 軟體。依官方說明使用相容的 iTunes／iCloud 版本；不要直接移除你正在使用的 iCloud 而忽略同步狀態。
 3. 使用 USB 連接並解鎖 iPad，依官方流程信任電腦、啟用 Wi-Fi 同步，由 AltServer 安裝 AltStore Classic。Apple 帳號與驗證碼在自己的安裝畫面輸入。
 4. 按官方流程啟用 iPad 的開發者模式與信任你的開發者身分。
-5. 在本儲存庫 GitHub Actions 的成功 `Lecture App Validation` 執行中，下載 `LectureTranscriber-unsigned-IPA` artifact。GitHub 下載的是 ZIP，解壓後取得 `LectureTranscriber-unsigned.ipa`。
+5. 從 [公開固定連結](../Deliverables/LectureTranscriber-1.5.0-unsigned.ipa) 直接下載 `LectureTranscriber-1.5.0-unsigned.ipa`；不需登入 GitHub，也不需解開 Actions artifact ZIP。
 6. 將 IPA 存到 iPad「檔案」，開啟 AltStore 的 My Apps，使用「＋」選取 IPA，讓 AltStore 以自己的 Apple 帳號簽署安裝。Windows 上 AltServer 必須能與 iPad 連線。
 7. 安裝完成後從 iPad 主畫面的「課堂逐字稿」圖示直接啟動，不再經過 Swift Playgrounds。首次在獨立 App 使用，需重新允許麥克風並下載模型。
 
