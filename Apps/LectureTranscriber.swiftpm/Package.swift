@@ -10,8 +10,8 @@ let package = Package(
             name: "課堂逐字稿",
             targets: ["AppModule"],
             bundleIdentifier: "com.peijungwu0302.lecturetranscriber",
-            displayVersion: "1.4.0",
-            bundleVersion: "8",
+            displayVersion: "1.4.1",
+            bundleVersion: "9",
             appIcon: .asset("AppIcon"),
             supportedDeviceFamilies: [.pad, .phone],
             supportedInterfaceOrientations: [.portrait, .landscapeLeft, .landscapeRight],
@@ -19,16 +19,14 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(url: "https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground.git", exact: "1.1.3"),
-        .package(url: "https://github.com/k2-fsa/sherpa-onnx.git", exact: "1.13.7")
+        .package(url: "https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground.git", exact: "1.1.3")
     ],
     targets: [
         .executableTarget(
             name: "AppModule",
-            dependencies: [.product(name: "WhisperKit", package: "argmax-oss-swift-playground"),
-                           .product(name: "sherpa-onnx", package: "sherpa-onnx")],
+            dependencies: [.product(name: "WhisperKit", package: "argmax-oss-swift-playground")],
             path: "Sources",
-            resources: [.process("Assets.xcassets")]
+            resources: [.process("Assets.xcassets"), .copy("THIRD-PARTY-NOTICES.txt")]
         )
     ],
     swiftLanguageVersions: [.v5]

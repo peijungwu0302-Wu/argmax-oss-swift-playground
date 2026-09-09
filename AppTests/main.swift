@@ -194,3 +194,8 @@ check(senseBounded.commit && senseBounded.count == 12 * 16000, "Continuous Sense
 check(SenseVoiceWindow.choose(Array(speechBurst.prefix(8000)), final: true).commit, "Stopping flushes the short final utterance")
 check(SenseVoiceWindow.modelLanguage("mixed") == "zh" && SenseVoiceWindow.modelLanguage("mixed-en") == "en" && SenseVoiceWindow.modelLanguage("auto") == "auto", "SenseVoice primary-language settings reach the model")
 print("PASS: SenseVoice draft, pause boundary, silence, bounded input, final flush and language routing")
+
+let pieces = ["<unk>", "<|zh|>", "中", "文", "▁gene", "▁editing", "<0xE4>", "<0xB8>", "<0xAD>"]
+check(SenseVoiceText.decode([1, 2, 3, 4, 5], vocabulary: pieces) == "中文 gene editing", "Core ML detokenizer preserves Chinese and English word boundaries")
+check(SenseVoiceText.decode([6, 7, 8], vocabulary: pieces) == "中", "Byte fallback is decoded as one UTF-8 sequence")
+print("PASS: Core ML CTC text and UTF-8 byte decoding")

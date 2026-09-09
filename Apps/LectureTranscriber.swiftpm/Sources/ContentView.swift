@@ -381,7 +381,7 @@ struct ContentView: View {
                     })) {
                         Text("Apple 即時語音 · iPadOS 26").tag("apple")
                         Text("WhisperKit · Turbo 等模型").tag("whisper")
-                        Text("SenseVoice · 中英混說實驗版").tag("sensevoice")
+                        Text("SenseVoice Core ML · 中英混說實驗版").tag("sensevoice")
                     }.disabled(!controller.canManageSessions)
                     if controller.usesWhisper {
                     Picker("語音模型", selection: $controller.model) {
@@ -391,7 +391,7 @@ struct ContentView: View {
                     Button { Task { await controller.prepareModel() } } label: {
                         Label(controller.loadedModel != nil ? "模型已就緒" : "載入模型", systemImage: "arrow.down.circle")
                     }.disabled(!controller.canManageSessions)
-                    Text("純中文／英文可用 Apple；中英混說可試 SenseVoice INT8（首次下載約 240 MB）。開始錄音會自動載入，之後可離線辨識。")
+                    Text("純中文／英文可用 Apple；中英混說可試 SenseVoice Core ML INT8（首次下載約 240 MB）。開始錄音會自動載入，之後可離線辨識。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("錄音儲存品質") {

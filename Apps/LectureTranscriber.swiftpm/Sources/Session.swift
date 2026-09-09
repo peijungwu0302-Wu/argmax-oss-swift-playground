@@ -457,3 +457,24 @@ struct SenseVoiceWindow {
         return .init(count: count, commit: final || count == maximumSamples, hasSpeech: true)
     }
 }
+
+
+enum SenseVoiceText {
+    // Decode SentencePiece words and byte fallback without adding spaces between
+    // Chinese characters. Adjacent byte tokens must be decoded together as UTF-8.
+    static func decode(_ ids: [Int], vocabulary: [String]) -> String {
+        var text = ""; var bytes: [UInt8] = []
+        func flush() { if !bytes.isEmpty { text += String(decoding: bytes, as: UTF8.self); bytes.removeAll() } }
+        for id in ids where vocabulary.indices.contains(id) {
+            let token = vocabulary[id]
+            if token.hasPrefix("<0x"), token.hasSuffix(">"), token.count == 6,
+               let byte = UInt8(token.dropFirst(3).dropLast(), radix: 16) { bytes.append(byte); continue }
+            flush()
+            if token.hasPrefix("<|"), token.hasSuffix("|>") { continue }
+            if token == "<s>" || token == "</s>" || token == "<unk>" { continue }
+            text += token.replacingOccurrences(of: "▁", with: " ")
+        }
+        flush()
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}

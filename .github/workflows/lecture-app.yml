@@ -12,24 +12,15 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Build actual App Playground for iPad
+      - name: Build Playground sources in Xcode (not the iPad Playgrounds resolver)
         working-directory: Apps/LectureTranscriber.swiftpm
         run: |
           set -o pipefail
           xcodebuild -list
+          python3 ../../AppBuild/check_playground_dependencies.py
           xcodebuild -scheme LectureTranscriber -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/PlaygroundBuild" CODE_SIGNING_ALLOWED=NO build 2>&1 | tee "$RUNNER_TEMP/playground-device.log"
-      - name: Package unsigned IPA for personal sideloading
-        run: |
-          mkdir -p "$RUNNER_TEMP/PersonalInstall/Payload"
-          ditto "$RUNNER_TEMP/PlaygroundBuild/Build/Products/Debug-iphoneos/課堂逐字稿.app" "$RUNNER_TEMP/PersonalInstall/Payload/課堂逐字稿.app"
-          cd "$RUNNER_TEMP/PersonalInstall"
-          zip -qr "$RUNNER_TEMP/LectureTranscriber-unsigned.ipa" Payload
-          unzip -t "$RUNNER_TEMP/LectureTranscriber-unsigned.ipa" | tail -1
-      - uses: actions/upload-artifact@v4
-        with:
-          name: LectureTranscriber-unsigned-IPA
-          path: ${{ runner.temp }}/LectureTranscriber-unsigned.ipa
-      - name: Build and launch actual App Playground on simulator
+      # iPhone personal-install release remains frozen at 1.4.0; no new IPA here.
+      - name: Build and launch Playground sources on simulator
         working-directory: Apps/LectureTranscriber.swiftpm
         run: |
           set -o pipefail
@@ -87,7 +78,7 @@ jobs:
         run: |
           brew install xcodegen
           xcodegen generate --spec AppBuild/project.yml
-      - name: Build against actual WhisperKit on iOS
+      - name: Build source-only speech engines on iOS
         run: |
           set -o pipefail
           xcodebuild -project AppBuild/LectureTranscriber.xcodeproj -scheme LectureTranscriber -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/LectureBuild" CODE_SIGNING_ALLOWED=NO build 2>&1 | tee "$RUNNER_TEMP/lecture-build.log"
@@ -119,10 +110,10 @@ jobs:
 
   sensevoice-native:
     runs-on: macos-26
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Exercise app SenseVoice engine with public bilingual audio
+      - name: Exercise Core ML SenseVoice with public bilingual audio
         run: |
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/SenseVoiceValidation/Sources"
@@ -155,7 +146,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: sensevoice-native-benchmark
+          name: sensevoice-coreml-benchmark
           path: |
             ${{ runner.temp }}/sensevoice-native.log
             ${{ runner.temp }}/sensevoice-results.json

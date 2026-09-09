@@ -39,7 +39,7 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
     }
 
-    func testSenseVoiceNativeIOSBilingualAudio() async throws {
+    func testSenseVoiceCoreMLIOSBilingualAudio() async throws {
         let url = URL(string: "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/test_wavs/0.wav")!
         let (data, response) = try await URLSession.shared.data(from: url)
         XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
@@ -55,8 +55,8 @@ final class AudioAndCaptionTests: XCTestCase {
         await engine.unload()
         XCTAssertNotNil(text.range(of: "[A-Za-z]", options: .regularExpression))
         XCTAssertNotNil(text.range(of: "[\u{4e00}-\u{9fff}]", options: .regularExpression))
-        print("PASS: iOS native SenseVoice bilingual output: \(text)")
-        // This verifies the iOS binary/runtime, not WER or real-device latency.
+        print("PASS: iOS Core ML FP32 SenseVoice bilingual output: \(text)")
+        // This verifies the iOS Core ML CPU path, not WER or real-device latency.
     }
 
     @MainActor

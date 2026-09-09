@@ -36,6 +36,6 @@ import Foundation
         try JSONSerialization.data(withJSONObject: events, options: [.prettyPrinted, .sortedKeys])
             .write(to: URL(fileURLWithPath: CommandLine.arguments[2]))
         await engine.unload()
-        print("PASS: Native Swift/C SenseVoice download, initialization, bilingual modes and bounded-prefix finalization")
+        print("PASS: Core ML FP32/CPU SenseVoice download, initialization, bilingual modes and bounded-prefix finalization")
     }
 }
