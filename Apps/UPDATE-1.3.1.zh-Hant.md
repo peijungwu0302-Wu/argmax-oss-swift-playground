@@ -51,6 +51,10 @@ App 每次建立一個指定主要語言的 SpeechTranscriber。中文為主／�
 - [SenseVoice 官方專案](https://github.com/QwenAudio/SenseVoice) 支援中文、英文等語言。原模型不是原生串流；可搭配 VAD 與短段解碼做近即時。官方列出的社群串流版本以截斷注意力換取偽串流，會犧牲部分準確度。不能當作下載後就能得到零延遲、高準確的中英字幕。
 - 中英 streaming Zipformer／Paraformer 仍是原生串流候選；[此前 Windows 實測](MODEL-BENCHMARK.zh-Hant.md) 只證明短音訊的處理速度，沒有足夠標準答案來判定教室辨識品質。
 
+已補做 SenseVoiceSmall 實際推論：同樣四段公開錄音共 28.67 秒，第二次完整轉錄合計 3.60 秒，約 7.96 倍即時速度。這是 Windows CPU 短檔案測試，不是 iPad／iPhone 或 Apple 引擎比較。「每兩秒重新計算已收音前綴」也會出現暫稿修正；完整方法與限制見上方實測報告。
+
+Whisper Notes 官網仍明確說明它是錄完後轉錄。官網特定模型／裝置的倍數，不表示我們可以在 iPhone 得到同樣延遲，或比 Apple 即時字幕快相同倍數。對目前已確認 Apple 單語符合期待的使用者，優先採用手動中英切換；SenseVoice 留作需要自動混說時的候選，尚未加入本 App。
+
 ## 下一次要測什麼
 
 需要同一段原始錄音比較：純英文與中文為主混說各 30～60 秒，附上容易聽錯的術語。分開記錄聲音有無正常保存、草稿內容、確認位置、翻譯與原文延遲，才能區分收音、模型、字詞對齊和字幕確認的問題。Windows 無法代替 iPad 真機執行 Core ML／Apple Speech 與 Goodnotes 的測試。

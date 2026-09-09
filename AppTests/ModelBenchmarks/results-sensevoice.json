@@ -1,0 +1,194 @@
+{
+  "model": "SenseVoiceSmall INT8",
+  "sherpa_onnx": "1.13.7",
+  "provider": "cpu",
+  "threads": 2,
+  "language": "auto",
+  "use_itn": true,
+  "load_seconds": 5.85413709981367,
+  "model_files": [
+    {
+      "name": "model.int8.onnx",
+      "bytes": 239233841,
+      "sha256": "c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51"
+    },
+    {
+      "name": "tokens.txt",
+      "bytes": 315894,
+      "sha256": "f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc"
+    }
+  ],
+  "clips": [
+    {
+      "file": "0.wav",
+      "sha256": "7d93384ca14702cc584a7a33fe2fed92e89e708549161cb12ea38c916882103b",
+      "audio_seconds": 10.053125,
+      "full_clip_trials": [
+        {
+          "text": "昨天是monday，today is礼拜2，the day after tomorrow是星期三。",
+          "compute_seconds": 1.1488564999308437
+        },
+        {
+          "text": "昨天是monday，today is礼拜2，the day after tomorrow是星期三。",
+          "compute_seconds": 1.5056214001961052
+        }
+      ],
+      "paced_prefix_events": [
+        {
+          "text": "昨天是money。",
+          "compute_seconds": 0.2521911000367254,
+          "audio_supplied_seconds": 2.0,
+          "wall_seconds": 2.252618199912831
+        },
+        {
+          "text": "昨天是monday。",
+          "compute_seconds": 0.39306030003353953,
+          "audio_supplied_seconds": 4.0,
+          "wall_seconds": 4.394406300038099
+        },
+        {
+          "text": "昨天是monday，today is礼拜2。",
+          "compute_seconds": 0.6004629000090063,
+          "audio_supplied_seconds": 6.0,
+          "wall_seconds": 6.601387900067493
+        },
+        {
+          "text": "昨是MdayTodayday is Lithe day after tomorrow.",
+          "compute_seconds": 0.8402963001281023,
+          "audio_supplied_seconds": 8.0,
+          "wall_seconds": 8.841309299925342
+        },
+        {
+          "text": "昨天是monday，today is礼拜2the day after tomorrow是星期三。",
+          "compute_seconds": 1.1219079999718815,
+          "audio_supplied_seconds": 10.0,
+          "wall_seconds": 11.12368299998343
+        },
+        {
+          "text": "昨天是monday，today is礼拜2，the day after tomorrow是星期三。",
+          "compute_seconds": 1.16455930005759,
+          "audio_supplied_seconds": 10.053125,
+          "wall_seconds": 12.288702900055796
+        }
+      ]
+    },
+    {
+      "file": "1.wav",
+      "sha256": "8bfb42c963e623ebab31b81ff4404867d07d3102507c87ac14577c4c61663b8c",
+      "audio_seconds": 5.1,
+      "full_clip_trials": [
+        {
+          "text": "这是第一种。第二种叫呃与OSOS什么意思啊？",
+          "compute_seconds": 0.5145646999590099
+        },
+        {
+          "text": "这是第一种。第二种叫呃与OSOS什么意思啊？",
+          "compute_seconds": 0.498876899946481
+        }
+      ],
+      "paced_prefix_events": [
+        {
+          "text": "，这是第一种。第二种。",
+          "compute_seconds": 0.27413440006785095,
+          "audio_supplied_seconds": 2.0,
+          "wall_seconds": 2.2748744001146406
+        },
+        {
+          "text": "这是第一种。第二种叫呃与Al。",
+          "compute_seconds": 0.37498910003341734,
+          "audio_supplied_seconds": 4.0,
+          "wall_seconds": 4.37609550007619
+        },
+        {
+          "text": "这是第一种。第二种叫呃与OSOS什么意思啊？",
+          "compute_seconds": 0.5297540000174195,
+          "audio_supplied_seconds": 5.1,
+          "wall_seconds": 5.6309162001125515
+        }
+      ]
+    },
+    {
+      "file": "2.wav",
+      "sha256": "20805bcc696b9b65f3357a2508a419d4f33b81006d47e1312e219b0fad934d1d",
+      "audio_seconds": 4.69,
+      "full_clip_trials": [
+        {
+          "text": "这个是平凡的啊，主然是接下来frequently平凡的。",
+          "compute_seconds": 0.49221709999255836
+        },
+        {
+          "text": "这个是平凡的啊，主然是接下来frequently平凡的。",
+          "compute_seconds": 0.49032129999250174
+        }
+      ],
+      "paced_prefix_events": [
+        {
+          "text": "就个是平繁的啊，不然。",
+          "compute_seconds": 0.21415569982491434,
+          "audio_supplied_seconds": 2.0,
+          "wall_seconds": 2.2153205999638885
+        },
+        {
+          "text": "这个是平繁的啊，主然是接下来frequent平繁的。",
+          "compute_seconds": 0.38144410005770624,
+          "audio_supplied_seconds": 4.0,
+          "wall_seconds": 4.381993999937549
+        },
+        {
+          "text": "这个是平凡的啊，主然是接下来frequently平凡的。",
+          "compute_seconds": 0.46031780005432665,
+          "audio_supplied_seconds": 4.69,
+          "wall_seconds": 5.151402899995446
+        }
+      ]
+    },
+    {
+      "file": "3.wav",
+      "sha256": "5851e31f3e8e5f741635da9466e19fccfbabd117ebcdc92db242c92483aee064",
+      "audio_seconds": 8.83,
+      "full_clip_trials": [
+        {
+          "text": "第一句是个什么时态，加了ES是一般现代时对，后把它时态写上去。",
+          "compute_seconds": 0.9753107000142336
+        },
+        {
+          "text": "第一句是个什么时态，加了ES是一般现代时对，后把它时态写上去。",
+          "compute_seconds": 1.1083861999213696
+        }
+      ],
+      "paced_prefix_events": [
+        {
+          "text": "第一句是个什么时态？",
+          "compute_seconds": 0.2158315998967737,
+          "audio_supplied_seconds": 2.0,
+          "wall_seconds": 2.2162033000495285
+        },
+        {
+          "text": "第一句是个什么时态？加了ES是一般现代时。",
+          "compute_seconds": 0.3625254000071436,
+          "audio_supplied_seconds": 4.0,
+          "wall_seconds": 4.362999700009823
+        },
+        {
+          "text": "第一句是个什么时态加了ES是一般现代时对后把它时态写上去。",
+          "compute_seconds": 0.8135740999132395,
+          "audio_supplied_seconds": 6.0,
+          "wall_seconds": 6.81439740001224
+        },
+        {
+          "text": "第一句是个什么时态加了ES是一般现代时对，后把它时态写上去。",
+          "compute_seconds": 0.9848179998807609,
+          "audio_supplied_seconds": 8.0,
+          "wall_seconds": 8.985641000093892
+        },
+        {
+          "text": "第一句是个什么时态，加了ES是一般现代时对，后把它时态写上去。",
+          "compute_seconds": 1.091743899974972,
+          "audio_supplied_seconds": 8.83,
+          "wall_seconds": 10.077742599882185
+        }
+      ]
+    }
+  ],
+  "limitations": "Repeated-prefix experiment re-decodes available audio every 2 seconds. No VAD, native streaming state, commitment rule, user audio, ground truth, Apple device or translation test. Full-clip throughput is not caption latency."
+}

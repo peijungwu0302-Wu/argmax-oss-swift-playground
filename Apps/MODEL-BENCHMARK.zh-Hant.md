@@ -59,3 +59,29 @@ python -X utf8 AppTests/ModelBenchmarks/run_streaming.py paraformer C:\path\to\M
 ```
 
 模型與音檔本身沒有提交到 App 儲存庫。這只是可重現的初步實測，不是效能認證或準確率排名。
+
+## 補測：SenseVoiceSmall，2026-09-10
+
+相同 Windows 電腦、CPU provider、2 執行緒與相同四段錄音，另外執行 [sherpa-onnx 的 SenseVoiceSmall INT8](https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/tree/main)。語言設定 `auto`，啟用 ITN；模型與詞表合計 239.55 MB。程序首次模型初始化 5.85 秒，未控制磁碟快取。
+
+每段完整音檔各跑兩次；下表列第二次。**這是已提供完整音訊的轉檔速度，不是即時字幕延遲，也沒有與 Apple Speech 做速度對比。**
+
+| 音檔 | 音訊長度，秒 | 完整音檔處理時間，秒 |
+|---|---:|---:|
+| 0.wav | 10.05 | 1.506 |
+| 1.wav | 5.10 | 0.499 |
+| 2.wav | 4.69 | 0.490 |
+| 3.wav | 8.83 | 1.108 |
+| 合計 | 28.67 | 3.603 |
+
+合計約 **7.96 倍即時速度，RTF 0.126**。這個數字證明本機處理短音檔有速度餘裕，不能推算 iPhone 15 Pro／iPad M2 的耗時或認定比 Apple 更快。
+
+另做了 17 次「已播放前綴重算」：按真實時間播放，每累積兩秒，把當時已取得的全部短音訊重新送入離線模型，最後再送完整片段。第一次文字約在播放後 2.22～2.27 秒回傳；其中 **2 秒是測試程式刻意等待的收音間隔**，不是模型固有延遲。此實驗沒有 VAD、持久串流狀態、跨視窗去重或定稿機制，不能當作完整即時產品。
+
+例如第一段的短前綴與完整片段產生不同的英文詞，顯示較短上下文的結果仍會修正。未具備人工標準答案，因此不提供準確率排名，也不判定比 Zipformer、Paraformer 或 Turbo 更準。
+
+[實測程式](../AppTests/ModelBenchmarks/run_sensevoice.py)／[完整原始結果](../AppTests/ModelBenchmarks/results-sensevoice.json)。重現時在資料目錄的 `sensevoice/` 放置 `model.int8.onnx`、`tokens.txt`，其餘 `audio/` 與 Python 依賴同前，執行：
+
+```powershell
+python -X utf8 AppTests/ModelBenchmarks/run_sensevoice.py C:\path\to\ModelBenchmarks
+```
