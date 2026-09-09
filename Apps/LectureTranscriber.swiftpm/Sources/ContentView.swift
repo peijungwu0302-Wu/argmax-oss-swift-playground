@@ -224,7 +224,7 @@ struct ContentView: View {
             if controller.translationEnabled && !controller.translationCaption.isEmpty {
                 Text(controller.translationCaption).font(.title3).lineLimit(2).minimumScaleFactor(0.6)
                     .foregroundStyle(Color(red: 1, green: 0.85, blue: 0.45))
-                if !controller.translatedDraft.isEmpty {
+                if !controller.validTranslatedDraft.isEmpty {
                     Text("翻譯草稿 · 稍晚於原文更新").font(.caption2).foregroundStyle(.white.opacity(0.65))
                 }
             }
@@ -240,6 +240,7 @@ struct ContentView: View {
             if controller.translationEnabled {
                 Text("翻成繁體中文 · 先顯示草稿，再保存確認段落；翻譯會比原文稍晚。")
                     .font(.caption).foregroundStyle(gold)
+                Button("重試翻譯") { controller.restartTranslation() }.font(.caption)
             }
         }.padding(16).background(.white.opacity(0.75), in: RoundedRectangle(cornerRadius: 18))
     }
@@ -283,7 +284,7 @@ struct ContentView: View {
                                 }
                             }
                         }
-                        let draft = translated ? controller.translatedDraft : controller.displayedDraft
+                        let draft = translated ? controller.validTranslatedDraft : controller.displayedDraft
                         if controller.search.isEmpty && !draft.isEmpty {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("草稿 · 可能更新").font(.caption).foregroundStyle(gold)
@@ -301,9 +302,10 @@ struct ContentView: View {
                     }
                 }
                 .onChange(of: controller.session?.lines.count) { _ in scrollLatest(proxy) }
+                .onChange(of: controller.session?.lines.last?.text) { _ in if !translated { scrollLatest(proxy) } }
                 .onChange(of: controller.session?.translations?.count) { _ in scrollLatest(proxy) }
                 .onChange(of: controller.displayedDraft) { _ in if !translated { scrollLatest(proxy) } }
-                .onChange(of: controller.translatedDraft) { _ in if translated { scrollLatest(proxy) } }
+                .onChange(of: controller.validTranslatedDraft) { _ in if translated { scrollLatest(proxy) } }
             }
         }.padding(20).background(.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 20))
     }
@@ -385,6 +387,15 @@ struct ContentView: View {
                     Text("新課堂預設 Apple 即時語音；若語言不支援或品質不佳，可切回 WhisperKit Turbo 比較。開始錄音時也會自動載入，第一次需要網路下載。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+                Section("錄音儲存品質") {
+                    Picker("儲存品質", selection: Binding(get: { controller.recordingQuality }, set: { controller.setRecordingQuality($0) })) {
+                        ForEach(RecordingQuality.allCases) { Text($0.title).tag($0) }
+                    }.disabled(!controller.canManageSessions).accessibilityIdentifier("recordingQuality")
+                    Text("只影響接下來的新錄音片段。辨識使用未經 AAC 壓縮的 16 kHz 單聲道音訊；停止並補完辨識後才壓縮保存。")
+                        .font(.caption)
+                    Text("錄音中暫存約 115 MB／小時，壓縮時還需要成品空間。原本的錄音不會自動轉檔；中斷或壓縮失敗時保留原始音訊。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Section("課堂專有名詞") {
                     TextField("例如：CRISPR、Cas9、gene editing", text: $controller.vocabulary, axis: .vertical)
                         .lineLimit(3...5).disabled(controller.settingsLocked || controller.usesAppleSpeech)
@@ -399,7 +410,7 @@ struct ContentView: View {
                         Text(String(format: "草稿音訊落後 %.1f 秒", controller.draftBehindSeconds))
                     }
                     Text("尚未定稿 \(Int(controller.pendingSeconds)) 秒")
-                    Text("錄音約 230 MB／小時；切換到背景或音訊被中斷時會暫停並保存。")
+                    Text("本版進入背景仍會暫停保存。使用 Goodnotes 時請讓字幕視窗保持可見。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("會議整理") {

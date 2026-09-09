@@ -25,6 +25,18 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         CODE_SIGNING_ALLOWED: NO
         TARGETED_DEVICE_FAMILY: "1,2"
+  LogicTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - ../AppTests/Logic
+    dependencies:
+      - target: LectureTranscriber
+    settings:
+      base:
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGNING_ALLOWED: NO
   LaunchTests:
     type: bundle.ui-testing
     platform: iOS
@@ -44,4 +56,5 @@ schemes:
         LectureTranscriber: all
     test:
       targets:
+        - LogicTests
         - LaunchTests

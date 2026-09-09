@@ -29,6 +29,9 @@ final class LectureController: ObservableObject {
     @Published var translationStatus = "開啟後，英語內容會分段翻成繁體中文"
     @Published var translatedDraft = ""
     @Published var translationDraftSource = ""
+    @Published var translationGeneration = UUID()
+    @Published var translationDraftKey: DraftTranslationKey?
+    @Published var recordingQuality = RecordingQuality(rawValue: UserDefaults.standard.string(forKey: "recordingQuality") ?? "compact") ?? .compact
     @Published var liveDraftStart: Double = 0
     @Published private(set) var pendingAppleLanguage: String?
     @Published var isSummarizing = false
@@ -49,6 +52,7 @@ final class LectureController: ObservableObject {
     private var activeDecodeID: UUID?
     private var draftRevision = 0
     private var previousHypothesis: [TranscriptLine] = []
+    private var appleCaptions = AppleCaptionState()
 
     init() {
         do {
@@ -84,14 +88,32 @@ final class LectureController: ObservableObject {
     var usesAppleSpeech: Bool { (session?.recognitionEngine ?? recognitionEngine) == "apple" }
     var draftStart: Double { liveDraft.isEmpty ? (provisional.first?.start ?? duration) : liveDraftStart }
     var caption: String { CaptionText.screen(displayedDraft.isEmpty ? (session?.lines.last?.text ?? "") : displayedDraft) }
+    var draftTranslationKey: DraftTranslationKey? {
+        guard let session, !displayedDraft.isEmpty else { return nil }
+        return DraftTranslationKey(sessionID: session.id, generation: translationGeneration,
+                                   startSample: Int((draftStart * 16000).rounded()), source: displayedDraft)
+    }
+    var validTranslatedDraft: String {
+        guard let key = translationDraftKey, let current = draftTranslationKey, key.accepts(current) else { return "" }
+        return translatedDraft
+    }
     var translationCaption: String {
-        if !translatedDraft.isEmpty { return CaptionText.screen(translatedDraft) }
-        guard let current = session else { return "" }
-        return CaptionText.screen(current.lines.reversed().compactMap { current.translation(for: $0)?.text }.first ?? "")
+        if !displayedDraft.isEmpty { return CaptionText.screen(validTranslatedDraft) }
+        guard let current = session, let line = current.lines.last else { return "" }
+        return CaptionText.screen(current.translation(for: line)?.text ?? "")
+    }
+    func restartTranslation() {
+        translatedDraft = ""; translationDraftSource = ""; translationDraftKey = nil
+        translationGeneration = UUID()
+    }
+    func setRecordingQuality(_ value: RecordingQuality) {
+        guard canManageSessions else { return }
+        recordingQuality = value
+        UserDefaults.standard.set(value.rawValue, forKey: "recordingQuality")
     }
     func setLanguage(_ value: String) {
         guard canManageSessions else { return }
-        language = value; session?.language = value; loadedModel = nil; persist()
+        language = value; session?.language = value; loadedModel = nil; restartTranslation(); persist()
     }
     func selectAppleLanguage(_ value: String) {
         guard usesAppleSpeech, value == "zh" || value == "en", !isBusy,
@@ -168,8 +190,9 @@ final class LectureController: ObservableObject {
                     model: model, language: language, vocabulary: vocabulary, recognitionEngine: recognitionEngine)
             }
             guard var current = session else { return }
-            let part = AudioPart(fileName: UUID().uuidString + ".pcm", offset: current.duration,
-                languageChanges: usesAppleSpeech ? [AudioLanguageChange(sample: 0, language: current.language)] : nil)
+            let part = AudioPart(fileName: UUID().uuidString + ".pcm16", offset: current.duration,
+                languageChanges: usesAppleSpeech ? [AudioLanguageChange(sample: 0, language: current.language)] : nil,
+                recordingQuality: recordingQuality)
             current.parts.append(part)
             try store.save(current)
             session = current
@@ -301,6 +324,7 @@ final class LectureController: ObservableObject {
         worker = nil
         do {
             try await finishPending()
+            await archiveCompletedAudio()
             status = "已暫停並儲存，可繼續同一堂課"
         } catch { fail("最後一段尚未完成；音訊已保留，請按「補辨識」。", error) }
         isBusy = false
@@ -316,6 +340,7 @@ final class LectureController: ObservableObject {
             try await loadModel(session.model)
             status = "正在補辨識已保存的聲音…"
             try await finishPending()
+            await archiveCompletedAudio()
             status = "補辨識完成，已儲存"
             reloadHistory()
         } catch { fail("補辨識未完成，原始聲音仍保留在本機。", error) }
@@ -334,6 +359,29 @@ final class LectureController: ObservableObject {
         persist()
     }
 
+    private func archiveCompletedAudio() async {
+        guard let store, let current = session, !isRecording else { return }
+        for part in current.parts where part.processedSamples == part.sampleCount && part.sampleCount > 0 {
+            guard AudioStorage.bytesPerSample(fileName: part.fileName) != nil,
+                  let bitRate = part.recordingQuality?.bitRate else { continue }
+            let original = store.audioURL(current, part)
+            status = "正在壓縮保存錄音，請保持 App 開啟…"
+            do {
+                let archived = try await Task.detached(priority: .utility) {
+                    try PCMRecorder.archive(original, samples: part.sampleCount, bitRate: bitRate)
+                }.value
+                guard var updated = session, updated.id == current.id,
+                      let index = updated.parts.firstIndex(where: { $0.id == part.id }) else { return }
+                updated.parts[index].fileName = archived.lastPathComponent
+                try store.save(updated) // A failed metadata commit must leave the PCM untouched.
+                session = updated; lastSaved = Date()
+                try FileManager.default.removeItem(at: original)
+            } catch {
+                errorMessage = "錄音已保存，但壓縮尚未完成：\(error.localizedDescription)。原始聲音不會因壓縮失敗被刪除。"
+            }
+        }
+    }
+
     func interrupt(_ reason: String) {
         guard isRecording else { return }
         stopCapture()
@@ -343,6 +391,7 @@ final class LectureController: ObservableObject {
     }
 
     func backgrounded() { interrupt("App 已進入背景，錄音已暫停") }
+    func foregrounded() { if translationEnabled { restartTranslation() } }
     func bookmark(_ note: String) {
         guard session != nil else { return }
         updateAudioCount()
@@ -365,6 +414,7 @@ final class LectureController: ObservableObject {
         guard canManageSessions else { return }
         persist(); reloadHistory()
         session = nil; title = ""; provisional = []; search = ""
+        restartTranslation()
         translatedDraft = ""; summaryStatus = ""
         liveDraft = ""; previousHypothesis = []; lastDecodeSeconds = nil; draftAudioEnd = 0; lastSaved = nil
         status = "準備新的一堂課"
@@ -372,6 +422,7 @@ final class LectureController: ObservableObject {
     func open(_ saved: LectureSession) {
         guard canManageSessions else { return }
         session = saved; title = saved.title; model = saved.model; language = saved.language
+        restartTranslation()
         recognitionEngine = saved.recognitionEngine ?? "whisper"
         vocabulary = saved.vocabulary ?? ""
         provisional = []; search = ""
@@ -411,29 +462,33 @@ final class LectureController: ObservableObject {
         let from = part.processedSamples
         let offset = part.offset + Double(from) / 16000
         let generation = UUID(); activeDecodeID = generation
+        appleCaptions = AppleCaptionState()
+        liveDraft = ""; provisional = []; restartTranslation()
         let selectedLanguage = part.language(at: from, fallback: current.language)
         try await appleSpeech.start(language: selectedLanguage) { [weak self] result in
             guard let self, self.activeDecodeID == generation, self.session?.id == current.id,
                   let index = self.session?.parts.firstIndex(where: { $0.id == part.id }),
                   result.start.isFinite, result.end.isFinite else { return }
             let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            self.draftAudioEnd = offset + result.end
+            self.draftAudioEnd = max(self.draftAudioEnd, offset + result.end)
+            let line = TranscriptLine(start: result.start, end: result.end, text: text)
+            let confirmed = self.appleCaptions.receive(line, final: result.isFinal)
             if result.isFinal {
-                if !text.isEmpty {
-                    self.session?.lines.append(TranscriptLine(start: offset + result.start, end: offset + result.end, text: text))
+                if let confirmed {
+                    self.session?.lines.append(TranscriptLine(start: offset + confirmed.start, end: offset + confirmed.end, text: confirmed.text))
                 }
                 let through = result.finalizedThrough.isFinite ? result.finalizedThrough : result.end
                 let durable = from + Int(max(0, through) * 16000)
                 let count = self.session?.parts[index].sampleCount ?? 0
                 let previous = self.session?.parts[index].processedSamples ?? 0
                 self.session?.parts[index].processedSamples = min(count, max(previous, durable))
-                self.liveDraft = ""; self.provisional = []; self.persist()
-            } else {
-                self.liveDraftStart = offset + result.start; self.liveDraft = text
+                self.persist()
             }
+            self.liveDraftStart = offset + (self.appleCaptions.draft?.start ?? result.end)
+            self.liveDraft = self.appleCaptions.draft?.text ?? ""
+            self.provisional = []
         }
         language = selectedLanguage
-        translatedDraft = ""; translationDraftSource = ""
     }
     private func feedApple(_ partID: UUID) async throws {
         guard let store, let appleSpeech else { return }

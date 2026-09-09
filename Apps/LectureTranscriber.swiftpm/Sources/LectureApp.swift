@@ -9,6 +9,7 @@ struct LectureApp: App {
             ContentView(controller: controller)
                 .onChange(of: scenePhase) { phase in
                     if phase == .background { controller.backgrounded() }
+                    if phase == .active { controller.foregrounded() }
                 }
         }
     }

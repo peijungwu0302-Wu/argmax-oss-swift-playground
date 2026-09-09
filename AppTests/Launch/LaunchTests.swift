@@ -32,6 +32,8 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.textFields["課堂名稱"].waitForExistence(timeout: 5))
         app.buttons["錄音設定"].tap()
         XCTAssertTrue(app.buttons["載入模型"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["recordingQuality"].firstMatch.exists,
+                      "Recording settings must expose storage quality")
         app.buttons["完成"].tap()
         app.buttons["歷史紀錄"].tap()
         XCTAssertTrue(app.staticTexts["還沒有已儲存的課堂"].waitForExistence(timeout: 5))

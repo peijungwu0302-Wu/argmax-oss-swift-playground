@@ -145,3 +145,39 @@ let recoveredLanguagePart = try JSONDecoder().decode(AudioPart.self, from: JSONE
 check(recoveredLanguagePart.languageChanges == languagePart.languageChanges, "Language boundaries survive interruption and reopening")
 check(AudioPart(fileName: "legacy.pcm", offset: 0).language(at: 100, fallback: "en") == "en", "Legacy audio without a language timeline uses the saved language")
 print("PASS: durable language intervals for continuous Apple capture and recovery")
+
+let key = DraftTranslationKey(sessionID: UUID(), generation: UUID(), startSample: 0, source: "Hello")
+var growingKey = key; growingKey.source = "Hello world"
+check(key.accepts(growingKey), "An earlier prefix translation may follow the same growing phrase")
+var repeatedKey = key; repeatedKey.startSample = 64000
+check(!key.accepts(repeatedKey) && key != repeatedKey, "The same words spoken later require a new translation")
+var switchedKey = key; switchedKey.generation = UUID()
+check(!key.accepts(switchedKey), "A language switch invalidates in-flight translations")
+var correctedKey = key; correctedKey.source = "Yellow"
+check(!key.accepts(correctedKey), "A corrected phrase cannot display a stale prefix translation")
+var captions = AppleCaptionState()
+let firstDraft = TranscriptLine(start: 0, end: 2, text: "First draft")
+let nextDraft = TranscriptLine(start: 2, end: 4, text: "Next phrase")
+_ = captions.receive(firstDraft, final: false)
+_ = captions.receive(nextDraft, final: false)
+let confirmedOld = captions.receive(TranscriptLine(start: 0, end: 2, text: "First final"), final: true)
+check(confirmedOld?.text == "First final" && captions.draft?.text == "Next phrase", "An older final cannot erase a newer draft")
+check(captions.receive(firstDraft, final: true) == nil, "Duplicate finalized intervals cannot append duplicate transcript rows")
+_ = captions.receive(firstDraft, final: false)
+check(captions.draft?.text == "Next phrase", "Late volatile updates cannot resurrect already-finalized text")
+_ = captions.receive(nextDraft, final: true)
+check(captions.draft == nil, "The matching final clears its own draft")
+let pcmValues: [Float] = [-1.1, -1, -0.3, 0, 0.3, 1, 1.1, .nan, .infinity]
+let pcmData = AudioStorage.encodePCM16(pcmValues)
+let pcmDecoded = AudioStorage.decodePCM16(pcmData)
+check(pcmData.count == pcmValues.count * 2, "PCM16 uses half the legacy storage")
+check(pcmDecoded[0] == -1 && pcmDecoded[5] < 1 && pcmDecoded[7] == 0, "PCM16 clamps safely and sanitizes invalid samples")
+check(abs(pcmDecoded[2] + 0.3) < 0.00004, "PCM16 preserves speech samples within quantization tolerance")
+var smallSession = LectureSession(title: "PCM16 recovery", model: "test", language: "en")
+smallSession.parts = [AudioPart(fileName: "test.pcm16", offset: 0, sampleCount: 3, recordingQuality: .compact)]
+try store.save(smallSession)
+try pcmData.write(to: store.audioURL(smallSession, smallSession.parts[0]))
+let smallRecovered = try store.loadAll().first { $0.id == smallSession.id }!
+check(smallRecovered.parts[0].sampleCount == pcmValues.count && smallRecovered.parts[0].recordingQuality == .compact, "PCM16 crash recovery uses two bytes per sample and preserves archive quality")
+check(AudioStorage.bytesPerSample(fileName: "old.pcm") == 4 && AudioStorage.bytesPerSample(fileName: "new.m4a") == nil, "Compressed byte counts must never be mistaken for raw sample counts")
+print("PASS: translation generations, repeated phrases, late Apple finals, PCM16 quantization and recovery")

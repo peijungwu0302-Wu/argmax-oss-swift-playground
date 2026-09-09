@@ -31,11 +31,83 @@ struct AudioPart: Codable, Identifiable, Sendable {
     var sampleCount: Int = 0
     var processedSamples: Int = 0
     var languageChanges: [AudioLanguageChange]? = nil
+    var recordingQuality: RecordingQuality? = nil
     func language(at sample: Int, fallback: String) -> String {
         languageChanges?.last(where: { $0.sample <= sample })?.language ?? fallback
     }
     func nextLanguageBoundary(after sample: Int) -> Int? {
         languageChanges?.first(where: { $0.sample > sample })?.sample
+    }
+}
+enum RecordingQuality: String, Codable, CaseIterable, Identifiable, Sendable {
+    case compact, standard, uncompressed
+    var id: String { rawValue }
+    var bitRate: Int? {
+        switch self { case .compact: return 32000; case .standard: return 64000; case .uncompressed: return nil }
+    }
+    var title: String {
+        switch self {
+        case .compact: return "省空間 AAC · 約 14 MB／小時"
+        case .standard: return "標準 AAC · 約 29 MB／小時"
+        case .uncompressed: return "不壓縮 PCM · 約 115 MB／小時"
+        }
+    }
+}
+enum AudioStorage {
+    static func bytesPerSample(fileName: String) -> Int? {
+        switch URL(fileURLWithPath: fileName).pathExtension.lowercased() {
+        case "pcm": return 4 // Legacy Float32 recordings.
+        case "pcm16": return 2
+        default: return nil // Compressed audio uses the persisted original sample count.
+        }
+    }
+    static func encodePCM16(_ samples: [Float]) -> Data {
+        var data = Data(capacity: samples.count * 2)
+        for sample in samples {
+            let safe = sample.isFinite ? max(-1, min(1, sample)) : 0
+            let value = Int16(max(-32768, min(32767, Int((safe * 32768).rounded()))))
+            let bits = UInt16(bitPattern: value)
+            data.append(UInt8(truncatingIfNeeded: bits)); data.append(UInt8(truncatingIfNeeded: bits >> 8))
+        }
+        return data
+    }
+    static func decodePCM16(_ data: Data) -> [Float] {
+        let bytes = [UInt8](data)
+        return stride(from: 0, to: bytes.count - bytes.count % 2, by: 2).map {
+            Float(Int16(bitPattern: UInt16(bytes[$0]) | UInt16(bytes[$0 + 1]) << 8)) / 32768
+        }
+    }
+}
+
+struct DraftTranslationKey: Hashable {
+    var sessionID: UUID
+    var generation: UUID
+    var startSample: Int
+    var source: String
+    func accepts(_ current: Self) -> Bool {
+        sessionID == current.sessionID && generation == current.generation
+            && abs(startSample - current.startSample) < 800
+            && !source.isEmpty && current.source.hasPrefix(source)
+    }
+}
+
+// Progressive results may finalize an older interval after a newer draft arrived.
+// Only the matching draft can be cleared by that final result.
+struct AppleCaptionState {
+    var draft: TranscriptLine?
+    var finalizedEnd: Double = 0
+    mutating func receive(_ line: TranscriptLine, final: Bool) -> TranscriptLine? {
+        guard line.start.isFinite, line.end.isFinite, line.start >= 0, line.end >= line.start else { return nil }
+        if final {
+            guard line.end > finalizedEnd else { return nil }
+            finalizedEnd = line.end
+            if let current = draft, current.end <= line.end + 0.01 { draft = nil }
+            return line.text.isEmpty ? nil : line
+        }
+        guard line.end > finalizedEnd else { return nil }
+        if let current = draft, line.start < current.start - 0.01 { return nil }
+        draft = line
+        return nil
     }
 }
 struct AudioLanguageChange: Codable, Equatable, Sendable {
@@ -317,8 +389,9 @@ struct SessionStore {
                     if session.parts[index].sampleCount == 0 { continue }
                     throw LectureError.message("找不到錄音檔：\(session.title) / \(session.parts[index].fileName)")
                 }
-                if let size = try FileManager.default.attributesOfItem(atPath: audio.path)[.size] as? NSNumber {
-                    session.parts[index].sampleCount = size.intValue / MemoryLayout<Float>.size
+                if let width = AudioStorage.bytesPerSample(fileName: audio.lastPathComponent),
+                   let size = try FileManager.default.attributesOfItem(atPath: audio.path)[.size] as? NSNumber {
+                    session.parts[index].sampleCount = size.intValue / width
                 }
             }
             result.append(session)
