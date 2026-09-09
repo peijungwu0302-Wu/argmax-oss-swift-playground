@@ -37,7 +37,7 @@ private struct TranslationWorker: ViewModifier {
                     var draftWasLast = false
                     var retryAfter: [UUID: Date] = [:]
                     while !Task.isCancelled && controller.translationEnabled && generation == controller.translationGeneration {
-                        guard let lecture = controller.session, !controller.isSummarizing else {
+                        guard let lecture = controller.session, !controller.isSummarizing, controller.isInForeground else {
                             try await Task.sleep(nanoseconds: 300_000_000)
                             continue
                         }

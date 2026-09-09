@@ -15,6 +15,7 @@ final class LectureController: ObservableObject {
     @Published var progress: Double?
     @Published var loadedModel: String?
     @Published var isRecording = false
+    @Published private(set) var isInForeground = true
     @Published var isBusy = false
     @Published var isDecoding = false
     @Published var level: Float = 0
@@ -40,7 +41,7 @@ final class LectureController: ObservableObject {
     @Published var notesPrompt = UserDefaults.standard.string(forKey: "notesPrompt") ?? "以繁體中文整理重點、決議、待辦；保留英文術語和來源時間戳。"
     @Published var translationSource = "en"
     var supportsBackgroundAudio: Bool { (Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String])?.contains("audio") == true }
-    var backgroundDescription: String { supportsBackgroundAudio ? "私人安裝版支援背景收音；系統中斷或資源限制仍可能暫停，回到畫面可補辨識。" : "Playground 版請保持字幕視窗可見；測試背景錄音請使用 IPA。" }
+    var backgroundDescription: String { supportsBackgroundAudio ? "私人安裝版在背景保存錄音，回到字幕視窗後繼續辨識；系統中斷仍可能暫停。" : "Playground 版請保持字幕視窗可見；測試背景錄音請使用 IPA。" }
     func audioSize(_ lecture: LectureSession) -> String {
         ByteCountFormatter.string(fromByteCount: store?.audioBytes(lecture) ?? 0, countStyle: .file)
     }
@@ -117,7 +118,11 @@ final class LectureController: ObservableObject {
             }
         }
         guard let current = session, let line = current.lines.last else { return "" }
-        return CaptionText.screen(current.translation(for: line)?.text ?? "")
+        if let translated = current.translation(for: line) { return CaptionText.screen(translated.text) }
+        if translationDraftKey?.sessionID == current.id && translationDraftKey?.generation == translationGeneration && !translatedDraft.isEmpty {
+            return "更新中 · 上次翻譯\n" + CaptionText.screen(translatedDraft)
+        }
+        return ""
     }
     func setTranslationSource(_ value: String) {
         guard value == "en" || value == "ja", value != translationSource else { return }
@@ -272,6 +277,7 @@ final class LectureController: ObservableObject {
                 try await streamApple()
             } else {
             while isRecording {
+                if !isInForeground { try await Task.sleep(nanoseconds: 300_000_000); continue }
                 updateAudioCount()
                 guard let current = session, let part = current.parts.last else { break }
                 let available = part.sampleCount - part.processedSamples
@@ -287,9 +293,13 @@ final class LectureController: ObservableObject {
         } catch is CancellationError {
             // Cancellation never marks unfinished audio as confirmed.
         } catch {
-            stopCapture()
             await appleSpeech?.cancel()
-            fail("辨識暫停，已錄聲音保留在本機，可按「補辨識」。", error)
+            if isRecording && !isInForeground && supportsBackgroundAudio {
+                status = "背景辨識已暫停，錄音仍持續保存；回到畫面後繼續"
+            } else {
+                stopCapture()
+                fail("辨識暫停，已錄聲音保留在本機，可按「補辨識」。", error)
+            }
         }
         isDecoding = false
         worker = nil
@@ -454,12 +464,26 @@ final class LectureController: ObservableObject {
     }
 
     func backgrounded() {
+        isInForeground = false
         if supportsBackgroundAudio && isRecording {
             updateAudioCount(); persist()
             status = "背景錄音中；返回 App 後檢查字幕進度"
         } else { interrupt("App 已進入背景，錄音已暫停") }
     }
-    func foregrounded() { if translationEnabled { restartTranslation() } }
+    func foregrounded() {
+        isInForeground = true
+        if translationEnabled { restartTranslation() }
+        if isRecording && worker == nil {
+            worker = Task { [weak self] in
+                guard let self else { return }
+                do {
+                    try await loadModel(session?.model ?? model)
+                    if usesAppleSpeech, let current = session, let part = current.parts.last { try await startApple(part, current: current) }
+                    await streamLoop()
+                } catch { stopCapture(); worker = nil; fail("恢復辨識失敗，聲音已保存。", error) }
+            }
+        }
+    }
     func bookmark(_ note: String) {
         guard session != nil else { return }
         updateAudioCount()
@@ -602,6 +626,7 @@ final class LectureController: ObservableObject {
     private func streamApple() async throws {
         guard let partID = activePartID else { return }
         while true {
+            if isRecording && !isInForeground { try await Task.sleep(nanoseconds: 300_000_000); continue }
             updateAudioCount()
             try await feedApple(partID)
             guard let current = session, let part = current.parts.first(where: { $0.id == partID }) else { return }

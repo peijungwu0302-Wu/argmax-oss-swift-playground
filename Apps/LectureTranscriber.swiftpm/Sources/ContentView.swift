@@ -108,7 +108,7 @@ struct ContentView: View {
             .modifier(LiveTranslationModifier(controller: controller))
             .sheet(isPresented: $showHistory, onDismiss: { if importAfterHistory { importAfterHistory = false; showImport = true } }) { historySheet }
             .sheet(isPresented: $showAudio) {
-                if let lecture = controller.session { NavigationStack { AudioLibraryView(controller: controller, lecture: lecture) } }
+                if let lecture = controller.session { NavigationStack { AudioLibraryView(controller: controller, lecture: lecture).toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showAudio = false } } } } }
             }
             .fileImporter(isPresented: $showImport, allowedContentTypes: [.audio, .data]) { result in
                 switch result {
@@ -241,7 +241,7 @@ struct ContentView: View {
                 .font(.system(size: 25, weight: .medium)).lineLimit(2).minimumScaleFactor(0.6)
                 .frame(maxWidth: .infinity, alignment: .leading).foregroundStyle(.white)
             if controller.translationEnabled && !controller.translationCaption.isEmpty {
-                Text(controller.translationCaption).font(.title3).lineLimit(2).minimumScaleFactor(0.6)
+                Text(controller.translationCaption).font(.title3).lineLimit(3).minimumScaleFactor(0.6)
                     .foregroundStyle(Color(red: 1, green: 0.85, blue: 0.45))
                 if !controller.validTranslatedDraft.isEmpty {
                     Text("翻譯草稿 · 稍晚於原文更新").font(.caption2).foregroundStyle(.white.opacity(0.65))
@@ -257,7 +257,7 @@ struct ContentView: View {
             }.tint(.green).accessibilityIdentifier("translationToggle")
             Text(controller.translationStatus).font(.caption).foregroundStyle(.secondary)
             if controller.translationEnabled {
-                Text("翻成繁體中文 · 先顯示草稿，再保存確認段落；翻譯會比原文稍晚。")
+                Text((controller.translationSource == "ja" ? "日文 → 繁體中文" : "英文 → 繁體中文") + " · 先顯示草稿，再保存確認段落；翻譯會比原文稍晚。")
                     .font(.caption).foregroundStyle(gold)
                 Button("重試翻譯") { controller.restartTranslation() }.font(.caption)
             }
@@ -474,6 +474,7 @@ struct ContentView: View {
                     if controller.isSummarizing { ProgressView(controller.summaryStatus) }
                     else if !controller.summaryStatus.isEmpty { Text(controller.summaryStatus).font(.caption) }
                     if let current = controller.session, let notes = current.minutes {
+                        if let prompt = current.minutesPrompt { Text("本次整理偏好：" + prompt).font(.caption).foregroundStyle(.secondary) }
                         if !current.minutesAreCurrent {
                             Label("逐字稿已更新，請重新整理", systemImage: "arrow.clockwise").foregroundStyle(.orange)
                         }
