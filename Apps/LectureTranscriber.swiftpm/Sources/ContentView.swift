@@ -7,23 +7,55 @@ struct ContentView: View {
     @ObservedObject var controller: LectureController
     @State private var showHistory = false
     @State private var showBookmark = false
+    @State private var showSettings = false
+    @State private var showMinutes = false
     @State private var bookmarkNote = ""
     @State private var sharedFile: SharedFile?
     @State private var editedLine: TranscriptLine?
     @State private var followLatest = true
     @State private var pendingDeletion: LectureSession?
-    private let ink = Color(red: 0.09, green: 0.20, blue: 0.24)
-    private let teal = Color(red: 0.02, green: 0.43, blue: 0.43)
+    private let paper = Color(red: 0.97, green: 0.95, blue: 0.90)
+    private let ink = Color(red: 0.20, green: 0.19, blue: 0.16)
+    private let gold = Color(red: 0.59, green: 0.40, blue: 0.08)
+    private let red = Color(red: 0.69, green: 0.18, blue: 0.14)
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                controls
-                Divider()
-                transcript
+            GeometryReader { geometry in
+                ScrollView {
+                    VStack(spacing: 20) {
+                        recordingHeader
+                        translationCard
+                        HStack {
+                            Image(systemName: "magnifyingglass")
+                            TextField("搜尋逐字稿", text: $controller.search)
+                            Toggle("跟隨最新", isOn: $followLatest).font(.caption).fixedSize()
+                        }.foregroundStyle(.secondary)
+                        let height = max(280, geometry.size.height - 350)
+                        if geometry.size.width >= 700 && controller.translationEnabled {
+                            HStack(alignment: .top, spacing: 20) {
+                                transcriptPane(translated: false).frame(maxWidth: .infinity)
+                                transcriptPane(translated: true).frame(maxWidth: .infinity)
+                            }.frame(height: height)
+                        } else {
+                            transcriptPane(translated: false).frame(height: height)
+                            if controller.translationEnabled {
+                                transcriptPane(translated: true).frame(height: 300)
+                            }
+                        }
+                        Text("音訊與文字保存在這台裝置 · 錄音期間請保持 App 在前景")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, geometry.size.width >= 700 ? 32 : 20)
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: 1200)
+                    .frame(maxWidth: .infinity)
+                }
             }
-            .background(Color(uiColor: .systemGroupedBackground))
-            .navigationTitle("課堂逐字稿")
+            .background(paper)
+            .foregroundStyle(ink)
+            .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar }
+            .navigationTitle("錄音")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -34,18 +66,25 @@ struct ContentView: View {
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
                     Button { controller.newLecture() } label: { Label("新課堂", systemImage: "square.and.pencil") }
                         .disabled(!controller.canManageSessions)
+                    Button { showSettings = true } label: { Label("錄音設定", systemImage: "slider.horizontal.3") }
                     Menu {
                         ForEach(TranscriptFormat.allCases) { format in
                             Button("匯出 \(format.rawValue)") {
                                 if let url = controller.export(format) { sharedFile = SharedFile(url: url) }
                             }
                         }
+                        if controller.session?.minutes != nil {
+                            Button("查看會議紀錄") { showMinutes = true }
+                        }
                     } label: { Label("匯出", systemImage: "square.and.arrow.up") }
-                    .disabled(controller.session == nil || controller.isBusy || controller.isRecording)
+                    .disabled(controller.session == nil || !controller.canManageSessions)
                 }
             }
-            .tint(teal)
+            .tint(gold)
+            .modifier(LiveTranslationModifier(controller: controller))
             .sheet(isPresented: $showHistory) { historySheet }
+            .sheet(isPresented: $showSettings) { settingsSheet }
+            .sheet(isPresented: $showMinutes) { minutesSheet }
             .sheet(item: $sharedFile) { file in ShareSheet(url: file.url) }
             .sheet(item: $editedLine) { line in LineEditor(line: line) { controller.updateLine(line.id, text: $0) } }
             .alert("重點標記", isPresented: $showBookmark) {
@@ -57,157 +96,253 @@ struct ContentView: View {
                 Button("知道了") { controller.errorMessage = nil }
             } message: { Text(controller.errorMessage ?? "") }
         }
+        .preferredColorScheme(.light)
     }
 
-    private var controls: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                TextField("課堂名稱", text: $controller.title)
-                    .font(.title2.bold())
-                    .onSubmit { controller.rename(controller.title) }
-                    .onChange(of: controller.title) { value in if controller.session != nil { controller.rename(value) } }
-                Spacer(minLength: 8)
-                Text(TranscriptExport.clock(controller.duration)).font(.title2.monospacedDigit()).foregroundStyle(teal)
+    private var recordingHeader: some View {
+        VStack(spacing: 12) {
+            TextField("課堂名稱", text: $controller.title)
+                .font(.headline).multilineTextAlignment(.center)
+                .onChange(of: controller.title) { value in
+                    if controller.session != nil { controller.rename(value) }
+                }
+            HStack(spacing: 10) {
+                if controller.isRecording { Circle().fill(red).frame(width: 10, height: 10) }
+                Text(TranscriptExport.clock(controller.duration))
+                    .font(.system(size: 48, weight: .semibold, design: .rounded).monospacedDigit())
+                    .minimumScaleFactor(0.6).lineLimit(1)
                     .accessibilityLabel("錄音時間 \(TranscriptExport.clock(controller.duration))")
             }
-            ViewThatFits(in: .horizontal) {
-                HStack { settings; Spacer(); modelButton }
-                VStack(alignment: .leading) { settings; modelButton }
-            }
-            DisclosureGroup("課堂專有名詞（選填）") {
-                TextField("例如：CRISPR、Cas9、gene editing", text: $controller.vocabulary, axis: .vertical)
-                    .lineLimit(2...3).textFieldStyle(.roundedBorder)
-                    .onChange(of: controller.vocabulary) { value in
-                        if value.count > 500 { controller.vocabulary = String(value.prefix(500)) }
-                    }
-                Text("提示模型辨識人名與術語，不保證逐字正確。中文為主、夾雜英文時可選中英混說。")
-                    .font(.caption).foregroundStyle(.secondary)
-            }.font(.footnote).disabled(controller.settingsLocked)
-            if controller.isBusy {
-                if let fraction = controller.progress { ProgressView(value: fraction) }
-                else { ProgressView().frame(maxWidth: .infinity, alignment: .leading) }
-            }
-            HStack(spacing: 8) {
-                Circle().fill(controller.isRecording ? Color.red : teal).frame(width: 8, height: 8)
-                Text(controller.status).font(.footnote).foregroundStyle(.secondary)
-                Spacer()
-                if controller.isDecoding { ProgressView().controlSize(.small) }
-            }
-            if controller.isRecording {
-                ProgressView(value: Double(controller.level)).tint(teal).accessibilityLabel("麥克風音量")
-            }
-            HStack {
-                if controller.isRecording {
-                    Button { Task { await controller.pause() } } label: {
-                        Label("暫停並儲存", systemImage: "pause.fill").frame(minHeight: 28)
-                    }.buttonStyle(.borderedProminent).disabled(controller.isBusy)
-                } else if controller.session?.hasPendingAudio == true {
-                    Button { Task { await controller.recover() } } label: {
-                        Label("補辨識", systemImage: "arrow.triangle.2.circlepath").frame(minHeight: 28)
-                    }.buttonStyle(.borderedProminent).disabled(controller.isBusy)
-                } else {
-                    Button { Task { await controller.start() } } label: {
-                        Label(controller.session == nil ? "開始錄音" : "繼續錄音", systemImage: "mic.fill").frame(minHeight: 28)
-                    }.buttonStyle(.borderedProminent).disabled(!controller.canStart)
-                }
-                Button { controller.bookmark("") } label: { Label("標記", systemImage: "star") }
-                    .buttonStyle(.bordered).disabled(controller.session == nil)
-                    .contextMenu { Button("加入文字註記") { showBookmark = true } }
-                Spacer()
-                if controller.pendingSeconds > 5 {
-                    Text("尚未定稿 \(Int(controller.pendingSeconds)) 秒").font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            if controller.isRecording, let seconds = controller.lastDecodeSeconds {
-                Text(String(format: "本輪辨識 %.1f 秒 · 草稿音訊落後 %.1f 秒", seconds, controller.draftBehindSeconds))
-                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-            }
-            Text("保持 App 在前景；錄音時螢幕不會自動鎖定。首次下載完成後可離線辨識。")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-        .padding(20)
-        .background(Color(uiColor: .secondarySystemGroupedBackground))
-    }
-
-    private var settings: some View {
-        HStack {
-            Picker("語音模型", selection: $controller.model) {
-                ForEach(SpeechModel.allCases) { Text($0.title).tag($0.rawValue) }
-            }
             Picker("辨識語言", selection: $controller.language) {
-                Text("中英混說（中文為主）").tag("mixed")
-                Text("自動偵測主語言").tag("auto")
+                Text("自動").tag("auto")
+                Text("中英夾雜").tag("mixed")
                 Text("中文").tag("zh")
-                Text("English").tag("en")
+                Text("英文").tag("en")
+            }.pickerStyle(.segmented).disabled(controller.settingsLocked).frame(maxWidth: 560)
+            Text(controller.language == "mixed" ? "中文為主、夾雜英文術語；英語為主的課堂請選英文。" : "指定主要語言有助辨識；自動模式會偵測主要語言。")
+                .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            HStack(spacing: 8) {
+                if controller.isBusy || controller.isDecoding { ProgressView().controlSize(.small) }
+                Text(controller.status).font(.caption).foregroundStyle(.secondary)
             }
-        }.pickerStyle(.menu).disabled(controller.settingsLocked)
-    }
-    private var modelButton: some View {
-        Button { Task { await controller.prepareModel() } } label: {
-            Label(controller.loadedModel == controller.model ? "模型已就緒" : "載入模型",
-                systemImage: controller.loadedModel == controller.model ? "checkmark.circle" : "arrow.down.circle")
-        }.disabled(controller.isBusy || controller.isRecording)
+            if let progress = controller.progress { ProgressView(value: progress).frame(maxWidth: 560) }
+            if controller.isRecording {
+                ProgressView(value: Double(controller.level)).tint(red).frame(maxWidth: 300)
+                    .accessibilityLabel("麥克風音量")
+            }
+        }
     }
 
-    private var transcript: some View {
-        VStack(spacing: 0) {
+    private var translationCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle(isOn: $controller.translationEnabled) {
+                Label("即時翻譯字幕", systemImage: "captions.bubble.fill").font(.headline)
+            }.tint(.green).accessibilityIdentifier("translationToggle")
+            Text(controller.translationStatus).font(.caption).foregroundStyle(.secondary)
+            if controller.translationEnabled {
+                Text("翻成繁體中文 · 先顯示草稿，再保存確認段落；翻譯會比原文稍晚。")
+                    .font(.caption).foregroundStyle(gold)
+            }
+        }.padding(16).background(.white.opacity(0.75), in: RoundedRectangle(cornerRadius: 18))
+    }
+
+    private func transcriptPane(translated: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("搜尋逐字稿", text: $controller.search)
-                Toggle("跟隨最新", isOn: $followLatest).font(.caption).fixedSize()
-            }.padding(.horizontal, 20).padding(.vertical, 12)
+                Label(translated ? "中文翻譯" : "即時逐字稿",
+                      systemImage: translated ? "character.bubble" : "waveform")
+                    .font(.headline).foregroundStyle(translated ? gold : ink)
+                Spacer()
+                Text(translated ? "繁體中文" : "原文").font(.caption).foregroundStyle(.secondary)
+            }
+            Divider()
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 16) {
                         if controller.session?.lines.isEmpty != false && controller.displayedDraft.isEmpty {
-                            VStack(alignment: .leading, spacing: 14) {
-                                Image(systemName: "waveform").font(.system(size: 38)).foregroundStyle(teal)
-                                Text("把注意力留給課堂").font(.title2.bold()).foregroundStyle(ink)
-                                Text("說話時會先顯示即時草稿，再逐段確認。灰色文字會隨辨識更新，確認後會自動保存。")
-                                    .foregroundStyle(.secondary)
-                                Text("音訊與逐字稿保留在這台 iPad；錄音約使用 230 MB／小時。")
-                                    .font(.footnote).foregroundStyle(.secondary)
-                            }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
+                            VStack(alignment: .leading, spacing: 12) {
+                                Image(systemName: translated ? "character.bubble" : "waveform")
+                                    .font(.system(size: 30)).foregroundStyle(gold.opacity(0.7))
+                                Text(translated ? "讓理解跟上對話" : "把注意力留給課堂").font(.title3.bold())
+                                Text(translated ? "英語會逐段翻成中文，中文內容保留原文。首次使用請允許下載翻譯語言。" : "按下開始錄音，文字會在這裡逐步出現。灰色草稿可能修正，確認後自動保存。")
+                                    .font(.callout).foregroundStyle(.secondary)
+                            }.padding(.vertical, 28)
                         }
-                        ForEach(controller.session?.lines.filter { controller.search.isEmpty || $0.text.localizedCaseInsensitiveContains(controller.search) } ?? []) { line in
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(TranscriptExport.clock(line.start)).font(.caption.monospacedDigit()).foregroundStyle(teal)
-                                Text(line.text).font(.body).textSelection(.enabled).lineSpacing(5)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(16)
-                            .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
-                            .contextMenu { Button("編輯文字") { editedLine = line } }
-                        }
-                        if controller.search.isEmpty, !controller.displayedDraft.isEmpty {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Label("即時草稿 · 文字可能修正", systemImage: "ellipsis.bubble").font(.caption)
-                                Text(controller.displayedDraft).lineSpacing(5).textSelection(.enabled)
-                            }.foregroundStyle(.secondary).padding(16)
-                        }
-                        if let marks = controller.session?.bookmarks, !marks.isEmpty {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Label("重點", systemImage: "star.fill").font(.headline).foregroundStyle(teal)
-                                ForEach(marks) { mark in
-                                    Text("\(TranscriptExport.clock(mark.seconds))  \(mark.note)").font(.callout)
+                        ForEach(controller.session?.lines ?? []) { line in
+                            if let text = paneText(line, translated: translated),
+                               controller.search.isEmpty || text.localizedCaseInsensitiveContains(controller.search) {
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text(TranscriptExport.clock(line.start))
+                                        .font(.caption.monospacedDigit()).foregroundStyle(gold)
+                                    Text(text).lineSpacing(4).textSelection(.enabled)
                                 }
-                            }.padding(16)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contextMenu {
+                                    if !translated {
+                                        Button("編輯文字") { editedLine = line }.disabled(controller.isSummarizing)
+                                    }
+                                    Button("複製") { UIPasteboard.general.string = text }
+                                }
+                            }
+                        }
+                        let draft = translated ? controller.translatedDraft : controller.displayedDraft
+                        if controller.search.isEmpty && !draft.isEmpty {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("草稿 · 可能更新").font(.caption).foregroundStyle(gold)
+                                Text(draft).lineSpacing(4)
+                            }.foregroundStyle(.secondary)
+                        }
+                        if !translated, let marks = controller.session?.bookmarks, !marks.isEmpty {
+                            Divider()
+                            ForEach(marks) { mark in
+                                Label("\(TranscriptExport.clock(mark.seconds))  \(mark.note)", systemImage: "bookmark.fill")
+                                    .font(.caption).foregroundStyle(gold)
+                            }
                         }
                         Color.clear.frame(height: 1).id("bottom")
-                    }.padding(.horizontal, 20).padding(.vertical, 12)
+                    }
                 }
-                .onChange(of: controller.session?.lines.count) { _ in
-                    if followLatest && controller.search.isEmpty { withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
-                }
-                .onChange(of: controller.displayedDraft) { _ in
-                    if followLatest && controller.search.isEmpty { proxy.scrollTo("bottom", anchor: .bottom) }
-                }
+                .onChange(of: controller.session?.lines.count) { _ in scrollLatest(proxy) }
+                .onChange(of: controller.session?.translations?.count) { _ in scrollLatest(proxy) }
+                .onChange(of: controller.displayedDraft) { _ in if !translated { scrollLatest(proxy) } }
+                .onChange(of: controller.translatedDraft) { _ in if translated { scrollLatest(proxy) } }
             }
-            if let saved = controller.lastSaved {
+        }.padding(20).background(.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 20))
+    }
+    private func paneText(_ line: TranscriptLine, translated: Bool) -> String? {
+        translated ? controller.session?.translation(for: line)?.text : line.text
+    }
+    private func scrollLatest(_ proxy: ScrollViewProxy) {
+        if followLatest && controller.search.isEmpty { proxy.scrollTo("bottom", anchor: .bottom) }
+    }
+
+    private var bottomBar: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 12) {
+                Button {
+                    if let url = controller.exportNotes(translation: true) { sharedFile = SharedFile(url: url) }
+                } label: { Label("分享翻譯", systemImage: "square.and.arrow.up") }
+                    .disabled(controller.session?.translations?.isEmpty != false)
+                Spacer()
+                Button {
+                    showMinutes = true
+                } label: { Label("會議紀錄", systemImage: "doc.text").padding(.horizontal, 8) }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(controller.session?.lines.isEmpty != false)
+            }.font(.callout)
+            HStack(spacing: 12) {
+                Button {
+                    Task {
+                        if controller.isRecording { await controller.pause() }
+                        else if controller.session?.hasPendingAudio == true { await controller.recover() }
+                        else { await controller.start() }
+                    }
+                } label: {
+                    Label(recordLabel, systemImage: controller.isRecording ? "stop.fill" : "mic.fill")
+                        .font(.headline).frame(maxWidth: .infinity, minHeight: 36)
+                }
+                .buttonStyle(.borderedProminent).tint(red).clipShape(Capsule())
+                .disabled(controller.isBusy || controller.isSummarizing || (!controller.isRecording && !controller.canStart && controller.session?.hasPendingAudio != true))
+                Button { showBookmark = true } label: {
+                    Image(systemName: "bookmark").font(.title3).frame(width: 44, height: 44)
+                }.buttonStyle(.bordered).clipShape(Circle()).disabled(controller.session == nil)
+                    .accessibilityLabel("加入重點標記")
+            }
+            if controller.isSummarizing {
+                Text(controller.summaryStatus).font(.caption).foregroundStyle(gold)
+            } else if let saved = controller.lastSaved {
                 Text("已儲存到本機 · \(saved.formatted(date: .omitted, time: .standard))")
-                    .font(.caption2).foregroundStyle(.secondary).padding(8)
+                    .font(.caption2).foregroundStyle(.secondary)
             }
+        }.padding(.horizontal, 24).padding(.vertical, 12)
+            .frame(maxWidth: 1200).frame(maxWidth: .infinity).background(paper)
+    }
+    private var recordLabel: String {
+        if controller.isRecording { return "停止並儲存" }
+        if controller.session?.hasPendingAudio == true { return "補辨識" }
+        return controller.session == nil ? "開始錄音" : "繼續錄音"
+    }
+
+    private var settingsSheet: some View {
+        NavigationStack {
+            Form {
+                Section("語音辨識") {
+                    Picker("語音模型", selection: $controller.model) {
+                        ForEach(SpeechModel.allCases) { Text($0.title).tag($0.rawValue) }
+                    }.disabled(controller.settingsLocked)
+                    Button { Task { await controller.prepareModel() } } label: {
+                        Label(controller.loadedModel == controller.model ? "模型已就緒" : "載入模型", systemImage: "arrow.down.circle")
+                    }.disabled(!controller.canManageSessions)
+                    Text("你的 M2 iPad 先使用 Turbo。開始錄音時也會自動載入，第一次需要網路下載。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Section("課堂專有名詞") {
+                    TextField("例如：CRISPR、Cas9、gene editing", text: $controller.vocabulary, axis: .vertical)
+                        .lineLimit(3...5).disabled(controller.settingsLocked)
+                        .onChange(of: controller.vocabulary) { value in
+                            if value.count > 500 { controller.vocabulary = String(value.prefix(500)) }
+                        }
+                    Text("這是辨識提示，不能保證人名與術語正確。").font(.caption)
+                }
+                Section("辨識狀態") {
+                    if let seconds = controller.lastDecodeSeconds {
+                        Text(String(format: "本輪辨識 %.1f 秒", seconds))
+                        Text(String(format: "草稿音訊落後 %.1f 秒", controller.draftBehindSeconds))
+                    }
+                    Text("尚未定稿 \(Int(controller.pendingSeconds)) 秒")
+                    Text("錄音約 230 MB／小時；切換到背景或音訊被中斷時會暫停並保存。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Section("會議整理") {
+                    Text("AI 整理使用 iPadOS 26 的 Apple Intelligence。請在系統設定啟用並完成模型下載；若不可用，會產生保留時間戳的原文整理。")
+                        .font(.callout)
+                }
+            }.navigationTitle("錄音設定")
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showSettings = false } } }
         }
     }
+
+    private var minutesSheet: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Label("把對話整理成可回顧的記錄", systemImage: "doc.text")
+                        .font(.title3.bold())
+                    Text("停止錄音並完成補辨識後，可用裝置端 AI 整理重點、明確決議與待辦。結果需要對照原文確認。")
+                        .foregroundStyle(.secondary)
+                    Button(controller.session?.minutes == nil ? "產生會議紀錄" : "重新整理") {
+                        Task { await controller.generateMinutes() }
+                    }.buttonStyle(.borderedProminent)
+                        .disabled(!controller.canManageSessions || controller.session?.hasPendingAudio == true)
+                    Button("使用原文整理（不需要 Apple Intelligence）") { controller.makeOutline() }
+                        .disabled(!controller.canManageSessions)
+                    if controller.isSummarizing { ProgressView(controller.summaryStatus) }
+                    else if !controller.summaryStatus.isEmpty { Text(controller.summaryStatus).font(.caption) }
+                    if let current = controller.session, let notes = current.minutes {
+                        if !current.minutesAreCurrent {
+                            Label("逐字稿已更新，請重新整理", systemImage: "arrow.clockwise").foregroundStyle(.orange)
+                        }
+                        Divider()
+                        ForEach(Array(notes.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
+                            if line.hasPrefix("#") {
+                                Text(line.drop(while: { $0 == "#" || $0 == " " })).font(.headline)
+                            } else if !line.isEmpty {
+                                Text(line).textSelection(.enabled)
+                            }
+                        }
+                    }
+                }.padding(24).frame(maxWidth: 850).frame(maxWidth: .infinity, alignment: .leading)
+            }.background(paper).navigationTitle("會議紀錄")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("完成") { showMinutes = false } }
+                    ToolbarItem(placement: .confirmationAction) {
+                        ShareLink(item: (controller.session?.minutesAreCurrent == false ? "注意：逐字稿已有更新，這是先前整理的版本。\n\n" : "") + (controller.session?.minutes ?? "")) { Label("分享", systemImage: "square.and.arrow.up") }
+                            .disabled(controller.session?.minutes == nil)
+                    }
+                }
+        }.tint(gold)
+    }
+
     private var historySheet: some View {
         NavigationStack {
             List {

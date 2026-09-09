@@ -1,5 +1,7 @@
 # 課堂逐字稿 · iPad App Playground
 
+最新 App 1.2.0 已新增雙欄錄音畫面、裝置端中文翻譯與會議整理。操作方式、限制與更新注意事項請先讀 [1.2 改版說明](UPDATE-1.2.zh-Hant.md)。以下保留先前版本的技術背景；新版的模型載入按鈕位於右上角「錄音設定」，主要停止按鈕改名為「停止並儲存」。
+
 完整 App 位於 `LectureTranscriber.swiftpm`，套件固定使用已在 iPad 通過基本匯入測試的 WhisperKit 相容版本 `1.1.3`。
 
 App 1.0.1 隨專案附上藍綠色聲波圖示，修正直接建置 App Playground 時找不到 `__PlaceholderAppIcon` 的資源錯誤。更新時下載完整 ZIP，解壓後開啟新版專案即可，不必手動加入套件或貼程式。原有專案可保留。

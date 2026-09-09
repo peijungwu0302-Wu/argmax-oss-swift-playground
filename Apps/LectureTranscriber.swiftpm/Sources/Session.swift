@@ -58,8 +58,53 @@ struct LectureSession: Codable, Identifiable, Sendable {
     var parts: [AudioPart] = []
     var lines: [TranscriptLine] = []
     var bookmarks: [Bookmark] = []
+    var translations: [TranslatedLine]? = nil
+    var minutes: String? = nil
+    var minutesKind: String? = nil
+    var minutesSource: String? = nil
+    var sourceText: String { lines.map { "[\(TranscriptExport.clock($0.start))] \($0.text)" }.joined(separator: "\n") }
+    var minutesAreCurrent: Bool { minutes != nil && minutesSource == sourceText }
+    func translation(for line: TranscriptLine) -> TranslatedLine? {
+        translations?.first { $0.id == line.id && $0.source == line.text }
+    }
     var duration: Double { parts.reduce(0) { $0 + Double($1.sampleCount) / 16000 } }
     var hasPendingAudio: Bool { parts.contains { $0.processedSamples < $0.sampleCount } }
+}
+
+struct TranslatedLine: Codable, Identifiable, Sendable {
+    var id: UUID
+    var source: String
+    var text: String
+}
+
+enum MeetingNotes {
+    // Split on Character boundaries, including a single unusually long utterance.
+    static func chunks(_ text: String, limit: Int = 1800) -> [String] {
+        guard limit > 0 else { return [] }
+        var result: [String] = []; var chunk = ""
+        for character in text {
+            chunk.append(character)
+            if chunk.count >= limit { result.append(chunk); chunk = "" }
+        }
+        if !chunk.isEmpty { result.append(chunk) }
+        return result
+    }
+    static func outline(_ session: LectureSession) -> String {
+        var text = "# \(session.title)\n\n原文整理（未使用 AI 摘要）\n\n"
+        if !session.bookmarks.isEmpty {
+            text += "## 已標記重點\n" + session.bookmarks.map { "- [\(TranscriptExport.clock($0.seconds))] \($0.note)" }.joined(separator: "\n") + "\n\n"
+        }
+        text += "## 完整逐字稿\n\n" + session.sourceText
+        return text
+    }
+}
+
+enum TranslationText {
+    static func englishRanges(_ text: String) -> [NSRange] {
+        let pattern = "[A-Za-z][A-Za-z0-9 \\t'’.,!?;:\"()/%+-]*"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        return regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).map(\.range)
+    }
 }
 enum LectureError: LocalizedError {
     case message(String)

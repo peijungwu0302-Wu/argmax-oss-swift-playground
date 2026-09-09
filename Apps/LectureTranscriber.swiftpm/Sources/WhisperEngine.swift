@@ -17,6 +17,7 @@ enum SpeechModel: String, CaseIterable, Identifiable {
 actor WhisperEngine {
     private var kit: WhisperKit?
     private var currentModel: String?
+    func unload() { kit = nil; currentModel = nil }
     func load(_ model: String, progress: @escaping @Sendable (String, Double?) -> Void) async throws {
         if currentModel == model, kit != nil { return }
         kit = nil; currentModel = nil

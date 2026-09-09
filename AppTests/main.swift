@@ -74,3 +74,26 @@ var rejected = false
 do { try store.delete(linkID) } catch { rejected = true }
 check(rejected && FileManager.default.fileExists(atPath: marker.path), "Deletion must reject redirected session directories")
 print("PASS: streaming agreement, legacy data, isolated deletion, timestamps, SRT, persistence and recovery")
+check(oldSession.translations == nil && oldSession.minutes == nil, "Old recordings open without translation or minutes fields")
+var meeting = LectureSession(title: "雙語課堂", model: "test", language: "mixed")
+let bilingual = TranscriptLine(start: 0, end: 3, text: "今天討論 gene editing，next week 再見。")
+meeting.lines = [bilingual]
+meeting.translations = [TranslatedLine(id: bilingual.id, source: bilingual.text, text: "今天討論基因編輯，下週再見。")]
+check(meeting.translation(for: bilingual)?.text.contains("基因編輯") == true, "Translation is associated with its source segment")
+var revised = bilingual; revised.text = "修改後的原文"
+check(meeting.translation(for: revised) == nil, "An old translation must never be shown for edited source text")
+meeting.minutes = "測試整理"; meeting.minutesSource = meeting.sourceText
+check(meeting.minutesAreCurrent, "New notes match their source")
+meeting.lines.append(TranscriptLine(start: 4, end: 5, text: "新增內容"))
+check(!meeting.minutesAreCurrent, "Continuing a recording invalidates old notes")
+let mixedRanges = TranslationText.englishRanges(bilingual.text)
+let english = mixedRanges.map { (bilingual.text as NSString).substring(with: $0) }
+check(english == ["gene editing", "next week "], "Translation separates English from Chinese without losing range offsets")
+check(TranslationText.englishRanges("純中文，數字 123。").isEmpty, "Do not translate Chinese into itself")
+let unicode = String(repeating: "👩🏽‍💻中英\n", count: 1000)
+let chunks = MeetingNotes.chunks(unicode, limit: 137)
+check(chunks.joined() == unicode && chunks.allSatisfy { $0.count <= 137 }, "Long lecture chunks retain every Unicode character within the input budget")
+let storedMeeting = try JSONDecoder().decode(LectureSession.self, from: JSONEncoder().encode(meeting))
+check(storedMeeting.translations?.first?.text == meeting.translations?.first?.text && storedMeeting.minutes == meeting.minutes, "Translations and notes survive reopening")
+check(MeetingNotes.outline(meeting).contains("未使用 AI") && MeetingNotes.outline(meeting).contains(meeting.sourceText), "Fallback is explicitly original text and retains the entire transcript")
+print("PASS: bilingual translation identity, stale notes, legacy decoding and bounded Unicode chunks")

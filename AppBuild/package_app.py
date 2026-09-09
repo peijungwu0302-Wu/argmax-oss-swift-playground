@@ -8,8 +8,8 @@ app = root / "Apps" / "LectureTranscriber.swiftpm"
 destination = root / "Deliverables" / "LectureTranscriber.zip"
 destination.parent.mkdir(exist_ok=True)
 sources = [app / "Package.swift", *sorted(p for p in (app / "Sources").rglob("*") if p.is_file())]
-assert sum(p.suffix == ".swift" for p in sources) == 7, "Unexpected app source inventory"
-assert len(sources) == 10, "App icon catalog must be included"
+assert sum(p.suffix == ".swift" for p in sources) == 9, "Unexpected app source inventory"
+assert len(sources) == 12, "App icon catalog must be included"
 assert 'exact: "1.1.3"' in sources[0].read_text(encoding="utf-8")
 with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
     for source in sources:

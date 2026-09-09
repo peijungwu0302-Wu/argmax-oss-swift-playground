@@ -24,6 +24,11 @@ final class LectureController: ObservableObject {
     @Published var errorMessage: String?
     @Published var lastSaved: Date?
     @Published var search = ""
+    @Published var translationEnabled = false
+    @Published var translationStatus = "開啟後，英語內容會分段翻成繁體中文"
+    @Published var translatedDraft = ""
+    @Published var isSummarizing = false
+    @Published var summaryStatus = ""
 
     private let engine = WhisperEngine()
     private let recorder = PCMRecorder()
@@ -64,14 +69,14 @@ final class LectureController: ObservableObject {
     var pendingSeconds: Double {
         session?.parts.reduce(0) { $0 + Double(max(0, $1.sampleCount - $1.processedSamples)) / 16000 } ?? 0
     }
-    var canStart: Bool { !isBusy && !isRecording && worker == nil && !(session?.hasPendingAudio ?? false) }
-    var settingsLocked: Bool { isBusy || isRecording || session != nil }
-    var canManageSessions: Bool { !isRecording && !isBusy && worker == nil }
+    var canStart: Bool { !isBusy && !isSummarizing && !isRecording && worker == nil && !(session?.hasPendingAudio ?? false) }
+    var settingsLocked: Bool { isBusy || isSummarizing || isRecording || session != nil }
+    var canManageSessions: Bool { !isRecording && !isBusy && !isSummarizing && worker == nil }
     var displayedDraft: String { liveDraft.isEmpty ? provisional.map(\.text).joined(separator: " ") : liveDraft }
     var draftBehindSeconds: Double { max(0, duration - draftAudioEnd) }
 
     func prepareModel() async {
-        guard !isBusy, !isRecording, worker == nil else { return }
+        guard canManageSessions else { return }
         isBusy = true
         defer { isBusy = false; progress = nil }
         do { try await loadModel(session?.model ?? model) }
@@ -237,7 +242,7 @@ final class LectureController: ObservableObject {
     }
 
     func recover() async {
-        guard !isBusy, !isRecording, let session else { return }
+        guard !isBusy, !isSummarizing, !isRecording, let session else { return }
         isBusy = true
         await worker?.value; worker = nil
         defer { isBusy = false; progress = nil }
@@ -278,6 +283,7 @@ final class LectureController: ObservableObject {
     func updateLine(_ id: UUID, text: String) {
         guard let index = session?.lines.firstIndex(where: { $0.id == id }) else { return }
         session?.lines[index].text = text
+        session?.translations?.removeAll { $0.id == id }
         persist()
     }
     func rename(_ text: String) {
@@ -285,17 +291,19 @@ final class LectureController: ObservableObject {
         session?.title = text; title = text; persist()
     }
     func newLecture() {
-        guard !isRecording, !isBusy, worker == nil else { return }
+        guard canManageSessions else { return }
         persist(); reloadHistory()
         session = nil; title = ""; provisional = []; search = ""
+        translatedDraft = ""; summaryStatus = ""
         liveDraft = ""; previousHypothesis = []; lastDecodeSeconds = nil; draftAudioEnd = 0; lastSaved = nil
         status = "準備新的一堂課"
     }
     func open(_ saved: LectureSession) {
-        guard !isRecording, !isBusy, worker == nil else { return }
+        guard canManageSessions else { return }
         session = saved; title = saved.title; model = saved.model; language = saved.language
         vocabulary = saved.vocabulary ?? ""
         provisional = []; search = ""
+        translatedDraft = ""; summaryStatus = ""
         liveDraft = ""; previousHypothesis = []; lastDecodeSeconds = nil; draftAudioEnd = saved.duration
         status = saved.hasPendingAudio ? "找到尚未完成的錄音，請按補辨識" : "已開啟本機逐字稿，可繼續錄音"
     }
@@ -311,6 +319,7 @@ final class LectureController: ObservableObject {
             if session?.id == id {
                 // Do not call newLecture(): its persistence would recreate the deleted folder.
                 session = nil; title = ""; provisional = []; liveDraft = ""; search = ""
+                translatedDraft = ""; summaryStatus = ""
                 previousHypothesis = []; activeDecodeID = nil; lastSaved = nil
                 lastDecodeSeconds = nil; draftAudioEnd = 0
                 status = "錄音與逐字稿已刪除"
@@ -322,6 +331,52 @@ final class LectureController: ObservableObject {
         guard let session, let store else { return }
         do { try store.save(session); lastSaved = Date() }
         catch { errorMessage = "自動儲存失敗：\(error.localizedDescription)。請先暫停並檢查剩餘空間。" }
+    }
+    func saveTranslation(sessionID: UUID, line: TranscriptLine, text: String) {
+        guard session?.id == sessionID, session?.lines.contains(line) == true else { return }
+        var values = session?.translations ?? []
+        values.removeAll { $0.id == line.id }
+        values.append(TranslatedLine(id: line.id, source: line.text, text: text))
+        session?.translations = values
+        persist()
+    }
+    func generateMinutes() async {
+        guard canManageSessions, let current = session, !current.lines.isEmpty, !current.hasPendingAudio else { return }
+        isSummarizing = true; summaryStatus = "正在整理…"
+        defer { isSummarizing = false }
+        do {
+            // Recording and decoding have finished. Release our Core ML references
+            // before asking the system language model to process the lecture.
+            await engine.unload(); loadedModel = nil
+            let result = try await SmartNotes.generate(current) { [weak self] value in
+                Task { @MainActor in self?.summaryStatus = value }
+            }
+            guard session?.id == current.id, session?.sourceText == current.sourceText else { return }
+            session?.minutes = result.text; session?.minutesKind = result.kind
+            session?.minutesSource = current.sourceText
+            summaryStatus = result.kind; persist(); reloadHistory()
+        } catch { summaryStatus = "整理未完成"; fail("無法完成 AI 整理；原始逐字稿已保存。可改用原文整理。", error) }
+    }
+    func makeOutline() {
+        guard canManageSessions, let current = session, !current.lines.isEmpty else { return }
+        session?.minutes = MeetingNotes.outline(current)
+        session?.minutesKind = "原文整理（未使用 AI）"; session?.minutesSource = current.sourceText
+        persist(); reloadHistory()
+    }
+    func exportNotes(translation: Bool) -> URL? {
+        guard let current = session, let store else { return nil }
+        let body: String
+        if translation {
+            body = "# \(current.title) · 中文翻譯\n\n僅包含已完成翻譯的段落。請對照原文核對專有名詞與數字。\n\n" + current.lines.compactMap { line in
+                current.translation(for: line).map { "[\(TranscriptExport.clock(line.start))] \($0.text)" }
+            }.joined(separator: "\n\n")
+        } else {
+            guard let minutes = current.minutes else { return nil }
+            body = (current.minutesAreCurrent ? "" : "注意：逐字稿已有更新，以下是先前整理的版本。\n\n") + minutes
+        }
+        let url = store.folder(current.id).appendingPathComponent(translation ? "中文翻譯.md" : "會議紀錄.md")
+        do { try body.write(to: url, atomically: true, encoding: .utf8); return url }
+        catch { fail("匯出失敗。", error); return nil }
     }
     func reloadHistory() {
         do { if let store { history = try store.loadAll() } }
