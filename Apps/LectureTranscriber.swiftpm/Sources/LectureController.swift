@@ -38,6 +38,7 @@ final class LectureController: ObservableObject {
     @Published var summaryStatus = ""
 
     private let engine = WhisperEngine()
+    private let senseVoice = SenseVoiceEngine()
     private let recorder = PCMRecorder()
     private var appleSpeech: (any LiveSpeechEngine)?
     private var appleCursor = 0
@@ -86,6 +87,8 @@ final class LectureController: ObservableObject {
     var displayedDraft: String { liveDraft.isEmpty ? provisional.map(\.text).joined(separator: " ") : liveDraft }
     var draftBehindSeconds: Double { max(0, duration - draftAudioEnd) }
     var usesAppleSpeech: Bool { (session?.recognitionEngine ?? recognitionEngine) == "apple" }
+    var usesSenseVoice: Bool { (session?.recognitionEngine ?? recognitionEngine) == "sensevoice" }
+    var usesWhisper: Bool { !usesAppleSpeech && !usesSenseVoice }
     var draftStart: Double { liveDraft.isEmpty ? (provisional.first?.start ?? duration) : liveDraftStart }
     var caption: String { CaptionText.screen(displayedDraft.isEmpty ? (session?.lines.last?.text ?? "") : displayedDraft) }
     var draftTranslationKey: DraftTranslationKey? {
@@ -138,6 +141,7 @@ final class LectureController: ObservableObject {
     func setRecognitionEngine(_ value: String) {
         guard canManageSessions else { return }
         recognitionEngine = value; session?.recognitionEngine = value; loadedModel = nil
+        restartTranslation()
         persist()
     }
 
@@ -152,13 +156,25 @@ final class LectureController: ObservableObject {
         if usesAppleSpeech {
             guard #available(iOS 26.0, *) else { throw LectureError.message("Apple 即時引擎需要 iPadOS 26；請在錄音設定改用 WhisperKit。") }
             status = "正在準備 Apple 語音模型，首次需下載語言資源…"
-            await engine.unload()
+            await engine.unload(); await senseVoice.unload()
             if appleSpeech == nil { appleSpeech = AppleSpeechEngine() }
             try await appleSpeech?.prepare(language: session?.language ?? language)
             loadedModel = "apple"; status = "Apple 即時語音已就緒"; progress = nil
             return
         }
         await appleSpeech?.cancel(); appleSpeech = nil
+        if usesSenseVoice {
+            await engine.unload()
+            try await senseVoice.load(language: session?.language ?? language) { [weak self] text, fraction in
+                Task { @MainActor in
+                    guard let self, self.isBusy else { return }
+                    self.status = text; self.progress = fraction
+                }
+            }
+            loadedModel = "sensevoice"; status = "SenseVoice 已就緒 · 中英混說實驗版"; progress = nil
+            return
+        }
+        await senseVoice.unload()
         status = "正在載入模型…"
         try await engine.load(name) { [weak self] text, fraction in
             Task { @MainActor in
@@ -241,7 +257,7 @@ final class LectureController: ObservableObject {
                 guard let current = session, let part = current.parts.last else { break }
                 let available = part.sampleCount - part.processedSamples
                 let enoughNewAudio = part.sampleCount - lastPreviewSample >= 16000
-                if available >= 16000 && (enoughNewAudio || available >= 26 * 16000) {
+                if available >= (usesSenseVoice ? 32000 : 16000) && (enoughNewAudio || available >= 26 * 16000) {
                     lastPreviewSample = part.sampleCount
                     try await decodePart(part.id, final: false)
                 } else {
@@ -263,6 +279,7 @@ final class LectureController: ObservableObject {
 
     // Whisper: confirm agreed words or a pause; retain unfinished audio for another pass.
     private func decodePart(_ id: UUID, final: Bool) async throws {
+        if usesSenseVoice { try await decodeSenseVoice(id, final: final); return }
         guard let store, let current = session, let part = current.parts.first(where: { $0.id == id }) else { return }
         let available = part.sampleCount - part.processedSamples
         guard available > 0 else { return }
@@ -303,6 +320,33 @@ final class LectureController: ObservableObject {
             try store.save(updated)
             lastSaved = Date()
         }
+    }
+
+    private func decodeSenseVoice(_ id: UUID, final: Bool) async throws {
+        guard let store, let current = session, let part = current.parts.first(where: { $0.id == id }) else { return }
+        let count = min(SenseVoiceWindow.maximumSamples, part.sampleCount - part.processedSamples)
+        guard count > 0 else { return }
+        isDecoding = true
+        defer { isDecoding = false }
+        let file = store.audioURL(current, part)
+        let samples = try await Task.detached(priority: .userInitiated) {
+            try PCMRecorder.read(file, from: part.processedSamples, count: count)
+        }.value
+        let window = SenseVoiceWindow.choose(samples, final: final)
+        let started = Date()
+        let text = window.hasSpeech ? try await senseVoice.transcribe(Array(samples.prefix(window.count))) : ""
+        guard session?.id == current.id, let index = session?.parts.firstIndex(where: { $0.id == id }) else { return }
+        lastDecodeSeconds = Date().timeIntervalSince(started)
+        let start = part.offset + Double(part.processedSamples) / 16000
+        let end = start + Double(window.count) / 16000
+        draftAudioEnd = end; liveDraft = ""
+        let lines = text.isEmpty ? [] : [TranscriptLine(start: start, end: end, text: text)]
+        if window.commit {
+            session?.appendConfirmed(lines)
+            session?.parts[index].processedSamples += window.count
+            provisional = []; previousHypothesis = []
+            if let updated = session { try store.save(updated); lastSaved = Date() }
+        } else { provisional = lines }
     }
 
     private func stopCapture() {
@@ -545,7 +589,7 @@ final class LectureController: ObservableObject {
         do {
             // Recording and decoding have finished. Release our Core ML references
             // before asking the system language model to process the lecture.
-            await engine.unload(); loadedModel = nil
+            await engine.unload(); await senseVoice.unload(); loadedModel = nil
             let result = try await SmartNotes.generate(current) { [weak self] value in
                 Task { @MainActor in self?.summaryStatus = value }
             }

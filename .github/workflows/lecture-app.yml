@@ -9,7 +9,7 @@ permissions:
 jobs:
   playground-package:
     runs-on: macos-26
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Build actual App Playground for iPad
@@ -116,3 +116,46 @@ jobs:
             ${{ runner.temp }}/lecture-audio.log
             ${{ runner.temp }}/lecture-launch.log
             ${{ runner.temp }}/LaunchTests.xcresult
+
+  sensevoice-native:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Exercise app SenseVoice engine with public bilingual audio
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/SenseVoiceValidation/Sources"
+          cp AppTests/SenseVoice/Package.swift "$RUNNER_TEMP/SenseVoiceValidation/Package.swift"
+          cp AppTests/SenseVoice/Benchmark.swift Apps/LectureTranscriber.swiftpm/Sources/SenseVoiceEngine.swift Apps/LectureTranscriber.swiftpm/Sources/Session.swift "$RUNNER_TEMP/SenseVoiceValidation/Sources/"
+          python3 - <<'PY'
+          import urllib.request, wave, pathlib, os, hashlib
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          url = 'https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/test_wavs/0.wav'
+          data = urllib.request.urlopen(url).read()
+          assert hashlib.sha256(data).hexdigest() == '7d93384ca14702cc584a7a33fe2fed92e89e708549161cb12ea38c916882103b'
+          (root / 'bilingual.wav').write_bytes(data)
+          with wave.open(str(root / 'bilingual.wav')) as w:
+              assert w.getframerate() == 16000 and w.getnchannels() == 1 and w.getsampwidth() == 2
+              (root / 'bilingual.pcm16').write_bytes(w.readframes(w.getnframes()))
+          PY
+          cd "$RUNNER_TEMP/SenseVoiceValidation"
+          swift run -c release SenseVoiceValidation "$RUNNER_TEMP/bilingual.pcm16" "$RUNNER_TEMP/sensevoice-results.json" 2>&1 | tee "$RUNNER_TEMP/sensevoice-native.log"
+      - name: Report SenseVoice errors
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import pathlib, os
+          p = pathlib.Path(os.environ['RUNNER_TEMP']) / 'sensevoice-native.log'
+          if p.exists():
+              for line in p.read_text(errors='replace').splitlines():
+                  if 'error:' in line.lower():
+                      print('::error::' + line.replace('%', '%25'))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sensevoice-native-benchmark
+          path: |
+            ${{ runner.temp }}/sensevoice-native.log
+            ${{ runner.temp }}/sensevoice-results.json

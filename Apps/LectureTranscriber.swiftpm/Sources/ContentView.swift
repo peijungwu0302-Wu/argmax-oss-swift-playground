@@ -196,8 +196,13 @@ struct ContentView: View {
                 }.pickerStyle(.segmented).disabled(!controller.canManageSessions).frame(maxWidth: 400)
                     .accessibilityIdentifier("mixedPrimaryLanguage")
             }
+            if controller.usesSenseVoice {
+                Text("SenseVoice 約每秒重辨識草稿；停頓約 0.6 秒或最長 12 秒分段定稿。自動模式可混說；主要語言是模型提示，不會關閉另一種語言。實際速度與準確度需實測。")
+                    .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            } else {
             Text(RecognitionLanguage.isMixed(controller.language) ? (controller.usesAppleSpeech ? "Apple 每次以一個主要語言辨識，不保證中英混說。單語課堂請選中文或英文。" : "依實際主要語言辨識；混說準確率仍需核對。停止後可切換。") : "指定主要語言有助辨識。Apple 引擎使用系統支援的語言資源。")
                 .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            }
             }
             HStack(spacing: 8) {
                 if controller.isBusy || controller.isDecoding { ProgressView().controlSize(.small) }
@@ -371,12 +376,14 @@ struct ContentView: View {
                 Section("語音辨識") {
                     Picker("辨識引擎", selection: Binding(get: { controller.recognitionEngine }, set: { value in
                         controller.setRecognitionEngine(value)
-                        if value == "apple" && controller.language == "auto" { controller.setLanguage("mixed") }
+                        if value == "apple" && controller.language == "auto" { controller.setLanguage("zh") }
+                        if value == "sensevoice" { controller.setLanguage("auto") }
                     })) {
                         Text("Apple 即時語音 · iPadOS 26").tag("apple")
                         Text("WhisperKit · Turbo 等模型").tag("whisper")
+                        Text("SenseVoice · 中英混說實驗版").tag("sensevoice")
                     }.disabled(!controller.canManageSessions)
-                    if !controller.usesAppleSpeech {
+                    if controller.usesWhisper {
                     Picker("語音模型", selection: $controller.model) {
                         ForEach(SpeechModel.allCases) { Text($0.title).tag($0.rawValue) }
                     }.disabled(controller.settingsLocked)
@@ -384,7 +391,7 @@ struct ContentView: View {
                     Button { Task { await controller.prepareModel() } } label: {
                         Label(controller.loadedModel != nil ? "模型已就緒" : "載入模型", systemImage: "arrow.down.circle")
                     }.disabled(!controller.canManageSessions)
-                    Text("新課堂預設 Apple 即時語音；若語言不支援或品質不佳，可切回 WhisperKit Turbo 比較。開始錄音時也會自動載入，第一次需要網路下載。")
+                    Text("純中文／英文可用 Apple；中英混說可試 SenseVoice INT8（首次下載約 240 MB）。開始錄音會自動載入，之後可離線辨識。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("錄音儲存品質") {
@@ -398,7 +405,7 @@ struct ContentView: View {
                 }
                 Section("課堂專有名詞") {
                     TextField("例如：CRISPR、Cas9、gene editing", text: $controller.vocabulary, axis: .vertical)
-                        .lineLimit(3...5).disabled(controller.settingsLocked || controller.usesAppleSpeech)
+                        .lineLimit(3...5).disabled(controller.settingsLocked || !controller.usesWhisper)
                         .onChange(of: controller.vocabulary) { value in
                             if value.count > 500 { controller.vocabulary = String(value.prefix(500)) }
                         }

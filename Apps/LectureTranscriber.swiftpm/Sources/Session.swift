@@ -421,3 +421,39 @@ struct SessionStore {
         return url
     }
 }
+
+// SenseVoice is an offline model: redraw a bounded utterance, commit at a pause.
+// Never derive word timestamps from character positions or drop repeated words.
+struct SenseVoiceWindow {
+    static let maximumSamples = 12 * 16000
+    let count: Int
+    let commit: Bool
+    let hasSpeech: Bool
+    static func modelLanguage(_ language: String) -> String {
+        switch language { case "zh", "mixed": return "zh"
+        case "en", "mixed-en": return "en"
+        default: return "auto" }
+    }
+    static func choose(_ samples: [Float], final: Bool) -> SenseVoiceWindow {
+        let count = min(samples.count, maximumSamples)
+        guard count > 0 else { return .init(count: 0, commit: false, hasSpeech: false) }
+        let block = 320
+        let energies = stride(from: 0, to: count, by: block).map { start -> Double in
+            let end = min(start + block, count)
+            return sqrt(samples[start..<end].reduce(0.0) { $0 + Double($1 * $1) } / Double(end - start))
+        }
+        let peak = energies.max() ?? 0
+        let threshold = max(0.0003, min(0.003, peak * 0.08))
+        let voiced = energies.contains { $0 > threshold * 3 }
+        guard voiced else { return .init(count: count, commit: final || count >= 16000, hasSpeech: false) }
+        var silence = 0; var speechSeen = false
+        for (index, energy) in energies.enumerated() {
+            if energy > threshold * 3 { speechSeen = true }
+            silence = energy < threshold ? silence + 1 : 0
+            if speechSeen && silence >= 30 && (index + 1) * block >= 16000 {
+                return .init(count: min(count, (index + 1) * block), commit: true, hasSpeech: true)
+            }
+        }
+        return .init(count: count, commit: final || count == maximumSamples, hasSpeech: true)
+    }
+}

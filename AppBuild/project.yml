@@ -7,6 +7,9 @@ packages:
   WhisperLibrary:
     url: https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground.git
     exactVersion: 1.1.3
+  SenseVoiceLibrary:
+    url: https://github.com/k2-fsa/sherpa-onnx.git
+    exactVersion: 1.13.7
 targets:
   LectureTranscriber:
     type: application
@@ -16,6 +19,8 @@ targets:
     dependencies:
       - package: WhisperLibrary
         product: WhisperKit
+      - package: SenseVoiceLibrary
+        product: sherpa-onnx
     settings:
       base:
         SWIFT_VERSION: "5.0"
