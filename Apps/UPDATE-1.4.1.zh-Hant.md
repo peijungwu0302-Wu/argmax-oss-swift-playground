@@ -1,3 +1,5 @@
+> 以下為 1.4.1 歷史紀錄；目前已依使用者要求恢復 [1.5.0 通用 IPA 更新](UPDATE-1.5.0.zh-Hant.md)。
+
 # 1.4.1：修復 iPad Playgrounds 的 unzip 套件錯誤
 
 [下載 1.4.1 完整 iPad ZIP](https://raw.githubusercontent.com/peijungwu0302-Wu/argmax-oss-swift-playground/8c795eaa74d905caa87c1e93429f69da1b1bf3b4/Deliverables/LectureTranscriber.zip)

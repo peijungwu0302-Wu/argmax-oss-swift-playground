@@ -1,6 +1,5 @@
-> **課堂逐字稿 App 1.4.1（iPad 修復）**：SenseVoice 改用 Core ML，移除造成 Playgrounds `unzip` 錯誤的二進位套件。iPhone 私人安裝版維持 1.4.0。
-> [下載 iPad ZIP](Deliverables/LectureTranscriber.zip) · [修復、使用與測試界線](Apps/UPDATE-1.4.1.zh-Hant.md) · [Windows 私人安裝](Apps/PRIVATE_INSTALL.zh-Hant.md)
-
+> **課堂逐字稿 App 1.5.0**：iPhone／iPad 共用 IPA，固定 Bundle ID。新增音訊大小、播放／分享／匯入、日文翻譯、可編輯會議提示詞與背景收音。
+> [下載 iPad ZIP](Deliverables/LectureTranscriber.zip) · [新版操作與測試](Apps/UPDATE-1.5.0.zh-Hant.md) · [Windows 私人安裝](Apps/PRIVATE_INSTALL.zh-Hant.md)
 
 <div align="center">
 
