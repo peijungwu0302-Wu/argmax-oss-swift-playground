@@ -187,9 +187,11 @@ struct LectureSession: Codable, Identifiable, Sendable {
     var lines: [TranscriptLine] = []
     var bookmarks: [Bookmark] = []
     var translations: [TranslatedLine]? = nil
+    var translationSource: String? = nil
     var minutes: String? = nil
     var minutesKind: String? = nil
     var minutesSource: String? = nil
+    var minutesPrompt: String? = nil
     var sourceText: String { lines.map { "[\(TranscriptExport.clock($0.start))] \($0.text)" }.joined(separator: "\n") }
     var minutesAreCurrent: Bool { minutes != nil && minutesSource == sourceText }
     func translation(for line: TranscriptLine) -> TranslatedLine? {
@@ -398,6 +400,12 @@ struct SessionStore {
         }
         return result.sorted { $0.createdAt > $1.createdAt }
     }
+    func audioBytes(_ session: LectureSession) -> Int64 {
+        session.parts.reduce(0) { total, part in
+            let size = (try? FileManager.default.attributesOfItem(atPath: audioURL(session, part).path)[.size]) as? NSNumber
+            return total + (size?.int64Value ?? 0)
+        }
+    }
     func audioURL(_ session: LectureSession, _ part: AudioPart) -> URL {
         folder(session.id).appendingPathComponent(part.fileName)
     }
@@ -446,12 +454,30 @@ struct SenseVoiceWindow {
         let threshold = max(0.0003, min(0.003, peak * 0.08))
         let voiced = energies.contains { $0 > threshold * 3 }
         guard voiced else { return .init(count: count, commit: final || count >= 16000, hasSpeech: false) }
+        let sorted = energies.sorted()
+        let floor = sorted[sorted.count / 10]
+        // Music/noise can sit above the absolute silence threshold. Use relative
+        // valleys only if there is enough energy contrast to distinguish speech.
+        let pauseThreshold = max(threshold, min(peak * 0.22, floor * 1.35))
+        let adaptive = peak > floor * 3 && pauseThreshold > threshold * 2
+        let pauseBlocks = adaptive ? 18 : 30
         var silence = 0; var speechSeen = false
         for (index, energy) in energies.enumerated() {
             if energy > threshold * 3 { speechSeen = true }
-            silence = energy < threshold ? silence + 1 : 0
-            if speechSeen && silence >= 30 && (index + 1) * block >= 16000 {
+            silence = energy < pauseThreshold ? silence + 1 : 0
+            if speechSeen && silence >= pauseBlocks && (index + 1) * block >= 16000 {
                 return .init(count: min(count, (index + 1) * block), commit: true, hasSpeech: true)
+            }
+        }
+        if count == maximumSamples {
+            // At the hard cap prefer an actual low-energy valley in the last
+            // six seconds. Uniform sound has no defensible cut: keep the cap.
+            let width = 10
+            let candidates = (300..<(energies.count - width)).map { start in
+                (start, energies[start..<(start + width)].reduce(0, +) / Double(width))
+            }
+            if let best = candidates.min(by: { $0.1 < $1.1 }), best.1 < peak * 0.35 {
+                return .init(count: (best.0 + width / 2) * block, commit: true, hasSpeech: true)
             }
         }
         return .init(count: count, commit: final || count == maximumSamples, hasSpeech: true)

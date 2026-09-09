@@ -39,6 +39,28 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
     }
 
+    @MainActor
+    func testImportAudioCreatesRecoverableLecture() async throws {
+        let original = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".pcm16")
+        let data = AudioStorage.encodePCM16([Float](repeating: 0.1, count: 32000))
+        try data.write(to: original)
+        defer { try? FileManager.default.removeItem(at: original) }
+        let controller = LectureController()
+        controller.recognitionEngine = "sensevoice"
+        await controller.importAudio(original)
+        let lecture = try XCTUnwrap(controller.session)
+        defer { controller.deleteLecture(lecture.id) }
+        XCTAssertEqual(lecture.parts[0].sampleCount, 32000)
+        XCTAssertTrue(lecture.hasPendingAudio)
+        XCTAssertEqual(lecture.recognitionEngine, "sensevoice")
+        XCTAssertEqual(try Data(contentsOf: original), data)
+        let file = try XCTUnwrap(controller.audioURL(lecture, lecture.parts[0]))
+        let wav = try StoredAudio.playable(file, samples: 32000)
+        defer { try? FileManager.default.removeItem(at: wav) }
+        let player = try AVAudioPlayer(contentsOf: wav)
+        XCTAssertEqual(player.duration, 2, accuracy: 0.01)
+        XCTAssertTrue(controller.history.contains { $0.id == lecture.id })
+    }
     func testSenseVoiceCoreMLIOSBilingualAudio() async throws {
         let url = URL(string: "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/test_wavs/0.wav")!
         let (data, response) = try await URLSession.shared.data(from: url)
@@ -71,6 +93,10 @@ final class AudioAndCaptionTests: XCTestCase {
         controller.translationDraftKey = controller.draftTranslationKey
         controller.translatedDraft = "你好"
         XCTAssertEqual(controller.validTranslatedDraft, "你好")
+        controller.liveDraft = "Yellow"
+        XCTAssertEqual(controller.validTranslatedDraft, "")
+        XCTAssertTrue(controller.translationCaption.contains("上次翻譯"), "Revising text keeps a clearly marked previous result without pairing it as current")
+        controller.liveDraft = "Hello"
         controller.liveDraftStart = 10
         XCTAssertEqual(controller.validTranslatedDraft, "", "Repeated text at a new time needs its own translation")
         controller.translationDraftKey = controller.draftTranslationKey

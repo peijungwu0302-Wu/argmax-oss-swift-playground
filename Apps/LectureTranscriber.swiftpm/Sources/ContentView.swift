@@ -1,11 +1,15 @@
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 struct SharedFile: Identifiable { let id = UUID(); let url: URL }
 
 struct ContentView: View {
     @ObservedObject var controller: LectureController
     @State private var showHistory = false
+    @State private var showImport = false
+    @State private var importAfterHistory = false
+    @State private var showAudio = false
     @State private var showBookmark = false
     @State private var showSettings = false
     @State private var showMinutes = false
@@ -48,7 +52,7 @@ struct ContentView: View {
                                 transcriptPane(translated: true).frame(height: 300)
                             }
                         }
-                        Text("音訊與文字保存在這台裝置 · 錄音期間請保持 App 在前景")
+                        Text(controller.backgroundDescription)
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     .padding(.horizontal, geometry.size.width >= 700 ? 32 : 20)
@@ -87,6 +91,7 @@ struct ContentView: View {
                     }
                     Button { showSettings = true } label: { Label("錄音設定", systemImage: "slider.horizontal.3") }
                     Menu {
+                        Button("錄音檔案：播放與分享") { showAudio = true }
                         ForEach(TranscriptFormat.allCases) { format in
                             Button("匯出 \(format.rawValue)") {
                                 if let url = controller.export(format) { sharedFile = SharedFile(url: url) }
@@ -101,7 +106,16 @@ struct ContentView: View {
             }
             .tint(gold)
             .modifier(LiveTranslationModifier(controller: controller))
-            .sheet(isPresented: $showHistory) { historySheet }
+            .sheet(isPresented: $showHistory, onDismiss: { if importAfterHistory { importAfterHistory = false; showImport = true } }) { historySheet }
+            .sheet(isPresented: $showAudio) {
+                if let lecture = controller.session { NavigationStack { AudioLibraryView(controller: controller, lecture: lecture) } }
+            }
+            .fileImporter(isPresented: $showImport, allowedContentTypes: [.audio, .data]) { result in
+                switch result {
+                case .success(let url): Task { await controller.importAudio(url) }
+                case .failure(let error): controller.errorMessage = error.localizedDescription
+                }
+            }
             .sheet(isPresented: $showSettings) { settingsSheet }
             .sheet(isPresented: $showMinutes) { minutesSheet }
             .sheet(item: $sharedFile) { file in ShareSheet(url: file.url) }
@@ -134,7 +148,7 @@ struct ContentView: View {
                 if controller.translationEnabled {
                     Text(controller.translationStatus).font(.caption).foregroundStyle(.secondary)
                 }
-                Text("在 iPad 視窗選單選「進入 Slide Over」，可與 Goodnotes 一起顯示。請保持字幕視窗可見；隱藏到背景會暫停錄音。")
+                Text("iPad 可在系統支援的視窗模式下與 Goodnotes 並排或使用 Slide Over。" + controller.backgroundDescription)
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
         }.accessibilityIdentifier("compactCaptionWorkspace")
@@ -197,7 +211,7 @@ struct ContentView: View {
                     .accessibilityIdentifier("mixedPrimaryLanguage")
             }
             if controller.usesSenseVoice {
-                Text("SenseVoice 約每秒重辨識草稿；停頓約 0.6 秒或最長 12 秒分段定稿。自動模式可混說；主要語言是模型提示，不會關閉另一種語言。實際速度與準確度需實測。")
+                Text("SenseVoice 約每秒重辨識草稿；依安靜／背景音量調整停頓切點，最長 12 秒；音樂中優先找較低音量切點。自動模式可混說；主要語言是模型提示，不會關閉另一種語言。實際速度與準確度需實測。")
                     .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
             } else {
             Text(RecognitionLanguage.isMixed(controller.language) ? (controller.usesAppleSpeech ? "Apple 每次以一個主要語言辨識，不保證中英混說。單語課堂請選中文或英文。" : "依實際主要語言辨識；混說準確率仍需核對。停止後可切換。") : "指定主要語言有助辨識。Apple 引擎使用系統支援的語言資源。")
@@ -417,8 +431,15 @@ struct ContentView: View {
                         Text(String(format: "草稿音訊落後 %.1f 秒", controller.draftBehindSeconds))
                     }
                     Text("尚未定稿 \(Int(controller.pendingSeconds)) 秒")
-                    Text("本版進入背景仍會暫停保存。使用 Goodnotes 時請讓字幕視窗保持可見。")
+                    Text(controller.backgroundDescription)
                         .font(.caption).foregroundStyle(.secondary)
+                }
+                Section("翻譯來源語言") {
+                    Picker("翻成繁體中文", selection: Binding(get: { controller.translationSource }, set: { controller.setTranslationSource($0) })) {
+                        Text("英文 → 中文（中英混說保留中文）").tag("en")
+                        Text("日文 → 中文").tag("ja")
+                    }
+                    Text("來源切換後會重新翻譯已有段落；語音辨識引擎不變。日文可用 SenseVoice 自動辨識。").font(.caption)
                 }
                 Section("會議整理") {
                     Text("AI 整理使用 iPadOS 26 的 Apple Intelligence。請在系統設定啟用並完成模型下載；若不可用，會產生保留時間戳的原文整理。")
@@ -437,6 +458,13 @@ struct ContentView: View {
                         .font(.title3.bold())
                     Text("停止錄音並完成補辨識後，可用裝置端 AI 整理重點、明確決議與待辦。結果需要對照原文確認。")
                         .foregroundStyle(.secondary)
+                    Text("整理偏好（在這台裝置保存，最多 800 字）").font(.headline)
+                    TextEditor(text: $controller.notesPrompt).frame(minHeight: 100)
+                        .disabled(controller.isSummarizing)
+                        .onChange(of: controller.notesPrompt) { _ in controller.saveNotesPrompt() }
+                    Button("恢復預設提示詞") {
+                        controller.notesPrompt = "以繁體中文整理重點、決議、待辦；保留英文術語和來源時間戳。"; controller.saveNotesPrompt()
+                    }.disabled(controller.isSummarizing)
                     Button(controller.session?.minutes == nil ? "產生會議紀錄" : "重新整理") {
                         Task { await controller.generateMinutes() }
                     }.buttonStyle(.borderedProminent)
@@ -483,10 +511,14 @@ struct ContentView: View {
                             Text(session.title).font(.headline)
                             Text("\(session.createdAt.formatted()) · \(TranscriptExport.clock(session.duration))")
                                 .font(.caption).foregroundStyle(.secondary)
+                            Text("音訊 " + controller.audioSize(session)).font(.caption).foregroundStyle(.secondary)
                             if session.hasPendingAudio { Label("有錄音等待補辨識", systemImage: "arrow.clockwise").font(.caption) }
                         }.padding(.vertical, 5)
                         }.buttonStyle(.plain)
                         Spacer()
+                        NavigationLink {
+                            AudioLibraryView(controller: controller, lecture: session)
+                        } label: { Image(systemName: "waveform").accessibilityLabel("錄音檔案") }.fixedSize()
                         Button(role: .destructive) {
                             pendingDeletion = session
                         } label: { Image(systemName: "trash") }
@@ -496,7 +528,12 @@ struct ContentView: View {
                     .disabled(!controller.canManageSessions)
                 }
             }.navigationTitle("本機課堂")
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showHistory = false } } }
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button("匯入音訊") { importAfterHistory = true; showHistory = false }.disabled(!controller.canManageSessions)
+                    }
+                    ToolbarItem(placement: .confirmationAction) { Button("完成") { showHistory = false } }
+                }
                 .confirmationDialog("刪除這堂課？", isPresented: Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } }), titleVisibility: .visible) {
                     Button("刪除錄音與逐字稿", role: .destructive) {
                         if let item = pendingDeletion { controller.deleteLecture(item.id) }

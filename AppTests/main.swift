@@ -199,3 +199,13 @@ let pieces = ["<unk>", "<|zh|>", "中", "文", "▁gene", "▁editing", "<0xE4>"
 check(SenseVoiceText.decode([1, 2, 3, 4, 5], vocabulary: pieces) == "中文 gene editing", "Core ML detokenizer preserves Chinese and English word boundaries")
 check(SenseVoiceText.decode([6, 7, 8], vocabulary: pieces) == "中", "Byte fallback is decoded as one UTF-8 sequence")
 print("PASS: Core ML CTC text and UTF-8 byte decoding")
+
+let noisyPhrase = [Float](repeating: 0.08, count: 32000) + [Float](repeating: 0.008, count: 12800) + [Float](repeating: 0.08, count: 32000)
+let noisyCut = SenseVoiceWindow.choose(noisyPhrase, final: false)
+check(noisyCut.commit && noisyCut.count > 32000 && noisyCut.count < 44800, "SenseVoice detects a pause over a steady music/noise floor")
+var longNoise = [Float](repeating: 0.08, count: SenseVoiceWindow.maximumSamples)
+longNoise.replaceSubrange(128000..<131200, with: [Float](repeating: 0.018, count: 3200))
+let valleyCut = SenseVoiceWindow.choose(longNoise, final: false)
+check(valleyCut.commit && valleyCut.count > 120000 && valleyCut.count < 140000, "Hard cap chooses an acoustic valley, not a fixed 12-second mid-word cut")
+check(store.audioBytes(smallRecovered) == Int64(pcmData.count), "Library audio size reads actual disk bytes")
+print("PASS: adaptive SenseVoice pause/valley and actual library file size")

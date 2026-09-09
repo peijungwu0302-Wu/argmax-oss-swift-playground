@@ -3,6 +3,61 @@ import AVFoundation
 import AudioToolbox
 
 enum StoredAudio {
+    // Decode files in bounded buffers, downmixing/resampling through Core Audio.
+    static func importAudio(_ source: URL, to destination: URL) throws -> Int {
+        if let width = AudioStorage.bytesPerSample(fileName: source.lastPathComponent) {
+            let size = (try FileManager.default.attributesOfItem(atPath: source.path)[.size] as? NSNumber)?.intValue ?? 0
+            guard size > 0, size % width == 0 else { throw LectureError.message("原始錄音長度不正確。") }
+            FileManager.default.createFile(atPath: destination.path, contents: nil)
+            let output = try FileHandle(forWritingTo: destination); defer { try? output.close() }
+            for start in stride(from: 0, to: size / width, by: 16000) {
+                try output.write(contentsOf: AudioStorage.encodePCM16(read(source, from: start, count: min(16000, size / width - start))))
+            }
+            try output.synchronize(); return size / width
+        }
+        var opened: ExtAudioFileRef?
+        try checked(ExtAudioFileOpenURL(source as CFURL, &opened), "開啟匯入音訊")
+        guard let file = opened else { throw LectureError.message("音訊不可讀取。") }
+        defer { ExtAudioFileDispose(file) }
+        let format = try clientFormat()
+        var client = format.streamDescription.pointee
+        try checked(ExtAudioFileSetProperty(file, kExtAudioFileProperty_ClientDataFormat, UInt32(MemoryLayout<AudioStreamBasicDescription>.size), &client), "轉換音訊取樣率")
+        FileManager.default.createFile(atPath: destination.path, contents: nil)
+        let output = try FileHandle(forWritingTo: destination); defer { try? output.close() }
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16000), let channel = buffer.floatChannelData?[0] else { throw LectureError.message("音訊緩衝區不足。") }
+        var total = 0
+        while true {
+            try Task.checkCancellation()
+            var frames: UInt32 = 16000; buffer.frameLength = 16000
+            try checked(ExtAudioFileRead(file, &frames, buffer.mutableAudioBufferList), "讀取匯入音訊")
+            if frames == 0 { break }
+            try output.write(contentsOf: AudioStorage.encodePCM16(Array(UnsafeBufferPointer(start: channel, count: Int(frames)))))
+            total += Int(frames)
+        }
+        guard total > 0 else { throw LectureError.message("檔案沒有可辨識的音訊。") }
+        try output.synchronize(); return total
+    }
+    static func playable(_ source: URL, samples: Int) throws -> URL {
+        guard AudioStorage.bytesPerSample(fileName: source.lastPathComponent) != nil else { return source }
+        guard samples > 0, UInt64(samples) * 2 + 36 < UInt64(UInt32.max) else { throw LectureError.message("音訊長度不適合 WAV 匯出。") }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("LectureAudioExports", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let outputURL = folder.appendingPathComponent(source.deletingLastPathComponent().lastPathComponent + "-" + source.deletingPathExtension().lastPathComponent + ".wav")
+        var header = Data()
+        func ascii(_ text: String) { header.append(contentsOf: text.utf8) }
+        func u32(_ value: UInt32) { var v = value.littleEndian; withUnsafeBytes(of: &v) { header.append(contentsOf: $0) } }
+        func u16(_ value: UInt16) { var v = value.littleEndian; withUnsafeBytes(of: &v) { header.append(contentsOf: $0) } }
+        ascii("RIFF"); u32(UInt32(samples * 2 + 36)); ascii("WAVEfmt "); u32(16)
+        u16(1); u16(1); u32(16000); u32(32000); u16(2); u16(16); ascii("data"); u32(UInt32(samples * 2))
+        try header.write(to: outputURL, options: .atomic)
+        let file = try FileHandle(forWritingTo: outputURL); defer { try? file.close() }
+        try file.seekToEnd()
+        for start in stride(from: 0, to: samples, by: 16000) {
+            try file.write(contentsOf: AudioStorage.encodePCM16(read(source, from: start, count: min(16000, samples - start))))
+        }
+        try file.synchronize(); return outputURL
+    }
+
     static func read(_ url: URL, from start: Int, count: Int) throws -> [Float] {
         guard start >= 0, count > 0 else { return [] }
         guard let width = AudioStorage.bytesPerSample(fileName: url.lastPathComponent) else {

@@ -37,6 +37,7 @@ final class LaunchTests: XCTestCase {
         app.buttons["完成"].tap()
         app.buttons["歷史紀錄"].tap()
         XCTAssertTrue(app.staticTexts["還沒有已儲存的課堂"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["匯入音訊"].exists)
         app.buttons["完成"].tap()
         XCTAssertTrue(app.buttons["開始錄音"].waitForExistence(timeout: 5))
         let attachment = XCTAttachment(screenshot: app.screenshot())

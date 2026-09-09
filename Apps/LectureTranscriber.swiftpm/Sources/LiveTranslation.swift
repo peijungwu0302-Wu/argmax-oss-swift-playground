@@ -30,7 +30,7 @@ private struct TranslationWorker: ViewModifier {
                 guard controller.translationEnabled else { return }
                 let generation = controller.translationGeneration
                 do {
-                    controller.translationStatus = "正在準備英語／中文翻譯；首次需要下載語言"
+                    controller.translationStatus = "正在準備翻譯語言；首次需要下載語言資源"
                     try await translator.prepareTranslation()
                     var previousDraft: DraftTranslationKey?
                     var lastDraftAt = Date.distantPast
@@ -69,7 +69,7 @@ private struct TranslationWorker: ViewModifier {
                                 retryAfter.removeValue(forKey: line.id)
                             } else {
                                 controller.translationStatus = retryAfter.isEmpty
-                                    ? "裝置端翻譯已就緒 · 中文原文保留，英語翻成中文"
+                                    ? "裝置端翻譯已就緒"
                                     : "部分段落等待重試；新字幕仍持續翻譯"
                                 try await Task.sleep(nanoseconds: 250_000_000)
                             }
@@ -92,11 +92,12 @@ private struct TranslationWorker: ViewModifier {
     private func configure() {
         if !controller.translationEnabled { configuration = nil }
         else if configuration == nil {
-            configuration = .init(source: Locale.Language(identifier: "en"), target: Locale.Language(identifier: "zh-Hant"))
-        } else { configuration?.invalidate() }
+            configuration = .init(source: Locale.Language(identifier: controller.translationSource), target: Locale.Language(identifier: "zh-Hant"))
+        } else { configuration = .init(source: Locale.Language(identifier: controller.translationSource), target: Locale.Language(identifier: "zh-Hant")); configuration?.invalidate() }
     }
     @MainActor
     private func translate(_ text: String, with translator: TranslationSession) async throws -> String {
+        if controller.translationSource == "ja" { return try await translator.translate(text).targetText }
         var result = text
         for range in TranslationText.englishRanges(text).reversed() {
             let original = (text as NSString).substring(with: range)

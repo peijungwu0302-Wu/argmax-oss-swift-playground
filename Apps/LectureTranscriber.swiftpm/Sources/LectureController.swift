@@ -37,6 +37,15 @@ final class LectureController: ObservableObject {
     @Published var isSummarizing = false
     @Published var summaryStatus = ""
 
+    @Published var notesPrompt = UserDefaults.standard.string(forKey: "notesPrompt") ?? "以繁體中文整理重點、決議、待辦；保留英文術語和來源時間戳。"
+    @Published var translationSource = "en"
+    var supportsBackgroundAudio: Bool { (Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String])?.contains("audio") == true }
+    var backgroundDescription: String { supportsBackgroundAudio ? "私人安裝版支援背景收音；系統中斷或資源限制仍可能暫停，回到畫面可補辨識。" : "Playground 版請保持字幕視窗可見；測試背景錄音請使用 IPA。" }
+    func audioSize(_ lecture: LectureSession) -> String {
+        ByteCountFormatter.string(fromByteCount: store?.audioBytes(lecture) ?? 0, countStyle: .file)
+    }
+    func audioURL(_ lecture: LectureSession, _ part: AudioPart) -> URL? { store?.audioURL(lecture, part) }
+    func saveNotesPrompt() { notesPrompt = String(notesPrompt.prefix(800)); UserDefaults.standard.set(notesPrompt, forKey: "notesPrompt") }
     private let engine = WhisperEngine()
     private let senseVoice = SenseVoiceEngine()
     private let recorder = PCMRecorder()
@@ -101,9 +110,19 @@ final class LectureController: ObservableObject {
         return translatedDraft
     }
     var translationCaption: String {
-        if !displayedDraft.isEmpty { return CaptionText.screen(validTranslatedDraft) }
+        if !displayedDraft.isEmpty {
+            if !validTranslatedDraft.isEmpty { return CaptionText.screen(validTranslatedDraft) }
+            if translationDraftKey?.sessionID == session?.id && translationDraftKey?.generation == translationGeneration && !translatedDraft.isEmpty {
+                return "更新中 · 上次翻譯\n" + CaptionText.screen(translatedDraft)
+            }
+        }
         guard let current = session, let line = current.lines.last else { return "" }
         return CaptionText.screen(current.translation(for: line)?.text ?? "")
+    }
+    func setTranslationSource(_ value: String) {
+        guard value == "en" || value == "ja", value != translationSource else { return }
+        translationSource = value; session?.translationSource = value; session?.translations = []
+        restartTranslation(); persist()
     }
     func restartTranslation() {
         translatedDraft = ""; translationDraftSource = ""; translationDraftKey = nil
@@ -434,7 +453,12 @@ final class LectureController: ObservableObject {
         errorMessage = status
     }
 
-    func backgrounded() { interrupt("App 已進入背景，錄音已暫停") }
+    func backgrounded() {
+        if supportsBackgroundAudio && isRecording {
+            updateAudioCount(); persist()
+            status = "背景錄音中；返回 App 後檢查字幕進度"
+        } else { interrupt("App 已進入背景，錄音已暫停") }
+    }
     func foregrounded() { if translationEnabled { restartTranslation() } }
     func bookmark(_ note: String) {
         guard session != nil else { return }
@@ -466,6 +490,7 @@ final class LectureController: ObservableObject {
     func open(_ saved: LectureSession) {
         guard canManageSessions else { return }
         session = saved; title = saved.title; model = saved.model; language = saved.language
+        translationSource = saved.translationSource ?? "en"
         restartTranslation()
         recognitionEngine = saved.recognitionEngine ?? "whisper"
         vocabulary = saved.vocabulary ?? ""
@@ -473,6 +498,28 @@ final class LectureController: ObservableObject {
         translatedDraft = ""; summaryStatus = ""
         liveDraft = ""; previousHypothesis = []; lastDecodeSeconds = nil; draftAudioEnd = saved.duration
         status = saved.hasPendingAudio ? "找到尚未完成的錄音，請按補辨識" : "已開啟本機逐字稿，可繼續錄音"
+    }
+    func importAudio(_ source: URL) async {
+        guard canManageSessions, let store else { return }
+        persist()
+        isBusy = true; status = "正在匯入並轉成辨識音訊，請保持 App 開啟…"
+        var imported = LectureSession(title: source.deletingPathExtension().lastPathComponent,
+            model: model, language: language, vocabulary: vocabulary, recognitionEngine: recognitionEngine)
+        let part = AudioPart(fileName: UUID().uuidString + ".pcm16", offset: 0, recordingQuality: recordingQuality)
+        let access = source.startAccessingSecurityScopedResource()
+        defer { if access { source.stopAccessingSecurityScopedResource() }; isBusy = false }
+        do {
+            try FileManager.default.createDirectory(at: store.folder(imported.id), withIntermediateDirectories: true)
+            let destination = store.audioURL(imported, part)
+            let count = try await Task.detached(priority: .userInitiated) { try StoredAudio.importAudio(source, to: destination) }.value
+            var complete = part; complete.sampleCount = count
+            imported.parts = [complete]; try store.save(imported)
+            isBusy = false; open(imported); reloadHistory()
+            status = "已匯入音訊；按「補辨識」開始，原本的檔案不受影響"
+        } catch {
+            try? store.delete(imported.id)
+            fail("無法匯入音訊，請選擇可播放的 WAV、M4A 或 MP3。", error)
+        }
     }
     func export(_ format: TranscriptFormat) -> URL? {
         guard let session, let store else { return nil }
@@ -590,12 +637,13 @@ final class LectureController: ObservableObject {
             // Recording and decoding have finished. Release our Core ML references
             // before asking the system language model to process the lecture.
             await engine.unload(); await senseVoice.unload(); loadedModel = nil
-            let result = try await SmartNotes.generate(current) { [weak self] value in
+            let result = try await SmartNotes.generate(current, prompt: notesPrompt) { [weak self] value in
                 Task { @MainActor in self?.summaryStatus = value }
             }
             guard session?.id == current.id, session?.sourceText == current.sourceText else { return }
             session?.minutes = result.text; session?.minutesKind = result.kind
             session?.minutesSource = current.sourceText
+            session?.minutesPrompt = notesPrompt
             summaryStatus = result.kind; persist(); reloadHistory()
         } catch { summaryStatus = "整理未完成"; fail("無法完成 AI 整理；原始逐字稿已保存。可改用原文整理。", error) }
     }
