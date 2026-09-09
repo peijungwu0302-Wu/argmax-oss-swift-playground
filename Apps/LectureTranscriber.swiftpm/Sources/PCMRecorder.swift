@@ -80,66 +80,9 @@ final class PCMRecorder: @unchecked Sendable {
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
     static func read(_ url: URL, from start: Int, count: Int) throws -> [Float] {
-        guard start >= 0, count > 0 else { return [] }
-        guard let width = AudioStorage.bytesPerSample(fileName: url.lastPathComponent) else {
-            let audio = try AVAudioFile(forReading: url, commonFormat: .pcmFormatFloat32, interleaved: false)
-            guard audio.processingFormat.sampleRate == 16000, audio.processingFormat.channelCount == 1,
-                  let buffer = AVAudioPCMBuffer(pcmFormat: audio.processingFormat, frameCapacity: AVAudioFrameCount(count)) else {
-                throw LectureError.message("錄音格式不符，原檔已保留。")
-            }
-            audio.framePosition = AVAudioFramePosition(start)
-            try audio.read(into: buffer, frameCount: AVAudioFrameCount(count))
-            guard Int(buffer.frameLength) == count, let channel = buffer.floatChannelData?[0] else {
-                throw LectureError.message("壓縮錄音長度不足，原檔已保留。")
-            }
-            return Array(UnsafeBufferPointer(start: channel, count: count))
-        }
-        let file = try FileHandle(forReadingFrom: url)
-        defer { try? file.close() }
-        try file.seek(toOffset: UInt64(start) * UInt64(width))
-        var data = Data()
-        while data.count < count * width {
-            let portion = try file.read(upToCount: count * width - data.count) ?? Data()
-            guard !portion.isEmpty else { throw LectureError.message("錄音檔長度不足，已保留未完成的位置，請稍後重試。") }
-            data.append(portion)
-        }
-        if width == 2 { return AudioStorage.decodePCM16(data) }
-        var samples = [Float](repeating: 0, count: data.count / 4)
-        _ = samples.withUnsafeMutableBytes { destination in data.copyBytes(to: destination) }
-        return samples
+        try StoredAudio.read(url, from: start, count: count)
     }
-
-    // Archive only after capture closes and all recognition has consumed the PCM.
-    // Work in bounded buffers; do not load a lecture into RAM. The caller commits
-    // the verified new filename atomically before removing the original file.
     static func archive(_ source: URL, samples: Int, bitRate: Int) throws -> URL {
-        guard samples > 0, bitRate == 32000 || bitRate == 64000 else {
-            throw LectureError.message("壓縮設定不正確，原始錄音已保留。")
-        }
-        let destination = source.deletingLastPathComponent().appendingPathComponent(UUID().uuidString + ".m4a")
-        do {
-            try writeArchive(source, destination: destination, samples: samples, bitRate: bitRate)
-            // Check both ends after closing the encoder, including its delayed tail.
-            _ = try read(destination, from: 0, count: min(samples, 16000))
-            _ = try read(destination, from: max(0, samples - 16000), count: min(samples, 16000))
-            return destination
-        } catch {
-            try? FileManager.default.removeItem(at: destination)
-            throw error
-        }
-    }
-    private static func writeArchive(_ source: URL, destination: URL, samples: Int, bitRate: Int) throws {
-        let settings: [String: Any] = [AVFormatIDKey: kAudioFormatMPEG4AAC,
-            AVSampleRateKey: 16000, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: bitRate]
-        let file = try AVAudioFile(forWriting: destination, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
-        for start in stride(from: 0, to: samples, by: 16000) {
-            let count = min(16000, samples - start)
-            let values = try read(source, from: start, count: count)
-            guard let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(count)),
-                  let channel = buffer.floatChannelData?[0] else { throw LectureError.message("無法配置錄音壓縮緩衝區。") }
-            buffer.frameLength = AVAudioFrameCount(count)
-            values.withUnsafeBufferPointer { channel.update(from: $0.baseAddress!, count: count) }
-            try file.write(from: buffer)
-        }
+        try StoredAudio.archive(source, samples: samples, bitRate: bitRate)
     }
 }

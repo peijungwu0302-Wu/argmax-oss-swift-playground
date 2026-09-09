@@ -19,6 +19,7 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertLessThan(abs(middle[133] - samples[8133]), 0.00004)
         XCTAssertThrowsError(try PCMRecorder.read(source, from: count - 1, count: 2))
         for rate in [32000, 64000] {
+            print("Checking AAC bitrate \(rate)")
             let archive = try PCMRecorder.archive(source, samples: count, bitRate: rate)
             let decoded = try PCMRecorder.read(archive, from: 0, count: count)
             XCTAssertEqual(decoded.count, count, "AAC must retain the original final samples")

@@ -71,6 +71,11 @@ jobs:
         run: |
           swiftc Apps/LectureTranscriber.swiftpm/Sources/Session.swift AppTests/main.swift -o "$RUNNER_TEMP/session-tests"
           "$RUNNER_TEMP/session-tests"
+      - name: Check AAC archive on macOS
+        # The desktop codec check catches archive errors before simulator startup.
+        run: |
+          swiftc Apps/LectureTranscriber.swiftpm/Sources/Session.swift Apps/LectureTranscriber.swiftpm/Sources/StoredAudio.swift AppTests/AudioArchive/main.swift -o "$RUNNER_TEMP/audio-tests"
+          "$RUNNER_TEMP/audio-tests"
       - name: Type-check App Playground manifest
         run: |
           XCODE_ROOT="$(xcode-select -p)/../.."
@@ -90,6 +95,16 @@ jobs:
           set -o pipefail
           DEVICE_ID=$(xcrun simctl list devices available -j | python3 -c 'import sys,json; data=json.load(sys.stdin); print(next(d["udid"] for runtime,devices in data["devices"].items() if "iOS" in runtime for d in devices if "iPad" in d["name"]))')
           xcodebuild -project AppBuild/LectureTranscriber.xcodeproj -scheme LectureTranscriber -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath "$RUNNER_TEMP/LectureBuild" -resultBundlePath "$RUNNER_TEMP/LaunchTests.xcresult" CODE_SIGNING_ALLOWED=NO test 2>&1 | tee "$RUNNER_TEMP/lecture-launch.log"
+      - name: Report validation errors
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import os, pathlib
+          for p in pathlib.Path(os.environ['RUNNER_TEMP']).glob('lecture-*.log'):
+              for line in p.read_text(errors='replace').splitlines():
+                  if 'error:' in line.lower() or ('Test Case' in line and 'failed' in line):
+                      print('::error::' + line.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'))
+          PY
       - name: Preserve build log
         if: always()
         uses: actions/upload-artifact@v4
