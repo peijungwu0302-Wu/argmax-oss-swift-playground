@@ -168,7 +168,7 @@ struct ContentView: View {
                     if pip.active { pip.stop() } else { pip.start(recording: controller.isRecording) }
                 }
                 Menu("控制") {
-                    Button("完整畫面") { pip.detach(); pipPreview = false; controller.pipEnabled = false }
+                    Button("完整畫面") { pip.detach(); pipPreview = false; controller.pipEnabled = false; compactMode = false }
                     Button("改用可縮小視窗字幕") { pip.detach(); pipPreview = false; controller.pipEnabled = false; compactMode = true }
                     Button("字級與設定") { showSettings = true }
                     if controller.isRecording { Button("停止並儲存") { Task { await controller.pause() } }.disabled(controller.isBusy) }
