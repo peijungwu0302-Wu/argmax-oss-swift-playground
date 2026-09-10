@@ -19,7 +19,7 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(url: "https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground.git", exact: "1.1.3")
+        .package(url: "https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground.git", exact: "1.1.4")
     ],
     targets: [
         .executableTarget(

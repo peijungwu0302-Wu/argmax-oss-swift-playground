@@ -17,6 +17,7 @@ let package = Package(
             name: "WhisperKit",
             targets: ["WhisperKit"]
         ),
+        .library(name: "SpeakerKit", targets: ["SpeakerKit"]),
     ],
     dependencies: [],
     targets: [
@@ -31,6 +32,8 @@ let package = Package(
             ],
             swiftSettings: swiftSettings()
         ),
+        .target(name: "SpeakerKit", dependencies: ["ArgmaxCore", "WhisperKit"],
+                swiftSettings: swiftSettings() + [.swiftLanguageMode(.v5)]),
     ],
     swiftLanguageModes: [.v6]
 )

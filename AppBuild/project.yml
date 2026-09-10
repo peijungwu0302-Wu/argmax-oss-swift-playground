@@ -6,7 +6,7 @@ options:
 packages:
   WhisperLibrary:
     url: https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground.git
-    exactVersion: 1.1.3
+    exactVersion: 1.1.4
 targets:
   LectureTranscriber:
     type: application

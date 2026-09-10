@@ -568,7 +568,7 @@ final class LectureController: ObservableObject {
 
     func assignSpeaker(_ lineID: UUID, speaker: String?) {
         guard canManageSessions, var current = session, let index = current.lines.firstIndex(where: { $0.id == lineID }) else { return }
-        current.lines[index].speakerID = speaker; saveRevision(current)
+        current.lines[index].speakerID = speaker; current.previousLines = nil; saveRevision(current)
     }
 
     func mergeSpeaker(_ from: String, into to: String) {

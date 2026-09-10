@@ -9,7 +9,7 @@ struct LectureSpeakers: Sendable {
 actor SpeakerAnalysis {
     func analyze(_ lecture: LectureSession, files: [URL], progress: @escaping @Sendable (String) -> Void) async throws -> LectureSpeakers {
         progress("準備離線講者模型，首次需下載…")
-        let config = PyannoteConfig(download: true, load: false, verbose: false,
+        let config = PyannoteConfig(downloadRevision: "86ec9c929b52208b6656eb6a6361ed0d822a1f78", load: false, verbose: false,
                                     fullRedundancy: false, concurrentSegmenterWorkers: 1, concurrentEmbedderWorkers: 1)
         let engine = try await SpeakerKit(config)
         do {

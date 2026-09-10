@@ -26,7 +26,7 @@ def generate(ipa: Path, destination: Path):
             localizedDescription=notes, iconURL=icon,
             versions=[dict(version=version, date=datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 localizedDescription=notes, downloadURL=url, size=ipa.stat().st_size, minOSVersion=minimum)],
-            appPermissions=dict(entitlements=[], privacy=[dict(name='Microphone', usageDescription=info['NSMicrophoneUsageDescription'])]))], news=[])
+            appPermissions=dict(entitlements=[], privacy={k:v for k,v in info.items() if k.startswith('NS') and 'UsageDescription' in k}))], news=[])
     destination.mkdir(parents=True, exist_ok=True)
     for name, value in [('update.json', update), ('sidestore.json', source)]:
         (destination / name).write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
