@@ -209,3 +209,100 @@ let valleyCut = SenseVoiceWindow.choose(longNoise, final: false)
 check(valleyCut.commit && valleyCut.count > 120000 && valleyCut.count < 140000, "Hard cap chooses an acoustic valley, not a fixed 12-second mid-word cut")
 check(store.audioBytes(smallRecovered) == Int64(pcmData.count), "Library audio size reads actual disk bytes")
 print("PASS: adaptive SenseVoice pause/valley and actual library file size")
+
+// Exercise the actual range planner, including short tails and a multi-window
+// recording. Ownership is continuous even though inference inputs overlap.
+for length in [1, 3199, 3200, 16000, 192000, 192001, 65 * 16000 + 137] {
+    for amplitude in [Float(0.0001), Float(0.08)] {
+    var cursor = 0
+    while cursor < length {
+        let left = min(SenseVoiceContext.overlap, cursor)
+        let readStart = cursor - left
+        let readCount = min(SenseVoiceWindow.maximumSamples, length - readStart)
+        let input = [Float](repeating: amplitude, count: readCount)
+        let plan = SenseVoiceContext.choose(input, left: left, atEnd: readStart + readCount == length)
+        check(plan.commit && !plan.owned.isEmpty, "Recovery must advance, including very quiet speech and sub-200ms tails")
+        check(readStart + plan.owned.lowerBound == cursor, "No sample gap at an ownership boundary")
+        check(plan.inputCount <= readCount && plan.inputCount <= SenseVoiceWindow.maximumSamples,
+              "Inference cannot read past the saved file or model bound")
+        check(plan.inputCount >= plan.owned.upperBound, "All owned audio reaches inference")
+        if readStart + plan.owned.upperBound < length {
+            check(plan.inputCount > plan.owned.upperBound, "A continuing segment has right context")
+        }
+        cursor += plan.owned.count
+    }
+    check(cursor == length, "Final cursor must include every last sample exactly once")
+    }
+}
+let contextDraft = SenseVoiceContext.choose([Float](repeating: 0.08, count: 4 * 16000), left: 0, atEnd: false)
+check(!contextDraft.commit && contextDraft.owned.upperBound == 3 * 16000, "Live speech keeps right context out of confirmed text")
+let contextCap = SenseVoiceContext.choose([Float](repeating: 0.08, count: 12 * 16000), left: 16000, atEnd: false)
+check(contextCap.commit && contextCap.owned == 16000..<176000 && contextCap.inputCount == 192000,
+      "A full context window owns only its center, not the replayed edges")
+
+let ctcVocab = ["<blank>", "<|en|>", "▁very", "▁good", "<0xE4>", "<0xB8>", "<0xAD>"]
+let ctcPath = [1, 1, 1, 1, 2, 2, 0, 2, 0, 3, 0]
+let wholeCTC = SenseVoiceCTC.tokens(ctcPath, owned: nil, vocabulary: ctcVocab)
+check(wholeCTC == [2, 2, 3], "CTC blank-separated repeated words must survive")
+let ctcLeft = SenseVoiceCTC.tokens(ctcPath, owned: 0..<2880, vocabulary: ctcVocab)
+let ctcRight = SenseVoiceCTC.tokens(ctcPath, owned: 2880..<20000, vocabulary: ctcVocab)
+check(ctcLeft + ctcRight == wholeCTC, "A seam owns an emission on one side only")
+let bytePath = [1, 1, 1, 1, 4, 5, 6, 0, 3]
+let byteLeft = SenseVoiceCTC.tokens(bytePath, owned: 0..<960, vocabulary: ctcVocab)
+let byteRight = SenseVoiceCTC.tokens(bytePath, owned: 960..<20000, vocabulary: ctcVocab)
+check(SenseVoiceText.decode(byteLeft, vocabulary: ctcVocab) == "中" && byteRight == [3],
+      "A seam cannot split a UTF-8 fallback sequence")
+
+var reSource = smallRecovered
+reSource.lines = [TranscriptLine(start: 0, end: 1, text: "我的手動修改")]
+reSource.translations = [TranslatedLine(id: reSource.lines[0].id, source: "我的手動修改", text: "my edit")]
+reSource.minutes = "保留筆記"; reSource.minutesSource = reSource.sourceText
+reSource.bookmarks = [Bookmark(seconds: 0.5, note: "保留標記")]
+reSource.translationSource = "ja"
+reSource.parts[0].processedSamples = reSource.parts[0].sampleCount
+try store.save(reSource)
+let originalJSON = try Data(contentsOf: store.folder(reSource.id).appendingPathComponent("session.json"))
+let reCopy = try store.copyForRetranscription(reSource)
+check(reCopy.id != reSource.id && reCopy.hasPendingAudio && reCopy.lines.isEmpty,
+      "Even completed audio is reprocessed in an independent lecture")
+check(reCopy.translations == nil && reCopy.minutes == nil && reCopy.translationSource == "ja",
+      "New recognition cannot inherit stale translations or notes")
+check(reCopy.bookmarks.map(\.note) == ["保留標記"] && reCopy.recognitionEngine == "sensevoice",
+      "Retranscription retains bookmarks and routes to SenseVoice")
+let copiedAudio = try Data(contentsOf: store.audioURL(reCopy, reCopy.parts[0]))
+check(copiedAudio == pcmData,
+      "Retranscription copies the exact saved recording")
+try store.delete(reCopy.id)
+let retainedJSON = try Data(contentsOf: store.folder(reSource.id).appendingPathComponent("session.json"))
+check(retainedJSON == originalJSON,
+      "Deleting a retranscription cannot alter the original edits, translations or notes")
+let retainedAudio = try Data(contentsOf: store.audioURL(reSource, reSource.parts[0]))
+check(retainedAudio == pcmData,
+      "The source audio must remain independently available")
+print("PASS: context coverage, CTC seams, UTF-8 and independent full retranscription copy")
+
+for length in [1, 3200, 480000, 480001, 2 * 480000 + 333] {
+    var cursor = 0
+    while cursor < length {
+        let left = min(ReviewWindow.context, cursor), begin = cursor - min(ReviewWindow.context, cursor)
+        let count = min(ReviewWindow.maximumSamples, length - begin)
+        let plan = ReviewWindow.choose([Float](repeating: 0.08, count: count), left: left, atEnd: begin + count == length)
+        check(plan.commit && plan.owned.count > 0 && begin + plan.owned.lowerBound == cursor, "Long-context review advances without audio gaps")
+        check(plan.inputCount <= 480000 && plan.owned.upperBound <= plan.inputCount, "Review respects pinned frontend 30-second capacity")
+        cursor += plan.owned.count
+    }
+    check(cursor == length, "Review retains exact final sample")
+}
+var timeline = LectureSession(title: "兩段", model: "test", language: "auto")
+timeline.parts = [.init(fileName: "a.pcm16", offset: 0, sampleCount: 32000), .init(fileName: "b.pcm16", offset: 2, sampleCount: 48000)]
+let slices = try AudioTimeline.slices(timeline, start: 1.5, end: 3.25)
+check(slices.count == 2 && slices[0].start == 24000 && slices[0].count == 8000 && slices[1].count == 20000,
+      "A manual review clip crosses saved parts at the exact sample boundary")
+var invalidRangeRejected = false
+do { _ = try AudioTimeline.slices(timeline, start: -1, end: 2) } catch { invalidRangeRejected = true }
+check(invalidRangeRejected, "Invalid clip cannot read unrelated audio")
+timeline.speakerNames = ["a": "老師", "b": "學生"]
+timeline.speakerTurns = [.init(start: 0, end: 2, speakerID: "a"), .init(start: 1, end: 3, speakerID: "b")]
+check(timeline.speakerLabel(.init(start: 0, end: 0.8, text: "test")) == "老師：", "Confirmed speaker labels use user names")
+check(timeline.speakerLabel(.init(start: 1.2, end: 1.5, text: "test")).contains("多位"), "Overlapping voices cannot be falsely assigned to one person")
+print("PASS: 30-second review, sample-exact cross-part timeline and uncertain speaker labels")

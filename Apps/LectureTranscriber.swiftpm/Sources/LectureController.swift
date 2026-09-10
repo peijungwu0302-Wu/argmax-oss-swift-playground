@@ -37,6 +37,10 @@ final class LectureController: ObservableObject {
     @Published private(set) var pendingAppleLanguage: String?
     @Published var isSummarizing = false
     @Published var summaryStatus = ""
+    @Published private(set) var senseVoiceInputStatus = ""
+    @Published var pipActive = false
+    @Published var pipEnabled = false
+    var canProcessLiveAudio: Bool { isInForeground || pipActive }
 
     @Published var notesPrompt = UserDefaults.standard.string(forKey: "notesPrompt") ?? "以繁體中文整理重點、決議、待辦；保留英文術語和來源時間戳。"
     @Published var translationSource = "en"
@@ -238,7 +242,7 @@ final class LectureController: ObservableObject {
             try store.save(current)
             session = current
             if usesAppleSpeech { try await startApple(part, current: current) }
-            do { try recorder.start(at: store.audioURL(current, part)) }
+            do { try recorder.start(at: store.audioURL(current, part), allowsPlayback: pipEnabled) }
             catch {
                 // A failed start may still have created a recoverable empty PCM file.
                 session?.parts.removeLast()
@@ -278,7 +282,7 @@ final class LectureController: ObservableObject {
                 try await streamApple()
             } else {
             while isRecording {
-                if !isInForeground { try await Task.sleep(nanoseconds: 300_000_000); continue }
+                if !canProcessLiveAudio { try await Task.sleep(nanoseconds: 300_000_000); continue }
                 updateAudioCount()
                 guard let current = session, let part = current.parts.last else { break }
                 let available = part.sampleCount - part.processedSamples
@@ -354,28 +358,46 @@ final class LectureController: ObservableObject {
 
     private func decodeSenseVoice(_ id: UUID, final: Bool) async throws {
         guard let store, let current = session, let part = current.parts.first(where: { $0.id == id }) else { return }
-        let count = min(SenseVoiceWindow.maximumSamples, part.sampleCount - part.processedSamples)
-        guard count > 0 else { return }
+        let reviewing = current.transcriptionPass == "context30"
+        let left = min(reviewing ? ReviewWindow.context : SenseVoiceContext.overlap, part.processedSamples)
+        let readStart = part.processedSamples - left
+        let count = min(reviewing ? ReviewWindow.maximumSamples : SenseVoiceWindow.maximumSamples, part.sampleCount - readStart)
+        guard count > left else { return }
         isDecoding = true
         defer { isDecoding = false }
         let file = store.audioURL(current, part)
         let samples = try await Task.detached(priority: .userInitiated) {
-            try PCMRecorder.read(file, from: part.processedSamples, count: count)
+            try PCMRecorder.read(file, from: readStart, count: count)
         }.value
-        let window = SenseVoiceWindow.choose(samples, final: final)
+        guard samples.count == count else { throw LectureError.message("SenseVoice 音訊讀取不完整，保留進度供重試。") }
+        let atEnd = final && readStart + count == part.sampleCount
+        let window = reviewing ? ReviewWindow.choose(samples, left: left, atEnd: atEnd)
+            : SenseVoiceContext.choose(samples, left: left, atEnd: atEnd)
+        guard !window.owned.isEmpty else { return }
         let started = Date()
-        let text = window.hasSpeech ? try await senseVoice.transcribe(Array(samples.prefix(window.count))) : ""
+        // Low-volume speech must reach the model too; VAD only chooses boundaries.
+        let decoded = try await senseVoice.transcribeDetailed(Array(samples.prefix(window.inputCount)), owned: window.owned)
+        let text = decoded.text
+        try Task.checkCancellation()
         guard session?.id == current.id, let index = session?.parts.firstIndex(where: { $0.id == id }) else { return }
         lastDecodeSeconds = Date().timeIntervalSince(started)
         let start = part.offset + Double(part.processedSamples) / 16000
-        let end = start + Double(window.count) / 16000
+        let end = start + Double(window.owned.count) / 16000
         draftAudioEnd = end; liveDraft = ""
-        let lines = text.isEmpty ? [] : [TranscriptLine(start: start, end: end, text: text)]
+        senseVoiceInputStatus = "模型輸入 \(window.inputCount) 個樣本；本段 \(window.owned.count)，前文 \(left)，後文 \(window.inputCount - window.owned.upperBound)（16 kHz）"
+        var lines = text.isEmpty ? [] : [TranscriptLine(start: start, end: end, text: text)]
+        if reviewing, !decoded.words.isEmpty {
+            let offset = part.offset + Double(readStart) / 16000
+            lines = CaptionText.lines(decoded.words.map { .init(text: $0.text, start: offset + $0.start, end: offset + $0.end) })
+            for index in lines.indices { lines[index].approximateTiming = true }
+        }
         if window.commit {
-            session?.appendConfirmed(lines)
-            session?.parts[index].processedSamples += window.count
+            guard var updated = session else { return }
+            updated.appendConfirmed(lines)
+            updated.parts[index].processedSamples += window.owned.count
+            try store.save(updated)
+            session = updated; lastSaved = Date()
             provisional = []; previousHypothesis = []
-            if let updated = session { try store.save(updated); lastSaved = Date() }
         } else { provisional = lines }
     }
 
@@ -418,6 +440,149 @@ final class LectureController: ObservableObject {
             status = "補辨識完成，已儲存"
             reloadHistory()
         } catch { fail("補辨識未完成，原始聲音仍保留在本機。", error) }
+    }
+
+    func retranscribeRecording() async {
+        guard canManageSessions, let source = session, let store else { return }
+        persist()
+        isBusy = true; status = "正在建立重新轉錄副本，請保持 App 開啟…"
+        do {
+            let copy = try await Task.detached(priority: .userInitiated) {
+                try store.copyForRetranscription(source)
+            }.value
+            isBusy = false
+            open(copy); reloadHistory()
+            await recover()
+        } catch {
+            isBusy = false
+            fail("無法建立重新轉錄副本；原課堂仍保留。", error)
+        }
+    }
+
+    func prepareClip(start: Double, end: Double) async -> URL? {
+        guard canManageSessions, let source = session, let store else { return nil }
+        isBusy = true; defer { isBusy = false }
+        do {
+            return try await Task.detached(priority: .userInitiated) {
+                try StoredAudio.clip(source, store: store, start: start, end: end)
+            }.value
+        } catch { fail("無法準備核對片段。", error); return nil }
+    }
+
+    func reviewRange(start: Double, end: Double) async -> [TranscriptLine]? {
+        guard canManageSessions, let source = session, let store else { return nil }
+        isBusy = true; defer { isBusy = false; progress = nil }
+        do {
+            _ = try AudioTimeline.slices(source, start: start, end: end)
+            await engine.unload(); await appleSpeech?.cancel(); loadedModel = nil
+            try await senseVoice.load(language: source.language) { [weak self] message, _ in
+                Task { @MainActor in self?.status = message }
+            }
+            var cursor = start; var words: [TranscriptWord] = []
+            while cursor < end {
+                try Task.checkCancellation()
+                let stop = min(end, cursor + 24)
+                let from = max(0, cursor - 3), through = min(source.duration, stop + 3)
+                let slices = try AudioTimeline.slices(source, start: from, end: through)
+                let samples = try await Task.detached(priority: .userInitiated) {
+                    var buffer: [Float] = []
+                    for slice in slices { buffer += try StoredAudio.read(store.audioURL(source, slice.part), from: slice.start, count: slice.count) }
+                    return buffer
+                }.value
+                let first = Int((cursor * 16000).rounded()) - Int((from * 16000).rounded())
+                let last = Int((stop * 16000).rounded()) - Int((from * 16000).rounded())
+                let decoded = try await senseVoice.transcribeDetailed(samples, owned: first..<last)
+                words += decoded.words.map { .init(text: $0.text, start: from + $0.start, end: from + $0.end) }
+                cursor = stop
+            }
+            var lines = CaptionText.lines(words)
+            for i in lines.indices { lines[i].approximateTiming = true }
+            status = "選段重辨識完成；請比較原文後決定是否採用"
+            return lines
+        } catch { fail("選段重辨識失敗，原文保留。", error); return nil }
+    }
+
+    func applyReview(_ original: TranscriptLine, replacements: [TranscriptLine], sessionID: UUID) {
+        guard canManageSessions, var current = session, current.id == sessionID,
+              let index = current.lines.firstIndex(where: { $0.id == original.id }),
+              current.lines[index] == original, original.userEdited != true, !replacements.isEmpty else { return }
+        current.previousLines = current.lines
+        current.lines.replaceSubrange(index...index, with: replacements)
+        current.translations?.removeAll { $0.id == original.id }
+        saveRevision(current)
+    }
+
+    func unlockLine(_ id: UUID) {
+        guard canManageSessions, var current = session, let index = current.lines.firstIndex(where: { $0.id == id }) else { return }
+        current.lines[index].userEdited = false; saveRevision(current)
+    }
+
+    func undoReview() {
+        guard canManageSessions, var current = session, let previous = current.previousLines else { return }
+        current.lines = previous; current.previousLines = nil
+        current.translations = nil; saveRevision(current)
+    }
+
+    func analyzeSpeakers() async {
+        guard canManageSessions, let source = session, let store, source.speakerTurns == nil else { return }
+        isBusy = true; defer { isBusy = false; progress = nil }
+        do {
+            await engine.unload(); await senseVoice.unload(); await appleSpeech?.cancel(); loadedModel = nil
+            let files = source.parts.map { store.audioURL(source, $0) }
+            let result = try await SpeakerAnalysis().analyze(source, files: files) { [weak self] message in
+                Task { @MainActor in self?.status = message }
+            }
+            guard var current = session, current.id == source.id else { return }
+            current.speakerTurns = result.turns; current.speakerNames = result.names
+            current.previousLines = current.lines
+            // Split only machine text with acoustic anchors. User edits stay intact.
+            current.lines = current.lines.flatMap { line -> [TranscriptLine] in
+                guard line.userEdited != true, let words = line.words, !words.isEmpty else { return [line] }
+                var output: [TranscriptLine] = []; var group: [TranscriptWord] = []; var groupID: String?
+                func flush() {
+                    guard !group.isEmpty else { return }
+                    var rows = CaptionText.lines(group)
+                    for i in rows.indices { rows[i].speakerID = groupID; rows[i].approximateTiming = line.approximateTiming }
+                    output += rows; group = []
+                }
+                for word in words {
+                    let ids = Set(result.turns.filter { $0.start <= word.start && $0.end > word.start }.map(\.speakerID))
+                    let id = ids.count == 1 ? ids.first : nil
+                    if !group.isEmpty && id != groupID { flush() }
+                    groupID = id; group.append(word)
+                }
+                flush(); return output
+            }
+            let retained = Set(current.lines.map(\.id)); current.translations?.removeAll { !retained.contains($0.id) }
+            try store.save(current); session = current; reloadHistory()
+            status = "講者分析完成（beta）；可改名、合併及修正段落講者"
+        } catch { fail("講者分析未完成，原錄音與文字保留。", error) }
+    }
+
+    func renameSpeaker(_ id: String, name: String) {
+        guard canManageSessions, var current = session else { return }
+        let text = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
+        guard !text.isEmpty else { return }
+        current.speakerNames?[id] = text; saveRevision(current)
+    }
+
+    func assignSpeaker(_ lineID: UUID, speaker: String?) {
+        guard canManageSessions, var current = session, let index = current.lines.firstIndex(where: { $0.id == lineID }) else { return }
+        current.lines[index].speakerID = speaker; saveRevision(current)
+    }
+
+    func mergeSpeaker(_ from: String, into to: String) {
+        guard canManageSessions, var current = session, from != to, current.speakerNames?[to] != nil else { return }
+        for i in current.lines.indices where current.lines[i].speakerID == from { current.lines[i].speakerID = to }
+        for i in current.speakerTurns?.indices ?? 0..<0 {
+            if current.speakerTurns?[i].speakerID == from { current.speakerTurns?[i].speakerID = to }
+        }
+        current.speakerNames?.removeValue(forKey: from); saveRevision(current)
+    }
+
+    private func saveRevision(_ current: LectureSession) {
+        do { try store?.save(current); session = current; lastSaved = Date(); reloadHistory() }
+        catch { fail("無法保存修改。", error) }
     }
 
     private func finishPending() async throws {
@@ -493,11 +658,22 @@ final class LectureController: ObservableObject {
         persist()
     }
     func updateLine(_ id: UUID, text: String) {
+        guard canManageSessions else { return }
         guard let index = session?.lines.firstIndex(where: { $0.id == id }) else { return }
         session?.lines[index].text = text
         session?.lines[index].words = nil
+        session?.lines[index].userEdited = true
+        session?.previousLines = nil
         session?.translations?.removeAll { $0.id == id }
         persist()
+    }
+    func updateTiming(_ id: UUID, start: Double, end: Double) -> Bool {
+        guard canManageSessions, var current = session, let index = current.lines.firstIndex(where: { $0.id == id }) else { return false }
+        do { _ = try AudioTimeline.slices(current, start: start, end: end) }
+        catch { errorMessage = error.localizedDescription; return false }
+        current.lines[index].start = start; current.lines[index].end = end
+        current.lines[index].words = nil; current.lines[index].approximateTiming = false
+        current.previousLines = nil; saveRevision(current); return session?.lines[index].start == start
     }
     func rename(_ text: String) {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -505,6 +681,7 @@ final class LectureController: ObservableObject {
     }
     func newLecture() {
         guard canManageSessions else { return }
+        senseVoiceInputStatus = ""
         persist(); reloadHistory()
         session = nil; title = ""; provisional = []; search = ""
         restartTranslation()
@@ -514,6 +691,7 @@ final class LectureController: ObservableObject {
     }
     func open(_ saved: LectureSession) {
         guard canManageSessions else { return }
+        senseVoiceInputStatus = ""
         session = saved; title = saved.title; model = saved.model; language = saved.language
         translationSource = saved.translationSource ?? "en"
         restartTranslation()
@@ -531,6 +709,7 @@ final class LectureController: ObservableObject {
         var imported = LectureSession(title: source.deletingPathExtension().lastPathComponent,
             model: model, language: language, vocabulary: vocabulary, recognitionEngine: recognitionEngine)
         imported.translationSource = translationSource
+        imported.transcriptionPass = "context30"
         let part = AudioPart(fileName: UUID().uuidString + ".pcm16", offset: 0, recordingQuality: recordingQuality)
         let access = source.startAccessingSecurityScopedResource()
         defer { if access { source.stopAccessingSecurityScopedResource() }; isBusy = false }
@@ -628,7 +807,7 @@ final class LectureController: ObservableObject {
     private func streamApple() async throws {
         guard let partID = activePartID else { return }
         while true {
-            if isRecording && !isInForeground { try await Task.sleep(nanoseconds: 300_000_000); continue }
+            if isRecording && !canProcessLiveAudio { try await Task.sleep(nanoseconds: 300_000_000); continue }
             updateAudioCount()
             try await feedApple(partID)
             guard let current = session, let part = current.parts.first(where: { $0.id == partID }) else { return }

@@ -19,19 +19,32 @@ final class LaunchTests: XCTestCase {
         app.buttons["精簡字幕"].tap()
         XCTAssertTrue(app.scrollViews["compactCaptionWorkspace"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.textFields["課堂名稱"].exists)
-        let compactLanguage = app.segmentedControls["liveAppleLanguage"]
-        compactLanguage.buttons["English"].tap()
-        XCTAssertTrue(compactLanguage.buttons["English"].isSelected)
-        compactLanguage.buttons["中文"].tap()
-        XCTAssertTrue(app.buttons["開始錄音"].exists)
+        XCTAssertFalse(app.buttons["開始錄音"].exists)
+        XCTAssertFalse(app.navigationBars["字幕"].exists)
         let compactAttachment = XCTAttachment(screenshot: app.screenshot())
         compactAttachment.name = "Compact captions for windowed use"
         compactAttachment.lifetime = .keepAlways
         add(compactAttachment)
+        app.buttons["字幕控制"].tap()
         app.buttons["完整畫面"].tap()
         XCTAssertTrue(app.textFields["課堂名稱"].waitForExistence(timeout: 5))
         app.buttons["錄音設定"].tap()
+        XCTAssertTrue(app.buttons["檢查更新"].waitForExistence(timeout: 5))
+        for _ in 0..<8 {
+            if app.sliders["原文字幕大小"].isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(app.sliders["原文字幕大小"].waitForExistence(timeout: 5))
+        app.sliders["原文字幕大小"].adjust(toNormalizedSliderPosition: 0.7)
+        for _ in 0..<8 {
+            if app.buttons["載入模型"].isHittable { break }
+            app.swipeUp()
+        }
         XCTAssertTrue(app.buttons["載入模型"].waitForExistence(timeout: 5))
+        for _ in 0..<4 {
+            if app.descendants(matching: .any)["recordingQuality"].firstMatch.isHittable { break }
+            app.swipeUp()
+        }
         XCTAssertTrue(app.descendants(matching: .any)["recordingQuality"].firstMatch.exists,
                       "Recording settings must expose storage quality")
         app.buttons["完成"].tap()

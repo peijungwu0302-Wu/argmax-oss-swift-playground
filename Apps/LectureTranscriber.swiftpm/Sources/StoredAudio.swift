@@ -3,6 +3,32 @@ import AVFoundation
 import AudioToolbox
 
 enum StoredAudio {
+    static func clip(_ lecture: LectureSession, store: SessionStore, start: Double, end: Double) throws -> URL {
+        let slices = try AudioTimeline.slices(lecture, start: start, end: end)
+        let count = slices.reduce(0) { $0 + $1.count }
+        guard count > 0, UInt64(count) * 2 + 36 < UInt64(UInt32.max) else { throw LectureError.message("片段太長，無法匯出 WAV。") }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("核對片段-" + UUID().uuidString + ".wav")
+        var header = Data()
+        func ascii(_ s: String) { header.append(contentsOf: s.utf8) }
+        func u32(_ x: UInt32) { var n = x.littleEndian; withUnsafeBytes(of: &n) { header.append(contentsOf: $0) } }
+        func u16(_ x: UInt16) { var n = x.littleEndian; withUnsafeBytes(of: &n) { header.append(contentsOf: $0) } }
+        ascii("RIFF"); u32(UInt32(count * 2 + 36)); ascii("WAVEfmt "); u32(16)
+        u16(1); u16(1); u32(16000); u32(32000); u16(2); u16(16); ascii("data"); u32(UInt32(count * 2))
+        do {
+            try header.write(to: url)
+            let output = try FileHandle(forWritingTo: url); defer { try? output.close() }
+            try output.seekToEnd()
+            for slice in slices {
+                for offset in stride(from: 0, to: slice.count, by: 16000) {
+                    try Task.checkCancellation()
+                    let samples = try read(store.audioURL(lecture, slice.part), from: slice.start + offset, count: min(16000, slice.count - offset))
+                    try output.write(contentsOf: AudioStorage.encodePCM16(samples))
+                }
+            }
+            try output.synchronize()
+            return url
+        } catch { try? FileManager.default.removeItem(at: url); throw error }
+    }
     // Decode files in bounded buffers, downmixing/resampling through Core Audio.
     static func importAudio(_ source: URL, to destination: URL) throws -> Int {
         if let width = AudioStorage.bytesPerSample(fileName: source.lastPathComponent) {

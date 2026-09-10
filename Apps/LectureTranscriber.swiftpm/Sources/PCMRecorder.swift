@@ -15,9 +15,10 @@ final class PCMRecorder: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         return Snapshot(samples: count, level: level, error: failure)
     }
-    func start(at url: URL) throws {
+    func start(at url: URL, allowsPlayback: Bool = false) throws {
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.record, mode: .measurement, options: [])
+        try session.setCategory(allowsPlayback ? .playAndRecord : .record, mode: .measurement,
+                                options: allowsPlayback ? [.defaultToSpeaker, .mixWithOthers] : [])
         try session.setActive(true)
         let engine = AVAudioEngine()
         let input = engine.inputNode

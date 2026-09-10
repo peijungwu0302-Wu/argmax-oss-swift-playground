@@ -92,11 +92,18 @@ actor SenseVoiceEngine {
         progress("SenseVoice Core ML 已就緒", 1)
     }
 
-    func transcribe(_ samples: [Float]) throws -> String {
+    func transcribe(_ samples: [Float], owned: Range<Int>? = nil) throws -> String {
+        try transcribeDetailed(samples, owned: owned).text
+    }
+
+    func transcribeDetailed(_ samples: [Float], owned: Range<Int>? = nil) throws -> SenseVoiceDecoded {
         try Task.checkCancellation()
         guard let preprocessor, let encoder else { throw LectureError.message("請先載入 SenseVoice 模型。") }
-        guard !samples.isEmpty, samples.count <= SenseVoiceWindow.maximumSamples,
+        guard !samples.isEmpty, samples.count <= ReviewWindow.maximumSamples,
               samples.allSatisfy(\.isFinite) else { throw LectureError.message("SenseVoice 音訊範圍無效。") }
+        if let owned, owned.isEmpty || owned.lowerBound < 0 || owned.upperBound > samples.count {
+            throw LectureError.message("SenseVoice 定稿範圍無效。")
+        }
         return try autoreleasepool {
             // The front-end's minimum length is 3200 samples; pad only a short
             // final tail, while the controller retains original timing/counts.
@@ -135,9 +142,12 @@ actor SenseVoiceEngine {
                   logits.dataType == .float32 || logits.dataType == .float16 else {
                 throw LectureError.message("SenseVoice 辨識輸出不相符。")
             }
-            let valid = min(frames + 4, logits.shape[1].intValue)
+            guard logits.shape[1].intValue >= frames + 4 else {
+                throw LectureError.message("SenseVoice 輸出未涵蓋全部音訊；保留進度供重試。")
+            }
+            let valid = frames + 4
             let stride = logits.strides[1].intValue, column = logits.strides[2].intValue
-            var tokens: [Int] = []; var previous = -1
+            var path: [Int] = []
             for frame in 0..<valid {
                 var best = 0; var maximum = -Float.infinity
                 for token in vocabulary.indices {
@@ -150,11 +160,15 @@ actor SenseVoiceEngine {
                     }
                     if value > maximum { maximum = value; best = token }
                 }
-                if best != 0 && best != previous { tokens.append(best) }
-                previous = best
+                path.append(best)
             }
+            // A sub-200ms final recording is zero-padded for the front-end;
+            // allow emissions in that padding rather than clipping its last token.
+            let selection = owned.map { $0.lowerBound..<($0.upperBound == samples.count ? n : $0.upperBound) }
+            let tokens = SenseVoiceCTC.tokens(path, owned: selection, vocabulary: vocabulary)
             let text = SenseVoiceText.decode(tokens, vocabulary: vocabulary)
-            return text.applyingTransform(StringTransform("Hans-Hant"), reverse: false) ?? text
+            let words = SenseVoiceCTC.timedPieces(path, owned: selection, vocabulary: vocabulary, sampleCount: samples.count)
+            return SenseVoiceDecoded(text: text.applyingTransform(StringTransform("Hans-Hant"), reverse: false) ?? text, words: words)
         }
     }
 

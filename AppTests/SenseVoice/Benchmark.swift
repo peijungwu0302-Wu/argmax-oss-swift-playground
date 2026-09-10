@@ -33,6 +33,12 @@ import Foundation
             }
         }
         guard cursor == samples.count else { throw LectureError.message("error: SenseVoice left unconsumed audio") }
+        let longInput = Array((samples + samples + samples).prefix(ReviewWindow.maximumSamples))
+        let full = try await engine.transcribeDetailed(longInput)
+        guard !full.text.isEmpty, !full.words.isEmpty, full.words.allSatisfy({ $0.start >= 0 && $0.end <= Double(longInput.count) / 16000 }) else {
+            throw LectureError.message("error: 30-second model input or CTC anchors failed")
+        }
+        events.append(["mode": "30-second-context", "samples": longInput.count, "text": full.text, "timedPieces": full.words.count])
         try JSONSerialization.data(withJSONObject: events, options: [.prettyPrinted, .sortedKeys])
             .write(to: URL(fileURLWithPath: CommandLine.arguments[2]))
         await engine.unload()

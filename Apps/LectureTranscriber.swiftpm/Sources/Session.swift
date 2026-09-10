@@ -6,6 +6,9 @@ struct TranscriptLine: Codable, Identifiable, Equatable, Sendable {
     var end: Double
     var text: String
     var words: [TranscriptWord]? = nil
+    var speakerID: String? = nil
+    var userEdited: Bool? = nil
+    var approximateTiming: Bool? = nil
 }
 struct TranscriptWord: Codable, Equatable, Sendable {
     var text: String
@@ -192,7 +195,18 @@ struct LectureSession: Codable, Identifiable, Sendable {
     var minutesKind: String? = nil
     var minutesSource: String? = nil
     var minutesPrompt: String? = nil
-    var sourceText: String { lines.map { "[\(TranscriptExport.clock($0.start))] \($0.text)" }.joined(separator: "\n") }
+    var transcriptionPass: String? = nil
+    var speakerTurns: [LectureSpeakerTurn]? = nil
+    var speakerNames: [String: String]? = nil
+    var previousLines: [TranscriptLine]? = nil
+    var sourceText: String { lines.map { "[\(TranscriptExport.clock($0.start))] \(speakerLabel($0))\($0.text)" }.joined(separator: "\n") }
+    func speakerLabel(_ line: TranscriptLine) -> String {
+        if let id = line.speakerID { return (id == "unconfirmed" ? "講者未確認" : (speakerNames?[id] ?? id)) + "：" }
+        guard let turns = speakerTurns else { return "" }
+        let ids = Set(turns.filter { $0.end > line.start && $0.start < line.end }.map(\.speakerID))
+        guard ids.count == 1, let id = ids.first else { return ids.isEmpty ? "講者未確認：" : "多位講者／待核對：" }
+        return (speakerNames?[id] ?? id) + "："
+    }
     var minutesAreCurrent: Bool { minutes != nil && minutesSource == sourceText }
     func translation(for line: TranscriptLine) -> TranslatedLine? {
         translations?.first { $0.id == line.id && $0.source == line.text }
@@ -344,13 +358,13 @@ enum TranscriptExport {
         let lines = session.lines.sorted { $0.start < $1.start }
         if format == .srt {
             return lines.enumerated().map { index, line in
-                "\(index + 1)\n\(clock(line.start, milliseconds: true)) --> \(clock(max(line.end, line.start + 0.05), milliseconds: true))\n\(line.text.trimmingCharacters(in: .whitespacesAndNewlines))\n"
+                    "\(index + 1)\n\(clock(line.start, milliseconds: true)) --> \(clock(max(line.end, line.start + 0.05), milliseconds: true))\n\(session.speakerLabel(line))\(line.text.trimmingCharacters(in: .whitespacesAndNewlines))\n"
             }.joined(separator: "\n")
         }
         let heading = format == .markdown ? "# " : ""
         var result = "\(heading)\(session.title)\n\n\(session.createdAt.formatted())\n錄音時間：\(clock(session.duration))（不含暫停）\n\n"
         if session.hasPendingAudio { result += "尚有音訊未完成辨識；本次匯出只包含已確認段落。\n\n" }
-        result += lines.map { "[\(clock($0.start))] \($0.text)" }.joined(separator: "\n\n")
+        result += lines.map { "[\(clock($0.start))] \(session.speakerLabel($0))\($0.text)" }.joined(separator: "\n\n")
         if !session.bookmarks.isEmpty {
             result += format == .markdown ? "\n\n## 重點標記\n\n" : "\n\n重點標記\n\n"
             result += session.bookmarks.map { "- [\(clock($0.seconds))] \($0.note)" }.joined(separator: "\n")
@@ -409,6 +423,30 @@ struct SessionStore {
     func audioURL(_ session: LectureSession, _ part: AudioPart) -> URL {
         folder(session.id).appendingPathComponent(part.fileName)
     }
+    func copyForRetranscription(_ source: LectureSession) throws -> LectureSession {
+        var copy = LectureSession(title: source.title + " · 重新轉錄", model: source.model,
+                                  language: source.language, vocabulary: source.vocabulary, recognitionEngine: "sensevoice")
+        copy.translationSource = source.translationSource
+        copy.bookmarks = source.bookmarks
+        copy.transcriptionPass = "context30"
+        do {
+            try FileManager.default.createDirectory(at: folder(copy.id), withIntermediateDirectories: true)
+            for original in source.parts where original.sampleCount > 0 {
+                try Task.checkCancellation()
+                var part = original
+                part.id = UUID(); part.processedSamples = 0
+                part.fileName = UUID().uuidString + "." + URL(fileURLWithPath: original.fileName).pathExtension
+                try FileManager.default.copyItem(at: audioURL(source, original), to: audioURL(copy, part))
+                copy.parts.append(part)
+            }
+            guard !copy.parts.isEmpty else { throw LectureError.message("這堂課沒有可重新轉錄的音訊。") }
+            try save(copy)
+            return copy
+        } catch {
+            try? delete(copy.id)
+            throw error
+        }
+    }
     func delete(_ id: UUID) throws {
         // Derive the destination solely from the session UUID, never a title or imported filename.
         let destination = folder(id).standardizedFileURL
@@ -442,8 +480,8 @@ struct SenseVoiceWindow {
         case "en", "mixed-en": return "en"
         default: return "auto" }
     }
-    static func choose(_ samples: [Float], final: Bool) -> SenseVoiceWindow {
-        let count = min(samples.count, maximumSamples)
+    static func choose(_ samples: [Float], final: Bool, limit: Int = maximumSamples) -> SenseVoiceWindow {
+        let count = min(samples.count, limit, maximumSamples)
         guard count > 0 else { return .init(count: 0, commit: false, hasSpeech: false) }
         let block = 320
         let energies = stride(from: 0, to: count, by: block).map { start -> Double in
@@ -469,7 +507,7 @@ struct SenseVoiceWindow {
                 return .init(count: min(count, (index + 1) * block), commit: true, hasSpeech: true)
             }
         }
-        if count == maximumSamples {
+        if count == limit && energies.count > 310 {
             // At the hard cap prefer an actual low-energy valley in the last
             // six seconds. Uniform sound has no defensible cut: keep the cap.
             let width = 10
@@ -480,7 +518,147 @@ struct SenseVoiceWindow {
                 return .init(count: (best.0 + width / 2) * block, commit: true, hasSpeech: true)
             }
         }
-        return .init(count: count, commit: final || count == maximumSamples, hasSpeech: true)
+        return .init(count: count, commit: final || count == limit, hasSpeech: true)
+    }
+}
+
+// One second on either side is an initial engineering setting, not a measured
+// latency/accuracy target. Only the owned range advances the persisted cursor.
+struct SenseVoiceContext {
+    static let overlap = 16000
+    let owned: Range<Int>
+    let inputCount: Int
+    let commit: Bool
+    static func choose(_ samples: [Float], left: Int, atEnd: Bool) -> SenseVoiceContext {
+        let reserve = atEnd ? 0 : overlap
+        let limit = SenseVoiceWindow.maximumSamples - left - reserve
+        let available = max(0, samples.count - left - reserve)
+        let body = Array(samples.dropFirst(left).prefix(min(limit, available)))
+        let decision = SenseVoiceWindow.choose(body, final: atEnd, limit: limit)
+        let end = left + decision.count
+        return .init(owned: left..<end, inputCount: min(samples.count, end + overlap), commit: decision.commit)
+    }
+}
+
+enum SenseVoiceCTC {
+    static func timedPieces(_ path: [Int], owned: Range<Int>?, vocabulary: [String], sampleCount: Int) -> [TranscriptWord] {
+        var events: [(id: Int, frame: Int)] = []; var previous = -1
+        for (frame, id) in path.enumerated() {
+            if frame >= 4 && id != 0 && id != previous { events.append((id, frame - 4)) }
+            previous = id
+        }
+        var result: [TranscriptWord] = []; var index = 0
+        while index < events.count {
+            let first = index, id = events[index].id
+            guard vocabulary.indices.contains(id) else { index += 1; continue }
+            if vocabulary[id].hasPrefix("<0x") {
+                while index + 1 < events.count, vocabulary.indices.contains(events[index + 1].id),
+                      vocabulary[events[index + 1].id].hasPrefix("<0x") { index += 1 }
+            }
+            let sample = events[first].frame * 960
+            if owned == nil || owned!.contains(sample) {
+                var text = SenseVoiceText.decode(events[first...index].map(\.id), vocabulary: vocabulary)
+                if !text.isEmpty {
+                    if vocabulary[id].hasPrefix("▁") { text = " " + text }
+                    text = text.applyingTransform(StringTransform("Hans-Hant"), reverse: false) ?? text
+                    let begin = min(Double(sampleCount) / 16000, Double(sample) / 16000)
+                    let finish = min(Double(sampleCount) / 16000, Double(events[index].frame + 1) * 0.06)
+                    result.append(.init(text: text, start: begin, end: max(begin, finish)))
+                }
+            }
+            index += 1
+        }
+        return result
+    }
+    // Model front-end: 10 ms fbank hop, LFR stride 6; four query frames.
+    // These are CTC emission anchors, NOT validated word timestamps.
+    static func tokens(_ path: [Int], owned: Range<Int>?, vocabulary: [String]) -> [Int] {
+        var events: [(id: Int, sample: Int)] = []
+        var previous = -1
+        for (frame, id) in path.enumerated() {
+            defer { previous = id }
+            if frame >= 4 && id != 0 && id != previous {
+                events.append((id, (frame - 4) * 960))
+            }
+        }
+        guard let owned else { return events.map(\.id) }
+        var result: [Int] = []; var index = 0
+        while index < events.count {
+            let first = index
+            let id = events[index].id
+            // Keep a contiguous UTF-8 byte fallback sequence together at a seam.
+            if vocabulary.indices.contains(id), vocabulary[id].hasPrefix("<0x") {
+                while index + 1 < events.count,
+                      vocabulary.indices.contains(events[index + 1].id),
+                      vocabulary[events[index + 1].id].hasPrefix("<0x") { index += 1 }
+            }
+            if owned.contains(events[first].sample) {
+                result.append(contentsOf: events[first...index].map(\.id))
+            }
+            index += 1
+        }
+        return result
+    }
+}
+
+struct LectureSpeakerTurn: Codable, Identifiable, Sendable {
+    var id = UUID()
+    var start: Double
+    var end: Double
+    var speakerID: String
+}
+
+struct SenseVoiceDecoded: Sendable {
+    var text: String
+    var words: [TranscriptWord]
+}
+
+enum ReviewWindow {
+    // The pinned preprocessor declares waveform range 3200...480000.
+    static let maximumSamples = 30 * 16000
+    static let context = 3 * 16000
+    static func choose(_ samples: [Float], left: Int, atEnd: Bool) -> SenseVoiceContext {
+        let endLimit = samples.count - (atEnd ? 0 : context)
+        guard endLimit > left else { return .init(owned: left..<left, inputCount: samples.count, commit: false) }
+        var end = endLimit
+        if !atEnd {
+            // Look near the end of a long span, not at the first short pause.
+            let width = 4800
+            let lower = max(left + 16000, endLimit - 6 * 16000)
+            var best = Double.infinity
+            for start in stride(from: lower, through: endLimit - width, by: 320) {
+                let energy = samples[start..<(start + width)].reduce(0.0) { $0 + Double($1 * $1) }
+                if energy < best { best = energy; end = start + width / 2 }
+            }
+            let average = samples[left..<endLimit].reduce(0.0) { $0 + Double($1 * $1) } / Double(endLimit - left)
+            if best / Double(width) > average * 0.2 { end = endLimit }
+        }
+        return .init(owned: left..<end, inputCount: samples.count, commit: true)
+    }
+}
+
+struct AudioSlice: Sendable {
+    var part: AudioPart
+    var start: Int
+    var count: Int
+}
+enum AudioTimeline {
+    static func slices(_ session: LectureSession, start: Double, end: Double) throws -> [AudioSlice] {
+        guard start.isFinite, end.isFinite, start >= 0, end > start, end <= session.duration + 0.001 else {
+            throw LectureError.message("音訊時間範圍無效。")
+        }
+        let first = Int((start * 16000).rounded()), last = Int((end * 16000).rounded())
+        var next = first; var result: [AudioSlice] = []
+        for part in session.parts.sorted(by: { $0.offset < $1.offset }) {
+            let offset = Int((part.offset * 16000).rounded())
+            let from = max(first, offset), through = min(last, offset + part.sampleCount)
+            if through > from {
+                guard from == next else { throw LectureError.message("這段時間的錄音不連續，請核對原音。") }
+                result.append(.init(part: part, start: from - offset, count: through - from)); next = through
+            }
+        }
+        guard next == last, !result.isEmpty else { throw LectureError.message("找不到完整對應音訊，原檔未修改。") }
+        return result
     }
 }
 

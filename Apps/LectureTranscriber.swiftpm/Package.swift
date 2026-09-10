@@ -10,8 +10,8 @@ let package = Package(
             name: "課堂逐字稿",
             targets: ["AppModule"],
             bundleIdentifier: "com.peijungwu0302.lecturetranscriber",
-            displayVersion: "1.5.0",
-            bundleVersion: "10",
+            displayVersion: "1.6.0",
+            bundleVersion: "11",
             appIcon: .asset("AppIcon"),
             supportedDeviceFamilies: [.pad, .phone],
             supportedInterfaceOrientations: [.portrait, .landscapeLeft, .landscapeRight],
@@ -24,7 +24,8 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "AppModule",
-            dependencies: [.product(name: "WhisperKit", package: "argmax-oss-swift-playground")],
+            dependencies: [.product(name: "WhisperKit", package: "argmax-oss-swift-playground"),
+                           .product(name: "SpeakerKit", package: "argmax-oss-swift-playground")],
             path: "Sources",
             resources: [.process("Assets.xcassets"), .copy("THIRD-PARTY-NOTICES.txt")]
         )

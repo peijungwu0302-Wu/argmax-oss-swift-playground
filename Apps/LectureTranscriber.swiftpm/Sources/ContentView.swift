@@ -20,6 +20,15 @@ struct ContentView: View {
     @State private var pendingDeletion: LectureSession?
     @State private var captionMode = true
     @State private var compactMode = false
+    @State private var pipPreview = false
+    @State private var reviewedLine: TranscriptLine?
+    @State private var showSpeakers = false
+    @StateObject private var pip = CaptionPiP()
+    @StateObject private var updates = AppUpdates()
+    @AppStorage("automaticallyCheckUpdates") private var automaticallyCheckUpdates = true
+    @AppStorage("captionFontSize") private var captionFontSize = 25.0
+    @AppStorage("translationFontSize") private var translationFontSize = 20.0
+    @AppStorage("transcriptFontSize") private var transcriptFontSize = 17.0
     private let paper = Color(red: 0.97, green: 0.95, blue: 0.90)
     private let ink = Color(red: 0.20, green: 0.19, blue: 0.16)
     private let gold = Color(red: 0.59, green: 0.40, blue: 0.08)
@@ -28,7 +37,9 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             GeometryReader { geometry in
-                if compactMode {
+                if pipPreview {
+                    pipWorkspace
+                } else if compactMode {
                     compactWorkspace
                 } else {
                 ScrollView {
@@ -64,14 +75,16 @@ struct ContentView: View {
             }
             .background(paper)
             .foregroundStyle(ink)
+            .background(CompactWindowSizing(compact: compactMode || pipPreview).frame(width: 0, height: 0))
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
-                    if !compactMode && captionMode && (controller.isRecording || !controller.caption.isEmpty) { captionPanel }
-                    bottomBar
+                    if !compactMode && !pipPreview && captionMode && (controller.isRecording || !controller.caption.isEmpty) { captionPanel }
+                    if !compactMode && !pipPreview { bottomBar }
                 }
             }
             .navigationTitle(compactMode ? "字幕" : "錄音")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar(compactMode || pipPreview ? .hidden : .visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button { controller.reloadHistory(); showHistory = true } label: {
@@ -91,7 +104,13 @@ struct ContentView: View {
                     }
                     Button { showSettings = true } label: { Label("錄音設定", systemImage: "slider.horizontal.3") }
                     Menu {
+                        Button("子母畫面字幕（beta）") { pipPreview = true; controller.pipEnabled = true }
+                        Button("講者分析與命名（beta）") { showSpeakers = true }
+                        if controller.session?.previousLines != nil { Button("復原最近一次稿件替換") { controller.undoReview() } }
                         Button("錄音檔案：播放與分享") { showAudio = true }
+                        Button("SenseVoice 錄後重新轉錄（另存新課堂）") {
+                            Task { await controller.retranscribeRecording() }
+                        }.disabled(controller.session?.parts.contains { $0.sampleCount > 0 } != true)
                         ForEach(TranscriptFormat.allCases) { format in
                             Button("匯出 \(format.rawValue)") {
                                 if let url = controller.export(format) { sharedFile = SharedFile(url: url) }
@@ -118,6 +137,10 @@ struct ContentView: View {
             }
             .sheet(isPresented: $showSettings) { settingsSheet }
             .sheet(isPresented: $showMinutes) { minutesSheet }
+            .sheet(isPresented: $showSpeakers) { SpeakerSettingsView(controller: controller) }
+            .sheet(item: $reviewedLine) { line in
+                if let id = controller.session?.id { TranscriptReviewView(controller: controller, line: line, sessionID: id) }
+            }
             .sheet(item: $sharedFile) { file in ShareSheet(url: file.url) }
             .sheet(item: $editedLine) { line in LineEditor(line: line) { controller.updateLine(line.id, text: $0) } }
             .alert("重點標記", isPresented: $showBookmark) {
@@ -130,28 +153,52 @@ struct ContentView: View {
             } message: { Text(controller.errorMessage ?? "") }
         }
         .preferredColorScheme(.light)
+        .task { if automaticallyCheckUpdates { await updates.check() } }
+        .onChange(of: pip.active) { value in controller.pipActive = value && !pip.paused }
+        .onChange(of: pip.paused) { value in controller.pipActive = pip.active && !value }
+    }
+
+    private var pipWorkspace: some View {
+        VStack(spacing: 6) {
+            CaptionPiPPreview(pip: pip, original: controller.caption, translated: controller.translationEnabled ? controller.translationCaption : "",
+                              sourceSize: captionFontSize, translationSize: translationFontSize)
+                .aspectRatio(3, contentMode: .fit)
+            HStack {
+                Button(pip.active ? "結束子母畫面" : "啟動子母畫面") {
+                    if pip.active { pip.stop() } else { pip.start(recording: controller.isRecording) }
+                }
+                Menu("控制") {
+                    Button("完整畫面") { pip.detach(); pipPreview = false; controller.pipEnabled = false }
+                    Button("改用可縮小視窗字幕") { pip.detach(); pipPreview = false; controller.pipEnabled = false; compactMode = true }
+                    Button("字級與設定") { showSettings = true }
+                    if controller.isRecording { Button("停止並儲存") { Task { await controller.pause() } }.disabled(controller.isBusy) }
+                    else { Button(recordLabel) { Task { if controller.session?.hasPendingAudio == true { await controller.recover() } else { await controller.start() } } }.disabled(!controller.canStart && controller.session?.hasPendingAudio != true) }
+                }
+            }.font(.caption)
+            Text(pip.status).font(.caption2)
+            Spacer(minLength: 0)
+        }.frame(maxWidth: .infinity, maxHeight: .infinity).background(.black).foregroundStyle(.white)
     }
 
     private var compactWorkspace: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Circle().fill(controller.isRecording ? red : .gray).frame(width: 9, height: 9)
-                    Text(TranscriptExport.clock(controller.duration)).font(.title2.monospacedDigit())
-                    Spacer()
+            captionPanel.padding(.trailing, 32)
+        }
+        .background(Color(red: 0.13, green: 0.13, blue: 0.14))
+        .overlay(alignment: .topTrailing) {
+            Menu {
+                Button("完整畫面") { compactMode = false }
+                Button("字級與設定") { showSettings = true }
+                Button("子母畫面字幕（beta）") { pipPreview = true; controller.pipEnabled = true }
+                Toggle("中文翻譯", isOn: $controller.translationEnabled)
+                if controller.isRecording {
+                    Button("停止並儲存") { Task { await controller.pause() } }.disabled(controller.isBusy)
                 }
-                Text(controller.title.isEmpty ? "課堂字幕" : controller.title).font(.headline).lineLimit(1)
-                if controller.usesAppleSpeech { appleLanguageControls }
-                Toggle("中文翻譯", isOn: $controller.translationEnabled).tint(.green)
-                captionPanel.clipShape(RoundedRectangle(cornerRadius: 12))
-                Text(controller.status).font(.caption).foregroundStyle(.secondary)
-                if controller.translationEnabled {
-                    Text(controller.translationStatus).font(.caption).foregroundStyle(.secondary)
-                }
-                Text("iPad 可在系統支援的視窗模式下與 Goodnotes 並排或使用 Slide Over。" + controller.backgroundDescription)
-                    .font(.caption).foregroundStyle(.secondary)
-            }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
-        }.accessibilityIdentifier("compactCaptionWorkspace")
+            } label: {
+                Image(systemName: "ellipsis").frame(width: 44, height: 44).foregroundStyle(.white)
+            }.accessibilityLabel("字幕控制")
+        }
+        .accessibilityIdentifier("compactCaptionWorkspace")
     }
 
     private var appleLanguageControls: some View {
@@ -211,7 +258,7 @@ struct ContentView: View {
                     .accessibilityIdentifier("mixedPrimaryLanguage")
             }
             if controller.usesSenseVoice {
-                Text("SenseVoice 約每秒重辨識草稿；依安靜／背景音量調整停頓切點，最長 12 秒；音樂中優先找較低音量切點。自動模式可混說；主要語言是模型提示，不會關閉另一種語言。實際速度與準確度需實測。")
+                Text("SenseVoice 使用前後重疊音訊更新草稿，再按停頓或視窗上限定稿。低音量也送入模型；錄後可從匯出選單另存重新轉錄。重疊參數與接縫準確度仍需真機驗證。")
                     .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
             } else {
             Text(RecognitionLanguage.isMixed(controller.language) ? (controller.usesAppleSpeech ? "Apple 每次以一個主要語言辨識，不保證中英混說。單語課堂請選中文或英文。" : "依實際主要語言辨識；混說準確率仍需核對。停止後可切換。") : "指定主要語言有助辨識。Apple 引擎使用系統支援的語言資源。")
@@ -232,18 +279,20 @@ struct ContentView: View {
 
     private var captionPanel: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if !compactMode {
             HStack {
                 Label("即時字幕", systemImage: "captions.bubble.fill").font(.caption.bold())
                 Spacer()
                 Text(controller.displayedDraft.isEmpty ? "已確認" : "辨識中 · 可修正").font(.caption)
             }.foregroundStyle(.white.opacity(0.7))
+            }
             Text(controller.caption.isEmpty ? "等待語音…" : controller.caption)
-                .font(.system(size: 25, weight: .medium)).lineLimit(2).minimumScaleFactor(0.6)
+                .font(.system(size: captionFontSize, weight: .medium)).lineLimit(compactMode ? nil : 4)
                 .frame(maxWidth: .infinity, alignment: .leading).foregroundStyle(.white)
             if controller.translationEnabled && !controller.translationCaption.isEmpty {
-                Text(controller.translationCaption).font(.title3).lineLimit(3).minimumScaleFactor(0.6)
+                Text(controller.translationCaption).font(.system(size: translationFontSize)).lineLimit(compactMode ? nil : 4)
                     .foregroundStyle(Color(red: 1, green: 0.85, blue: 0.45))
-                if !controller.validTranslatedDraft.isEmpty {
+                if !compactMode && !controller.validTranslatedDraft.isEmpty {
                     Text("翻譯草稿 · 稍晚於原文更新").font(.caption2).foregroundStyle(.white.opacity(0.65))
                 }
             }
@@ -290,14 +339,24 @@ struct ContentView: View {
                             if let text = paneText(line, translated: translated),
                                controller.search.isEmpty || text.localizedCaseInsensitiveContains(controller.search) {
                                 VStack(alignment: .leading, spacing: 5) {
-                                    Text(TranscriptExport.clock(line.start))
+                                    Text(TranscriptExport.clock(line.start) + " · " + (controller.session?.speakerLabel(line) ?? ""))
                                         .font(.caption.monospacedDigit()).foregroundStyle(gold)
-                                    Text(text).lineSpacing(4).textSelection(.enabled)
+                                    Text(text).font(.system(size: transcriptFontSize)).lineSpacing(4).textSelection(.enabled)
+                                    if !translated {
+                                        Button("聽這段原音／核對切點") { reviewedLine = line }.font(.caption).disabled(!controller.canManageSessions)
+                                    }
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .contextMenu {
                                     if !translated {
-                                        Button("編輯文字") { editedLine = line }.disabled(controller.isSummarizing)
+                                        Button("編輯文字") { editedLine = line }.disabled(!controller.canManageSessions)
+                                        if line.userEdited == true { Button("解除手動修改鎖定") { controller.unlockLine(line.id) }.disabled(!controller.canManageSessions) }
+                                        if let names = controller.session?.speakerNames {
+                                            ForEach(names.keys.sorted(), id: \.self) { id in
+                                                Button("設為 " + (names[id] ?? id)) { controller.assignSpeaker(line.id, speaker: id) }.disabled(!controller.canManageSessions)
+                                            }
+                                            Button("講者未確認") { controller.assignSpeaker(line.id, speaker: "unconfirmed") }.disabled(!controller.canManageSessions)
+                                        }
                                     }
                                     Button("複製") { UIPasteboard.general.string = text }
                                 }
@@ -307,7 +366,7 @@ struct ContentView: View {
                         if controller.search.isEmpty && !draft.isEmpty {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("草稿 · 可能更新").font(.caption).foregroundStyle(gold)
-                                Text(draft).lineSpacing(4)
+                                Text(draft).font(.system(size: transcriptFontSize)).lineSpacing(4)
                             }.foregroundStyle(.secondary)
                         }
                         if !translated, let marks = controller.session?.bookmarks, !marks.isEmpty {
@@ -387,6 +446,46 @@ struct ContentView: View {
     private var settingsSheet: some View {
         NavigationStack {
             Form {
+                Section("版本與 SideStore 更新") {
+                    Text("目前版本：" + updates.current)
+                    Toggle("開啟 App 時檢查更新", isOn: $automaticallyCheckUpdates)
+                    Button("檢查更新") { Task { await updates.check() } }.disabled(updates.checking)
+                    if let update = updates.available {
+                        Text(update.version + "：" + update.notes)
+                        Button("透過 SideStore 更新") { updates.openSideStore(source: false) }
+                            .disabled(!controller.canManageSessions || pip.active)
+                    }
+                    Button("加入 SideStore 更新來源") { updates.openSideStore(source: true) }
+                        .disabled(!controller.canManageSessions || pip.active)
+                    Text(updates.status).font(.caption)
+                    Text("由 SideStore 下載、簽署與安裝；錄音／處理期間不啟動更新。檢查更新只讀取版本資訊。")
+                        .font(.caption)
+                }
+                Section("字幕與會議 beta") {
+                    Button("開啟子母畫面字幕") { showSettings = false; pipPreview = true; controller.pipEnabled = true }
+                    Button("精簡小視窗字幕") { showSettings = false; pip.detach(); pipPreview = false; controller.pipEnabled = false; compactMode = true }
+                    Button("錄後講者分析／命名") { showSettings = false; showSpeakers = true }.disabled(!controller.canManageSessions || controller.session == nil)
+                    Text("小視窗向系統請求較小的最小尺寸；仍受 iPadOS 視窗模式限制。PiP、講者辨識需真機核對。")
+                        .font(.caption)
+                }
+                Section("文字大小") {
+                    Text("原文字幕：\(Int(captionFontSize))")
+                    Slider(value: $captionFontSize, in: 14...48, step: 1).accessibilityLabel("原文字幕大小")
+                    Text("中文翻譯：\(Int(translationFontSize))")
+                    Slider(value: $translationFontSize, in: 14...48, step: 1).accessibilityLabel("翻譯字幕大小")
+                    Text("逐字稿：\(Int(transcriptFontSize))")
+                    Slider(value: $transcriptFontSize, in: 14...36, step: 1).accessibilityLabel("逐字稿大小")
+                    Text("English caption 字幕預覽").font(.system(size: captionFontSize))
+                    Text("中文翻譯預覽").font(.system(size: translationFontSize))
+                }
+                Section("錄後重新轉錄") {
+                    Button("SenseVoice 重新轉錄（另存新課堂）") {
+                        showSettings = false
+                        Task { await controller.retranscribeRecording() }
+                    }.disabled(!controller.canManageSessions || controller.session?.parts.contains { $0.sampleCount > 0 } != true)
+                    Text("從全部已保存音訊重跑，另存課堂與音訊副本；原逐字稿、手動修改、翻譯與筆記都保留在原課堂。需要額外儲存空間，請保持 App 在前景。辨識仍可能有錯字或接縫漏字。")
+                        .font(.caption)
+                }
                 Section("語音辨識") {
                     Picker("辨識引擎", selection: Binding(get: { controller.recognitionEngine }, set: { value in
                         controller.setRecognitionEngine(value)
@@ -431,6 +530,9 @@ struct ContentView: View {
                         Text(String(format: "草稿音訊落後 %.1f 秒", controller.draftBehindSeconds))
                     }
                     Text("尚未定稿 \(Int(controller.pendingSeconds)) 秒")
+                    if controller.usesSenseVoice && !controller.senseVoiceInputStatus.isEmpty {
+                        Text(controller.senseVoiceInputStatus).font(.caption)
+                    }
                     Text(controller.backgroundDescription)
                         .font(.caption).foregroundStyle(.secondary)
                 }
