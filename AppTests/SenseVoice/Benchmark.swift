@@ -19,21 +19,26 @@ import Foundation
         }
         // Feed only the prefix that has arrived; no future audio in each draft.
         try await engine.load(language: "auto") { _, _ in }
+        let longInput = Array((samples + samples + samples).prefix(ReviewWindow.maximumSamples))
         var cursor = 0
-        for end in stride(from: 32000, to: samples.count + 32000, by: 32000) {
-            let through = min(end, samples.count)
+        for end in stride(from: 32000, to: longInput.count + 32000, by: 32000) {
+            let through = min(end, longInput.count)
             while cursor < through {
-                let input = Array(samples[cursor..<min(through, cursor + SenseVoiceWindow.maximumSamples)])
-                let window = SenseVoiceWindow.choose(input, final: through == samples.count)
+                let left = min(cursor, SenseVoiceContext.overlap)
+                let from = cursor - left
+                let stop = min(through, from + SenseVoiceWindow.maximumSamples)
+                let input = Array(longInput[from..<stop])
+                let window = SenseVoiceContext.choose(input, left: left, atEnd: through == longInput.count && stop == through)
+                guard !window.owned.isEmpty else { break }
                 let begin = Date()
-                let text = window.hasSpeech ? try await engine.transcribe(Array(input.prefix(window.count))) : ""
+                let text = try await engine.transcribe(Array(input.prefix(window.inputCount)), owned: window.owned)
                 events.append(["through": through, "start": cursor, "commit": window.commit, "text": text,
+                               "inputSamples": window.inputCount, "ownedSamples": window.owned.count, "leftContext": left,
                                "seconds": Date().timeIntervalSince(begin)])
-                if window.commit { cursor += window.count } else { break }
+                if window.commit { cursor += window.owned.count } else { break }
             }
         }
-        guard cursor == samples.count else { throw LectureError.message("error: SenseVoice left unconsumed audio") }
-        let longInput = Array((samples + samples + samples).prefix(ReviewWindow.maximumSamples))
+        guard cursor == longInput.count else { throw LectureError.message("error: SenseVoice left unconsumed audio") }
         let full = try await engine.transcribeDetailed(longInput)
         guard !full.text.isEmpty, !full.words.isEmpty, full.words.allSatisfy({ $0.start >= 0 && $0.end <= Double(longInput.count) / 16000 }) else {
             throw LectureError.message("error: 30-second model input or CTC anchors failed")
