@@ -1,0 +1,8 @@
+{
+  "bundleIdentifier": "com.peijungwu0302.lecturetranscriber",
+  "version": "1.6.0",
+  "build": 11,
+  "minimumOS": "16.0",
+  "downloadURL": "https://raw.githubusercontent.com/peijungwu0302-Wu/argmax-oss-swift-playground/playground-compatible/Deliverables/LectureTranscriber-1.6.0-unsigned.ipa",
+  "notes": "較長前後文錄後轉錄、逐段原音核對與音訊另存、離線講者 beta、PiP beta、可調字級與 SideStore 更新。"
+}

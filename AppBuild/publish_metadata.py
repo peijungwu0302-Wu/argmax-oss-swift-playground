@@ -24,7 +24,7 @@ def generate(ipa: Path, destination: Path):
         sourceURL=base + 'Deliverables/sidestore.json', subtitle='課堂逐字稿 · iPhone / iPad', iconURL=icon,
         apps=[dict(name='課堂逐字稿 LectureTranscriber', bundleIdentifier=identifier, developerName='Peijung Wu',
             localizedDescription=notes, iconURL=icon,
-            versions=[dict(version=version, date=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            versions=[dict(version=version, date=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 localizedDescription=notes, downloadURL=url, size=ipa.stat().st_size, minOSVersion=minimum)],
             appPermissions=dict(entitlements=[], privacy={k:v for k,v in info.items() if k.startswith('NS') and 'UsageDescription' in k}))], news=[])
     destination.mkdir(parents=True, exist_ok=True)

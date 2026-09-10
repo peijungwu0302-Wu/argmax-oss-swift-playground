@@ -1,0 +1,33 @@
+{
+  "name": "LectureTranscriber 私人更新",
+  "identifier": "com.peijungwu0302.lecturetranscriber.source",
+  "sourceURL": "https://raw.githubusercontent.com/peijungwu0302-Wu/argmax-oss-swift-playground/playground-compatible/Deliverables/sidestore.json",
+  "subtitle": "課堂逐字稿 · iPhone / iPad",
+  "iconURL": "https://raw.githubusercontent.com/peijungwu0302-Wu/argmax-oss-swift-playground/playground-compatible/Apps/LectureTranscriber.swiftpm/Sources/Assets.xcassets/AppIcon.appiconset/AppIcon.png",
+  "apps": [
+    {
+      "name": "課堂逐字稿 LectureTranscriber",
+      "bundleIdentifier": "com.peijungwu0302.lecturetranscriber",
+      "developerName": "Peijung Wu",
+      "localizedDescription": "較長前後文錄後轉錄、逐段原音核對與音訊另存、離線講者 beta、PiP beta、可調字級與 SideStore 更新。",
+      "iconURL": "https://raw.githubusercontent.com/peijungwu0302-Wu/argmax-oss-swift-playground/playground-compatible/Apps/LectureTranscriber.swiftpm/Sources/Assets.xcassets/AppIcon.appiconset/AppIcon.png",
+      "versions": [
+        {
+          "version": "1.6.0",
+          "date": "2026-09-10T03:20:56Z",
+          "localizedDescription": "較長前後文錄後轉錄、逐段原音核對與音訊另存、離線講者 beta、PiP beta、可調字級與 SideStore 更新。",
+          "downloadURL": "https://raw.githubusercontent.com/peijungwu0302-Wu/argmax-oss-swift-playground/playground-compatible/Deliverables/LectureTranscriber-1.6.0-unsigned.ipa",
+          "size": 2912716,
+          "minOSVersion": "16.0"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {
+          "NSMicrophoneUsageDescription": "錄製課堂聲音，在這台裝置上產生逐字稿。"
+        }
+      }
+    }
+  ],
+  "news": []
+}

@@ -1,6 +1,8 @@
 # 1.6.0：錄後定稿、原音核對、講者與浮動字幕
 
-版本 1.6.0 build 11，iPhone／iPad 共用。Bundle ID 維持 `com.peijungwu0302.lecturetranscriber`。發布與驗證狀態見文末；既有 1.5.0 安裝不會自行取得新程式碼。
+版本 1.6.0 build 11，iPhone／iPad 共用。Bundle ID 維持 `com.peijungwu0302.lecturetranscriber`。既有 1.5.0 安裝不會自行取得新程式碼。
+
+[直接下載 1.6.0 IPA](https://raw.githubusercontent.com/peijungwu0302-Wu/argmax-oss-swift-playground/playground-compatible/Deliverables/LectureTranscriber-1.6.0-unsigned.ipa) · [SideStore 更新來源](https://raw.githubusercontent.com/peijungwu0302-Wu/argmax-oss-swift-playground/playground-compatible/Deliverables/sidestore.json) · [Playground ZIP](../Deliverables/LectureTranscriber.zip)
 
 ## 音訊接縫與錄後定稿
 
@@ -27,7 +29,7 @@ CTC emission 用來分配重疊音訊內的文字，並保留完整 UTF-8 字元
 
 ## 離線講者 A／B／C · beta
 
-停止錄音，開「匯出 → 講者」分析已保存音訊。第一次需下載 SpeakerKit 的分段、聲紋特徵與聚類模型，此後在裝置上推論，不將音訊上傳辨識服務。模型固定使用公開 `argmaxinc/speakerkit-coreml` revision `86ec9c929b52208b6656eb6a6361ed0d822a1f78`；SDK 程式碼授權見 App 內第三方聲明，模型權重不包含在 IPA。
+停止錄音，開「匯出 → 講者分析與命名（beta）」分析已保存音訊。第一次需下載 SpeakerKit 的分段、聲紋特徵與聚類模型，此後在裝置上推論，不將音訊上傳辨識服務。模型固定使用公開 `argmaxinc/speakerkit-coreml` revision `86ec9c929b52208b6656eb6a6361ed0d822a1f78`；SDK 程式碼授權見 App 內第三方聲明，模型權重不包含在 IPA。
 
 先標示匿名講者，再由你改名、合併重複講者；段落選單可修正所屬講者。多人同時講話或歸屬不清會標示待核對。它不會自動知道真實姓名。長錄音分批處理並以聲紋特徵保守連結；相似嗓音、很短的發言、重疊聲音及跨批次都可能誤分，需要人工核對。已手改文字不自動拆掉。
 
@@ -43,12 +45,27 @@ PiP 是 Picture in Picture（子母畫面），可讓字幕浮在其他 App 上�
 
 1.5.0 尚未包含更新功能，需先經現有 SideStore 安裝一次新版，**不要先刪掉原 App**。維持同一 Apple 帳號及 App 識別碼。
 
-新版「錄音設定 → 版本與更新」可檢查更新、開啟 SideStore 安裝，以及加入專案更新來源。之後由 SideStore 下載 IPA 並簽署安裝，減少手動去 GitHub 下載到「檔案」的步驟。錄音或處理音訊時不提供安裝跳轉。
+新版「錄音設定 → 版本與 SideStore 更新」可檢查更新、開啟 SideStore 安裝，以及加入專案更新來源。之後由 SideStore 下載 IPA 並簽署安裝，減少手動去 GitHub 下載到「檔案」的步驟。錄音或處理音訊時不提供安裝跳轉。
 
 這不是 App 自行替換原生程式碼；SideStore 的簽署、有效期與 VPN／配對等條件仍依你的既有設定。自動檢查只查版本，不會靜默安裝。[SideStore URL 說明](https://docs.sidestore.io/docs/advanced/url-schema)／[更新來源](https://docs.sidestore.io/docs/advanced/app-sources)
 
 ## 驗證狀態
 
-開發中，尚未發布 1.6.0 IPA。已通過雲端持久化／匯出與 AAC 測試，以及 macOS 真實 SenseVoice 30 秒模型輸入測試；完整 iOS 編譯與模擬器驗證進行中。Windows 僅執行語法與靜態檢查，沒有本機 Xcode，也沒有 iPhone／iPad 真機實測。
+2026-09-10 已發布未簽署 1.6.0 build 11 IPA 與更新來源。IPA 來自原始碼 `29f7fab`，該次 [雲端驗證全部通過](https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/actions/runs/34432301390)：
 
-新版驗證完成後，真機請一次核對：跨 12 秒的中英混說與末句、手改一行後另存重跑、逐段播放和保存切點、兩三人輪流及插話的講者分析、PiP／Slide Over 與字級、背景收音及翻譯延遲。最後用同一份長課堂比較時間、耗電與接縫；不要把雲端結果當作真機長課堂已通過。
+- 持久化、匯出、錄後副本及續錄文字保護；完整樣本範圍、低音量、極短尾段、CTC 重複詞與 UTF-8 測試。
+- macOS AAC 與真實 Core ML SenseVoice FP32／CPU 測試；30 秒實際輸入和重疊視窗定稿合計涵蓋全部 480,000 個樣本。
+- iOS 模擬器 8 項功能測試：跨檔 WAV 精確裁切、原檔不變、手改文字保護、更新識別與 URL，以及真實 SenseVoice／SpeakerKit 模型。公開短音訊產生 1 位匿名講者；不是多人準確率測試。
+- 模擬器 UI 操作：精簡字幕、PiP 預覽與返回完整畫面、字級設定、歷史紀錄；獨立 IPA 與 Playground 專案的裝置編譯和模擬器啟動。
+- IPA 完整性、固定 Bundle ID、iPhone／iPad 通用、背景音訊宣告、無 App Extension 與未簽署狀態核對。
+
+Windows 僅執行語法、封裝與靜態檢查，沒有本機 Xcode，也沒有 iPhone／iPad 真機實測。PiP 能否跨 App 持續顯示及翻譯、SideStore 裝置跳轉、實際視窗最小尺寸、多人講者準確率及長課堂耗時／耗電仍待真機；編譯與 UI 預覽成功不代表這些已通過。
+
+真機請一次依序核對：
+
+1. 以目前 SideStore 及相同 Apple 帳號覆蓋更新原 App，勿先刪除；確認舊課堂與錄音仍在，版本顯示 1.6.0（11）。在設定加入 SideStore 更新來源並檢查版本。
+2. 錄一段至少 60 秒中英混說，讓句子跨過 12 秒附近及錄音末尾。停止後播放原音；手改一行，再另存重新轉錄，比對接縫及最後一句，確認原修改仍在。
+3. 點逐字稿的原音核對按鈕，播放、調整開始／結束、保存切點並分享 WAV。核對分享片段的頭尾；採用新稿後若續錄，應保留新文字且不再提供舊復原。
+4. 用兩三人輪流說話、加入一次插話，停止後分析講者，播放各段確認，試改名／合併／指定講者。記錄錯分位置，不預設講者數或辨識率。
+5. 開啟翻譯並載入所需模型，開始錄音；進 PiP 預覽後啟動子母畫面，切到筆記 App，確認原文與翻譯是否持續更新。再回 App 試精簡視窗、系統 Slide Over 拖拉、三種字級與返回完整畫面。另測一般背景一分鐘後返回，核對原音及補辨識。
+6. 最後再用長課堂測試，記錄轉錄耗時、翻譯落後程度、耗電及接縫。PiP／講者標為 beta，不要把雲端結果當作真機長課堂已通過。
