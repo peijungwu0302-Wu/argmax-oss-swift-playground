@@ -771,6 +771,7 @@ final class LectureController: ObservableObject {
             let confirmed = self.appleCaptions.receive(line, final: result.isFinal)
             if result.isFinal {
                 if let confirmed {
+                    self.session?.previousLines = nil
                     self.session?.lines.append(TranscriptLine(start: offset + confirmed.start, end: offset + confirmed.end, text: confirmed.text))
                 }
                 let through = result.finalizedThrough.isFinite ? result.finalizedThrough : result.end

@@ -212,6 +212,7 @@ struct LectureSession: Codable, Identifiable, Sendable {
         translations?.first { $0.id == line.id && $0.source == line.text }
     }
     mutating func appendConfirmed(_ additions: [TranscriptLine]) {
+        if !additions.isEmpty { previousLines = nil }
         for addition in additions {
             if let last = lines.last, let oldWords = last.words, let newWords = addition.words,
                !oldWords.isEmpty, !newWords.isEmpty, addition.start - last.end < 0.7,

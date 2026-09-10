@@ -306,3 +306,6 @@ timeline.speakerTurns = [.init(start: 0, end: 2, speakerID: "a"), .init(start: 1
 check(timeline.speakerLabel(.init(start: 0, end: 0.8, text: "test")) == "老師：", "Confirmed speaker labels use user names")
 check(timeline.speakerLabel(.init(start: 1.2, end: 1.5, text: "test")).contains("多位"), "Overlapping voices cannot be falsely assigned to one person")
 print("PASS: 30-second review, sample-exact cross-part timeline and uncertain speaker labels")
+timeline.previousLines = [.init(start: 0, end: 1, text: "替換前")]
+timeline.appendConfirmed([.init(start: 4, end: 5, text: "續錄的新文字")])
+check(timeline.previousLines == nil && timeline.lines.last?.text == "續錄的新文字", "Appending transcription invalidates stale undo so later recording text cannot be erased")
