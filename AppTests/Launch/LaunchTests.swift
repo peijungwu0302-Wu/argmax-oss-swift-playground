@@ -26,6 +26,13 @@ final class LaunchTests: XCTestCase {
         compactAttachment.lifetime = .keepAlways
         add(compactAttachment)
         app.buttons["字幕控制"].tap()
+        app.buttons["子母畫面字幕（beta）"].tap()
+        XCTAssertTrue(app.buttons["啟動子母畫面"].waitForExistence(timeout: 5))
+        let pipAttachment = XCTAttachment(screenshot: app.screenshot())
+        pipAttachment.name = "PiP caption preview"
+        pipAttachment.lifetime = .keepAlways
+        add(pipAttachment)
+        app.buttons["控制"].tap()
         app.buttons["完整畫面"].tap()
         XCTAssertTrue(app.textFields["課堂名稱"].waitForExistence(timeout: 5))
         app.buttons["錄音設定"].tap()

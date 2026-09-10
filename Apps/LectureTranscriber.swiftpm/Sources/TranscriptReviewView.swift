@@ -62,6 +62,9 @@ struct TranscriptReviewView: View {
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() }.disabled(controller.isBusy) } }
             .interactiveDismissDisabled(controller.isBusy)
             .sheet(item: $shared) { ShareSheet(url: $0.url) }
+            .alert("無法完成操作", isPresented: Binding(get: { controller.errorMessage != nil }, set: { if !$0 { controller.errorMessage = nil } })) {
+                Button("好") { controller.errorMessage = nil }
+            } message: { Text(controller.errorMessage ?? "") }
             .onReceive(Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()) { _ in playing = player?.isPlaying == true }
             .onChange(of: start) { _ in player?.stop(); playing = false }
             .onChange(of: end) { _ in player?.stop(); playing = false }
@@ -111,6 +114,9 @@ struct SpeakerSettingsView: View {
             }.navigationTitle("講者")
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() }.disabled(controller.isBusy) } }
                 .interactiveDismissDisabled(controller.isBusy)
+                .alert("講者分析未完成", isPresented: Binding(get: { controller.errorMessage != nil }, set: { if !$0 { controller.errorMessage = nil } })) {
+                    Button("好") { controller.errorMessage = nil }
+                } message: { Text(controller.errorMessage ?? "") }
         }
     }
 }

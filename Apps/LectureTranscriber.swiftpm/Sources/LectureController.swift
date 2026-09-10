@@ -577,7 +577,7 @@ final class LectureController: ObservableObject {
         for i in current.speakerTurns?.indices ?? 0..<0 {
             if current.speakerTurns?[i].speakerID == from { current.speakerTurns?[i].speakerID = to }
         }
-        current.speakerNames?.removeValue(forKey: from); saveRevision(current)
+        current.speakerNames?.removeValue(forKey: from); current.previousLines = nil; saveRevision(current)
     }
 
     private func saveRevision(_ current: LectureSession) {
