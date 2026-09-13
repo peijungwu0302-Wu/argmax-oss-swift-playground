@@ -731,9 +731,11 @@ struct ContentView: View {
                         importAfterHistory = true
                         showHistory = false
                     } label: {
-                        Label("＋ 匯入錄音", systemImage: "square.and.arrow.down")
+                        Label("匯入音訊", systemImage: "square.and.arrow.down")
                             .font(.body.bold())
                     }
+                    .accessibilityIdentifier("匯入音訊")
+                    .accessibilityLabel("匯入音訊")
                     .disabled(!controller.canManageSessions)
                 }
                 ToolbarItem(placement: .confirmationAction) {
