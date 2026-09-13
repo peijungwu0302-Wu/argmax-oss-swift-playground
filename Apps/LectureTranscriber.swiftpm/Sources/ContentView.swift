@@ -480,7 +480,7 @@ struct ContentView: View {
                         Spacer()
                         Text(controller.loadedModel != nil ? L10n.tr("已載入就緒", "Loaded & Ready") : L10n.tr("尚未載入", "Not Loaded"))
                             .font(.caption.bold())
-                            .foregroundStyle(controller.loadedModel != nil ? .green : .secondary)
+                            .foregroundStyle(controller.loadedModel != nil ? Color.green : Color.secondary)
                     }
 
                     Text(L10n.tr("純中文／英文推薦 Apple；多語言混說推薦 SenseVoice；離線錄後長文高精度推薦 WhisperKit。", "Apple Speech recommended for pure Zh/En; SenseVoice for bilingual speech; WhisperKit for high accuracy."))
@@ -552,7 +552,7 @@ struct ContentView: View {
 
                     let cap = EngineCapability.isSupported(engine: controller.recognitionEngine, language: controller.language)
                     Text(cap.detail)
-                        .font(.caption).foregroundStyle(cap.supported ? .secondary : .orange)
+                        .font(.caption).foregroundStyle(cap.supported ? Color.secondary : Color.orange)
                 }
 
                 // SECTION 4: PiP 字幕
@@ -591,7 +591,7 @@ struct ContentView: View {
                         Spacer()
                         Text(controller.resourceState.description)
                             .font(.caption)
-                            .foregroundStyle(controller.resourceState.isReady ? .green : .secondary)
+                            .foregroundStyle(controller.resourceState.isReady ? Color.green : Color.secondary)
                     }
                     if let p = controller.resourceState.progressValue {
                         ProgressView(value: p)
