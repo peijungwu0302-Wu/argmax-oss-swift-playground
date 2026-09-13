@@ -178,18 +178,86 @@ struct WindowDecision {
             provisional: lines.filter { line in !confirmed.contains(where: { $0.id == line.id }) }, consumed: consumed)
     }
 }
+enum TranscriptEngine: String, Codable, CaseIterable, Sendable {
+    case apple = "apple"
+    case whisper = "whisper"
+    case sensevoice = "sensevoice"
+    case legacy = "legacy"
+
+    var displayName: String {
+        switch self {
+        case .apple: return "Apple Speech"
+        case .whisper: return "Whisper v3"
+        case .sensevoice: return "SenseVoice"
+        case .legacy: return "舊版逐字稿"
+        }
+    }
+}
+
+enum TranscriptSource: String, Codable, Sendable {
+    case live = "live"
+    case retranscription = "retranscription"
+    case imported = "imported"
+    case legacy = "legacy"
+}
+
+struct TranscriptVersion: Codable, Identifiable, Sendable, Equatable {
+    var id: UUID = UUID()
+    var createdAt: Date = Date()
+    var name: String
+    var engine: TranscriptEngine
+    var model: String? = nil
+    var language: String
+    var vocabulary: String? = nil
+    var lines: [TranscriptLine] = []
+    var translations: [TranslatedLine]? = nil
+    var translationSource: String? = nil
+    var source: TranscriptSource
+    var isPreferred: Bool = false
+
+    init(id: UUID = UUID(),
+         createdAt: Date = Date(),
+         name: String,
+         engine: TranscriptEngine,
+         model: String? = nil,
+         language: String,
+         vocabulary: String? = nil,
+         lines: [TranscriptLine] = [],
+         translations: [TranslatedLine]? = nil,
+         translationSource: String? = nil,
+         source: TranscriptSource,
+         isPreferred: Bool = false) {
+        self.id = id
+        self.createdAt = createdAt
+        self.name = name
+        self.engine = engine
+        self.model = model
+        self.language = language
+        self.vocabulary = vocabulary
+        self.lines = lines
+        self.translations = translations
+        self.translationSource = translationSource
+        self.source = source
+        self.isPreferred = isPreferred
+    }
+
+    func translation(for line: TranscriptLine) -> TranslatedLine? {
+        translations?.first { $0.id == line.id && $0.source == line.text }
+    }
+}
+
 struct LectureSession: Codable, Identifiable, Sendable {
-    var id = UUID()
+    var id: UUID = UUID()
     var title: String
-    var createdAt = Date()
+    var createdAt: Date = Date()
     var model: String
     var language: String
     var vocabulary: String? = nil
     var recognitionEngine: String? = nil
     var parts: [AudioPart] = []
-    var lines: [TranscriptLine] = []
+    var transcriptVersions: [TranscriptVersion] = []
+    var preferredVersionID: UUID? = nil
     var bookmarks: [Bookmark] = []
-    var translations: [TranslatedLine]? = nil
     var translationSource: String? = nil
     var minutes: String? = nil
     var minutesKind: String? = nil
@@ -199,7 +267,113 @@ struct LectureSession: Codable, Identifiable, Sendable {
     var speakerTurns: [LectureSpeakerTurn]? = nil
     var speakerNames: [String: String]? = nil
     var previousLines: [TranscriptLine]? = nil
+
+    private var _legacyLines: [TranscriptLine]? = nil
+    private var _legacyTranslations: [TranslatedLine]? = nil
+
+    init(id: UUID = UUID(),
+         title: String,
+         createdAt: Date = Date(),
+         model: String = SpeechModel.turbo.rawValue,
+         language: String = "zh",
+         vocabulary: String? = nil,
+         recognitionEngine: String? = nil,
+         parts: [AudioPart] = [],
+         transcriptVersions: [TranscriptVersion] = [],
+         preferredVersionID: UUID? = nil,
+         bookmarks: [Bookmark] = []) {
+        self.id = id
+        self.title = title
+        self.createdAt = createdAt
+        self.model = model
+        self.language = language
+        self.vocabulary = vocabulary
+        self.recognitionEngine = recognitionEngine
+        self.parts = parts
+        self.transcriptVersions = transcriptVersions
+        self.preferredVersionID = preferredVersionID
+        self.bookmarks = bookmarks
+    }
+
+    var preferredVersionIndex: Int {
+        if let id = preferredVersionID, let index = transcriptVersions.firstIndex(where: { $0.id == id }) {
+            return index
+        }
+        if let index = transcriptVersions.firstIndex(where: { $0.isPreferred }) {
+            return index
+        }
+        return transcriptVersions.indices.first ?? -1
+    }
+
+    var preferredVersion: TranscriptVersion? {
+        get {
+            let idx = preferredVersionIndex
+            return idx >= 0 ? transcriptVersions[idx] : nil
+        }
+        set {
+            guard let newValue else { return }
+            let idx = preferredVersionIndex
+            if idx >= 0 {
+                transcriptVersions[idx] = newValue
+            } else {
+                transcriptVersions.append(newValue)
+            }
+        }
+    }
+
+    var lines: [TranscriptLine] {
+        get {
+            if let v = preferredVersion {
+                return v.lines
+            }
+            return _legacyLines ?? []
+        }
+        set {
+            let idx = preferredVersionIndex
+            if idx >= 0 {
+                transcriptVersions[idx].lines = newValue
+            } else {
+                let eng: TranscriptEngine
+                if recognitionEngine == "apple" { eng = .apple }
+                else if recognitionEngine == "sensevoice" { eng = .sensevoice }
+                else { eng = .whisper }
+                var v = TranscriptVersion(
+                    name: eng == .apple ? "Apple Speech · Live" : "即時逐字稿",
+                    engine: eng,
+                    model: model,
+                    language: language,
+                    vocabulary: vocabulary,
+                    lines: newValue,
+                    translations: _legacyTranslations,
+                    translationSource: translationSource,
+                    source: .live,
+                    isPreferred: true
+                )
+                transcriptVersions.append(v)
+                preferredVersionID = v.id
+            }
+            _legacyLines = newValue
+        }
+    }
+
+    var translations: [TranslatedLine]? {
+        get {
+            if let v = preferredVersion {
+                return v.translations
+            }
+            return _legacyTranslations
+        }
+        set {
+            let idx = preferredVersionIndex
+            if idx >= 0 {
+                transcriptVersions[idx].translations = newValue
+            }
+            _legacyTranslations = newValue
+        }
+    }
+
     var sourceText: String { lines.map { "[\(TranscriptExport.clock($0.start))] \(speakerLabel($0))\($0.text)" }.joined(separator: "\n") }
+
     func speakerLabel(_ line: TranscriptLine) -> String {
         if let id = line.speakerID { return (id == "unconfirmed" ? "講者未確認" : (speakerNames?[id] ?? id)) + "：" }
         guard let turns = speakerTurns else { return "" }
@@ -207,27 +381,168 @@ struct LectureSession: Codable, Identifiable, Sendable {
         guard ids.count == 1, let id = ids.first else { return ids.isEmpty ? "講者未確認：" : "多位講者／待核對：" }
         return (speakerNames?[id] ?? id) + "："
     }
+
     var minutesAreCurrent: Bool { minutes != nil && minutesSource == sourceText }
+
     func translation(for line: TranscriptLine) -> TranslatedLine? {
-        translations?.first { $0.id == line.id && $0.source == line.text }
+        if let v = preferredVersion {
+            return v.translation(for: line)
+        }
+        return translations?.first { $0.id == line.id && $0.source == line.text }
     }
+
     mutating func appendConfirmed(_ additions: [TranscriptLine]) {
         if !additions.isEmpty { previousLines = nil }
+        var idx = preferredVersionIndex
+        if idx < 0 {
+            let eng: TranscriptEngine
+            if recognitionEngine == "apple" { eng = .apple }
+            else if recognitionEngine == "sensevoice" { eng = .sensevoice }
+            else { eng = .whisper }
+            var v = TranscriptVersion(
+                name: eng == .apple ? "Apple Speech · Live" : "即時逐字稿",
+                engine: eng,
+                model: model,
+                language: language,
+                vocabulary: vocabulary,
+                lines: [],
+                translations: nil,
+                translationSource: translationSource,
+                source: .live,
+                isPreferred: true
+            )
+            transcriptVersions.append(v)
+            preferredVersionID = v.id
+            idx = 0
+        }
         for addition in additions {
-            if let last = lines.last, let oldWords = last.words, let newWords = addition.words,
+            if let last = transcriptVersions[idx].lines.last, let oldWords = last.words, let newWords = addition.words,
                !oldWords.isEmpty, !newWords.isEmpty, addition.start - last.end < 0.7,
                addition.start >= last.end - 0.08, addition.end - last.start <= 6,
                !"。！？.!?".contains(last.text.last ?? " "), last.text.count + addition.text.count <= 100 {
                 let joined = oldWords + newWords
-                lines[lines.count - 1].text = joined.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
-                lines[lines.count - 1].end = addition.end
-                lines[lines.count - 1].words = joined
-                translations?.removeAll { $0.id == last.id }
-            } else { lines.append(addition) }
+                let lastIndex = transcriptVersions[idx].lines.count - 1
+                transcriptVersions[idx].lines[lastIndex].text = joined.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
+                transcriptVersions[idx].lines[lastIndex].end = addition.end
+                transcriptVersions[idx].lines[lastIndex].words = joined
+                transcriptVersions[idx].translations?.removeAll { $0.id == last.id }
+            } else {
+                transcriptVersions[idx].lines.append(addition)
+            }
         }
     }
+
     var duration: Double { parts.reduce(0) { $0 + Double($1.sampleCount) / 16000 } }
     var hasPendingAudio: Bool { parts.contains { $0.processedSamples < $0.sampleCount } }
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, createdAt, model, language, vocabulary, recognitionEngine
+        case parts, bookmarks, translationSource
+        case minutes, minutesKind, minutesSource, minutesPrompt, transcriptionPass
+        case speakerTurns, speakerNames, previousLines
+        case transcriptVersions, preferredVersionID
+        case lines, translations
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        self.title = try container.decodeIfPresent(String.self, forKey: .title) ?? "課堂"
+        self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        self.model = try container.decodeIfPresent(String.self, forKey: .model) ?? SpeechModel.turbo.rawValue
+        self.language = try container.decodeIfPresent(String.self, forKey: .language) ?? "zh"
+        self.vocabulary = try container.decodeIfPresent(String.self, forKey: .vocabulary)
+        self.recognitionEngine = try container.decodeIfPresent(String.self, forKey: .recognitionEngine)
+        self.parts = try container.decodeIfPresent([AudioPart].self, forKey: .parts) ?? []
+        self.bookmarks = try container.decodeIfPresent([Bookmark].self, forKey: .bookmarks) ?? []
+        self.translationSource = try container.decodeIfPresent(String.self, forKey: .translationSource)
+        self.minutes = try container.decodeIfPresent(String.self, forKey: .minutes)
+        self.minutesKind = try container.decodeIfPresent(String.self, forKey: .minutesKind)
+        self.minutesSource = try container.decodeIfPresent(String.self, forKey: .minutesSource)
+        self.minutesPrompt = try container.decodeIfPresent(String.self, forKey: .minutesPrompt)
+        self.transcriptionPass = try container.decodeIfPresent(String.self, forKey: .transcriptionPass)
+        self.speakerTurns = try container.decodeIfPresent([LectureSpeakerTurn].self, forKey: .speakerTurns)
+        self.speakerNames = try container.decodeIfPresent([String: String].self, forKey: .speakerNames)
+        self.previousLines = try container.decodeIfPresent([TranscriptLine].self, forKey: .previousLines)
+
+        let decodedVersions = try container.decodeIfPresent([TranscriptVersion].self, forKey: .transcriptVersions)
+        let decodedPreferredID = try container.decodeIfPresent(UUID.self, forKey: .preferredVersionID)
+
+        if let versions = decodedVersions, !versions.isEmpty {
+            self.transcriptVersions = versions
+            self.preferredVersionID = decodedPreferredID ?? versions.first(where: { $0.isPreferred })?.id ?? versions.first?.id
+        } else {
+            let legacyLines = try container.decodeIfPresent([TranscriptLine].self, forKey: .lines) ?? []
+            let legacyTranslations = try container.decodeIfPresent([TranslatedLine].self, forKey: .translations)
+            self._legacyLines = legacyLines
+            self._legacyTranslations = legacyTranslations
+
+            let engine: TranscriptEngine
+            let source: TranscriptSource
+            let name: String
+
+            if recognitionEngine == "apple" {
+                engine = .apple
+                source = .live
+                name = "Apple Speech · Live"
+            } else if recognitionEngine == "sensevoice" {
+                engine = .sensevoice
+                source = transcriptionPass == "context30" ? .retranscription : .live
+                name = transcriptionPass == "context30" ? "SenseVoice · Retranscription" : "SenseVoice · Live"
+            } else {
+                engine = .whisper
+                source = transcriptionPass == "context30" ? .retranscription : .live
+                let modelLabel = (model == SpeechModel.turbo.rawValue ? "Turbo" : (model == SpeechModel.base.rawValue ? "Base" : (model == SpeechModel.small.rawValue ? "Small" : "Large v3")))
+                name = transcriptionPass == "context30" ? "Whisper v3 · Retranscription (\(modelLabel))" : "Whisper v3 · Live"
+            }
+
+            let versionID = UUID()
+            let migrated = TranscriptVersion(
+                id: versionID,
+                createdAt: createdAt,
+                name: name,
+                engine: engine,
+                model: model,
+                language: language,
+                vocabulary: vocabulary,
+                lines: legacyLines,
+                translations: legacyTranslations,
+                translationSource: translationSource,
+                source: source,
+                isPreferred: true
+            )
+            self.transcriptVersions = [migrated]
+            self.preferredVersionID = versionID
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(model, forKey: .model)
+        try container.encode(language, forKey: .language)
+        try container.encodeIfPresent(vocabulary, forKey: .vocabulary)
+        try container.encodeIfPresent(recognitionEngine, forKey: .recognitionEngine)
+        try container.encode(parts, forKey: .parts)
+        try container.encode(transcriptVersions, forKey: .transcriptVersions)
+        try container.encodeIfPresent(preferredVersionID, forKey: .preferredVersionID)
+        try container.encode(bookmarks, forKey: .bookmarks)
+        try container.encodeIfPresent(translationSource, forKey: .translationSource)
+        try container.encodeIfPresent(minutes, forKey: .minutes)
+        try container.encodeIfPresent(minutesKind, forKey: .minutesKind)
+        try container.encodeIfPresent(minutesSource, forKey: .minutesSource)
+        try container.encodeIfPresent(minutesPrompt, forKey: .minutesPrompt)
+        try container.encodeIfPresent(transcriptionPass, forKey: .transcriptionPass)
+        try container.encodeIfPresent(speakerTurns, forKey: .speakerTurns)
+        try container.encodeIfPresent(speakerNames, forKey: .speakerNames)
+        try container.encodeIfPresent(previousLines, forKey: .previousLines)
+
+        // Backward compatibility
+        try container.encode(lines, forKey: .lines)
+        try container.encodeIfPresent(translations, forKey: .translations)
+    }
 }
 
 enum CaptionText {
@@ -355,15 +670,17 @@ enum TranscriptExport {
         let result = String(format: "%02d:%02d:%02d", total / 3_600_000, (total / 60_000) % 60, (total / 1000) % 60)
         return milliseconds ? result + String(format: ",%03d", total % 1000) : result
     }
-    static func render(_ session: LectureSession, as format: TranscriptFormat) -> String {
-        let lines = session.lines.sorted { $0.start < $1.start }
+    static func render(_ session: LectureSession, version: TranscriptVersion? = nil, as format: TranscriptFormat) -> String {
+        let currentVersion = version ?? session.preferredVersion
+        let lines = (currentVersion?.lines ?? session.lines).sorted { $0.start < $1.start }
         if format == .srt {
             return lines.enumerated().map { index, line in
-                    "\(index + 1)\n\(clock(line.start, milliseconds: true)) --> \(clock(max(line.end, line.start + 0.05), milliseconds: true))\n\(session.speakerLabel(line))\(line.text.trimmingCharacters(in: .whitespacesAndNewlines))\n"
+                "\(index + 1)\n\(clock(line.start, milliseconds: true)) --> \(clock(max(line.end, line.start + 0.05), milliseconds: true))\n\(session.speakerLabel(line))\(line.text.trimmingCharacters(in: .whitespacesAndNewlines))\n"
             }.joined(separator: "\n")
         }
         let heading = format == .markdown ? "# " : ""
-        var result = "\(heading)\(session.title)\n\n\(session.createdAt.formatted())\n錄音時間：\(clock(session.duration))（不含暫停）\n\n"
+        let versionHeader = (currentVersion != nil && session.transcriptVersions.count > 1) ? "逐字稿版本：\(currentVersion!.name)\n" : ""
+        var result = "\(heading)\(session.title)\n\n\(session.createdAt.formatted())\n錄音時間：\(clock(session.duration))（不含暫停）\n\(versionHeader)\n"
         if session.hasPendingAudio { result += "尚有音訊未完成辨識；本次匯出只包含已確認段落。\n\n" }
         result += lines.map { "[\(clock($0.start))] \(session.speakerLabel($0))\($0.text)" }.joined(separator: "\n\n")
         if !session.bookmarks.isEmpty {
@@ -460,11 +777,14 @@ struct SessionStore {
             try FileManager.default.removeItem(at: destination)
         }
     }
-    func export(_ session: LectureSession, format: TranscriptFormat) throws -> URL {
-        let name = session.title.components(separatedBy: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_ ")).inverted)
+    func export(_ session: LectureSession, version: TranscriptVersion? = nil, format: TranscriptFormat) throws -> URL {
+        let v = version ?? session.preferredVersion
+        let suffix = (v != nil && session.transcriptVersions.count > 1) ? "_\(v!.name)" : ""
+        let baseName = (session.title + suffix).components(separatedBy: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_ ")).inverted)
             .joined(separator: "_").prefix(60)
-        let url = folder(session.id).appendingPathComponent("\(name.isEmpty ? "逐字稿" : String(name)).\(format.fileExtension)")
-        try TranscriptExport.render(session, as: format).write(to: url, atomically: true, encoding: .utf8)
+        let name = baseName.isEmpty ? "逐字稿" : String(baseName)
+        let url = folder(session.id).appendingPathComponent("\(name).\(format.fileExtension)")
+        try TranscriptExport.render(session, version: v, as: format).write(to: url, atomically: true, encoding: .utf8)
         return url
     }
 }

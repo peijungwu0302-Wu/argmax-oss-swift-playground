@@ -309,3 +309,71 @@ print("PASS: 30-second review, sample-exact cross-part timeline and uncertain sp
 timeline.previousLines = [.init(start: 0, end: 1, text: "替換前")]
 timeline.appendConfirmed([.init(start: 4, end: 5, text: "續錄的新文字")])
 check(timeline.previousLines == nil && timeline.lines.last?.text == "續錄的新文字", "Appending transcription invalidates stale undo so later recording text cannot be erased")
+
+// v1.7.0 Multi-version and legacy migration checks
+let v160JSONDict: [String: Any] = [
+    "id": UUID().uuidString,
+    "createdAt": ISO8601DateFormatter().string(from: Date()),
+    "title": "v1.6.0 課堂",
+    "model": "turbo",
+    "language": "mixed",
+    "recognitionEngine": "apple",
+    "parts": [
+        ["id": UUID().uuidString, "fileName": "part1.pcm16", "offset": 0.0, "sampleCount": 32000, "processedSamples": 32000]
+    ],
+    "lines": [
+        ["id": UUID().uuidString, "start": 0.0, "end": 2.0, "text": "這是舊版 1.6.0 的第一行"]
+    ],
+    "translations": [
+        ["id": UUID().uuidString, "source": "這是舊版 1.6.0 的第一行", "text": "This is line one from 1.6.0"]
+    ]
+]
+let v160Data = try JSONSerialization.data(withJSONObject: v160JSONDict)
+let migratedSession = try JSONDecoder().decode(LectureSession.self, from: v160Data)
+check(migratedSession.transcriptVersions.count == 1, "Legacy v1.6.0 JSON must automatically migrate into 1 TranscriptVersion")
+let firstVer = migratedSession.transcriptVersions[0]
+check(firstVer.lines.count == 1 && firstVer.lines[0].text == "這是舊版 1.6.0 的第一行", "Migrated version retains all lines")
+check(firstVer.translations?.count == 1, "Migrated version retains translations")
+check(migratedSession.preferredVersionID == firstVer.id, "Migrated version is preferred by default")
+check(migratedSession.lines == firstVer.lines, "Computed lines property matches migrated version")
+
+// Test appending a new version to the same session without copying audio
+var multiVersionSession = migratedSession
+let whisperVer = TranscriptVersion(
+    name: "Whisper v3",
+    engine: .whisper,
+    model: "large-v3",
+    language: "mixed",
+    vocabulary: "CRISPR, Cas9",
+    lines: [
+        TranscriptLine(start: 0.0, end: 2.0, text: "這是 Whisper v3 高精準辨識的第一行"),
+        TranscriptLine(start: 2.0, end: 4.0, text: "第二行內容")
+    ],
+    translations: [
+        TranslatedLine(id: UUID(), source: "第二行內容", text: "Second line content")
+    ],
+    source: .retranscription,
+    isPreferred: true
+)
+multiVersionSession.transcriptVersions.append(whisperVer)
+multiVersionSession.preferredVersionID = whisperVer.id
+
+check(multiVersionSession.transcriptVersions.count == 2, "Session now contains 2 transcript versions")
+check(multiVersionSession.preferredVersion?.id == whisperVer.id, "Preferred version switched to Whisper v3")
+check(multiVersionSession.lines.count == 2, "Session computed lines property returns preferred version lines")
+check(multiVersionSession.parts.count == 1, "Audio parts remain single and shared across versions")
+
+// Test version deletion without affecting session audio
+multiVersionSession.transcriptVersions.removeAll { $0.id == firstVer.id }
+check(multiVersionSession.transcriptVersions.count == 1, "Deleting one version leaves the remaining version intact")
+check(multiVersionSession.transcriptVersions[0].id == whisperVer.id, "Remaining version is Whisper v3")
+check(multiVersionSession.parts.count == 1, "Audio parts remain intact after version deletion")
+
+// Test export with version parameter
+let exportLive = TranscriptExport.render(migratedSession, as: .txt, version: firstVer)
+check(exportLive.contains("這是舊版 1.6.0 的第一行"), "Exporting specific version contains that version's text")
+let exportWhisper = TranscriptExport.render(multiVersionSession, as: .srt, version: whisperVer)
+check(exportWhisper.contains("這是 Whisper v3 高精準辨識的第一行"), "Exporting Whisper version contains Whisper text")
+
+print("PASS: v1.7.0 multi-version transcript, legacy migration, single audio preservation and version export")
+
