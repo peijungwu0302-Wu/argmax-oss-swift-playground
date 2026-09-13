@@ -417,4 +417,69 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertEqual(policy.accept(kind: .meaningfulPartial, revision: 5, original: "Next", translation: "", at: t0.addingTimeInterval(2.5)), .ignore,
                        "Unchanged caption text must not wake ActivityKit")
     }
+
+    @MainActor
+    func testPiPPresentationDefaultsResetAndExistingPreferencePreservation() throws {
+        let suite = "PiPPresentationSettingsTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        var settings = PiPPresentationSettings(defaults: defaults)
+        XCTAssertTrue(settings.autoStart)
+        XCTAssertEqual(settings.aspectRatio, .bar)
+        XCTAssertEqual(settings.fontScale, 1)
+        XCTAssertEqual(settings.captionMode, .bilingual)
+        XCTAssertEqual(settings.alignment, .left)
+        XCTAssertEqual(settings.verticalPosition, .center)
+        XCTAssertEqual(settings.gap, .standard)
+
+        settings.autoStart = false
+        settings.aspectRatio = .standard
+        settings.fontScale = 1.4
+        settings.captionMode = .originalOnly
+        settings.alignment = .right
+        settings.verticalPosition = .bottom
+        settings.gap = .wide
+
+        settings = PiPPresentationSettings(defaults: defaults)
+        XCTAssertFalse(settings.autoStart, "An update must preserve an existing user's explicit Auto PiP choice")
+        XCTAssertEqual(settings.fontScale, 1.4, accuracy: 0.001)
+        XCTAssertEqual(settings.alignment, .right)
+
+        settings.reset()
+        XCTAssertTrue(settings.autoStart)
+        XCTAssertEqual(settings.aspectRatio, .bar)
+        XCTAssertEqual(settings.fontScale, 1)
+        XCTAssertEqual(settings.captionMode, .bilingual)
+        XCTAssertEqual(settings.alignment, .left)
+        XCTAssertEqual(settings.verticalPosition, .center)
+        XCTAssertEqual(settings.gap, .standard)
+    }
+
+    func testPiPAdaptiveLayoutKeepsSafePaddingAndScalesByRatio() {
+        let three = PiPLayoutMetrics.make(renderSize: CGSize(width: 960, height: 320), ratio: .standard,
+                                          mode: .bilingual, fontScale: 1, gap: .standard)
+        let five = PiPLayoutMetrics.make(renderSize: CGSize(width: 1200, height: 240), ratio: .bar,
+                                         mode: .bilingual, fontScale: 1.25, gap: .standard)
+        let six = PiPLayoutMetrics.make(renderSize: CGSize(width: 1200, height: 200), ratio: .ultraWide,
+                                        mode: .bilingual, fontScale: 1, gap: .wide)
+        XCTAssertGreaterThanOrEqual(three.horizontalPadding, 24)
+        XCTAssertGreaterThan(three.verticalPadding, six.verticalPadding)
+        XCTAssertGreaterThan(five.originalFont, six.originalFont)
+        XCTAssertGreaterThan(five.originalFont, PiPLayoutMetrics.make(renderSize: CGSize(width: 1200, height: 240), ratio: .bar,
+                                                                       mode: .bilingual, fontScale: 1, gap: .standard).originalFont)
+        XCTAssertLessThanOrEqual(six.blockGap, 16)
+    }
+
+    @MainActor
+    func testNavigationDeepLinkRoutesOnlyKnownLectureToFullTranscript() {
+        let known = UUID()
+        let navigation = AppNavigationState()
+        XCTAssertTrue(navigation.handle(URL(string: "lecturetranscriber://lecture/\(known.uuidString)/transcript")!, knownLectureIDs: [known]))
+        XCTAssertEqual(navigation.route, .fullTranscript(known))
+
+        let missing = UUID()
+        XCTAssertFalse(navigation.handle(URL(string: "lecturetranscriber://lecture/\(missing.uuidString)/transcript")!, knownLectureIDs: [known]))
+        XCTAssertEqual(navigation.route, .home)
+    }
 }
