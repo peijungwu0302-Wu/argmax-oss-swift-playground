@@ -13,11 +13,15 @@ struct SpeechUpdate: Sendable {
 
 @MainActor
 protocol LiveSpeechEngine: AnyObject {
-    func prepare(language: String) async throws
+    func prepare(language: String, onProgress: @escaping @MainActor (Double?) -> Void) async throws
     func start(language: String, onResult: @escaping @MainActor (SpeechUpdate) -> Void) async throws
     func append(_ samples: [Float]) async throws
     func finish() async throws
     func cancel() async
+}
+
+extension LiveSpeechEngine {
+    func prepare(language: String) async throws { try await prepare(language: language, onProgress: { _ in }) }
 }
 
 @available(iOS 26.0, *)
@@ -33,7 +37,7 @@ final class AppleSpeechEngine: LiveSpeechEngine {
     private let inputFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
     private var preparedLanguage: String?
 
-    func prepare(language: String) async throws {
+    func prepare(language: String, onProgress: @escaping @MainActor (Double?) -> Void) async throws {
         guard SpeechTranscriber.isAvailable else {
             throw LectureError.message("這台裝置尚無法使用 Apple SpeechTranscriber；可在錄音設定切換 WhisperKit。")
         }
@@ -48,6 +52,14 @@ final class AppleSpeechEngine: LiveSpeechEngine {
         let speechModule = SpeechTranscriber(locale: locale, preset: .timeIndexedProgressiveTranscription)
         let installation = try await AssetInventory.assetInstallationRequest(supporting: [speechModule])
         if let request = installation {
+            let reportedProgress = request.progress
+            onProgress(reportedProgress.totalUnitCount > 0 ? reportedProgress.fractionCompleted : nil)
+            let observation = reportedProgress.observe(\.fractionCompleted, options: [.new]) { progress, _ in
+                Task { @MainActor in
+                    onProgress(progress.totalUnitCount > 0 ? progress.fractionCompleted : nil)
+                }
+            }
+            defer { observation.invalidate() }
             try await request.downloadAndInstall()
         }
         let compatibleFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [speechModule], considering: inputFormat)

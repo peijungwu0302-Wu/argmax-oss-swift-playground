@@ -93,26 +93,26 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild -project AppBuild/LectureTranscriber.xcodeproj -scheme LectureTranscriber -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/UniversalBuild" CODE_SIGNING_ALLOWED=NO build 2>&1 | tee "$RUNNER_TEMP/lecture-device.log"
-          python3 AppBuild/package_ipa.py "$RUNNER_TEMP/UniversalBuild/Build/Products/Debug-iphoneos/LectureTranscriber.app" "$RUNNER_TEMP/LectureTranscriber-v1.8.1.ipa"
-          cp "$RUNNER_TEMP/LectureTranscriber-v1.8.1.ipa" "$RUNNER_TEMP/LectureTranscriber-1.8.1-unsigned.ipa"
+          python3 AppBuild/package_ipa.py "$RUNNER_TEMP/UniversalBuild/Build/Products/Debug-iphoneos/LectureTranscriber.app" "$RUNNER_TEMP/LectureTranscriber-v1.8.2.ipa"
+          cp "$RUNNER_TEMP/LectureTranscriber-v1.8.2.ipa" "$RUNNER_TEMP/LectureTranscriber-1.8.2-unsigned.ipa"
       - uses: actions/upload-artifact@v4
         with:
-          name: LectureTranscriber-v1.8.1-IPA
+          name: LectureTranscriber-v1.8.2-IPA
           path: |
-            ${{ runner.temp }}/LectureTranscriber-v1.8.1.ipa
-            ${{ runner.temp }}/LectureTranscriber-1.8.1-unsigned.ipa
+            ${{ runner.temp }}/LectureTranscriber-v1.8.2.ipa
+            ${{ runner.temp }}/LectureTranscriber-1.8.2-unsigned.ipa
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/release/v1.8.1'
+        if: github.ref == 'refs/tags/v1.8.2'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.8.1
+          tag_name: v1.8.2
           files: |
-            ${{ runner.temp }}/LectureTranscriber-v1.8.1.ipa
+            ${{ runner.temp }}/LectureTranscriber-v1.8.2.ipa
             Deliverables/update.json
             Deliverables/sidestore.json
-          name: LectureTranscriber v1.8.1
+          name: LectureTranscriber v1.8.2
           body: |
-            ## LectureTranscriber v1.8.1 ("PiP Stability + Live Activity")
+            ## LectureTranscriber v1.8.2 ("PiP Stability + Live Activity")
             - 修正 PiP 只顯示黑畫面的問題（修復 CVPixelBuffer 格式為 32BGRA、IOSurface 支援與 DisplayImmediately 立即顯示）
             - PiP 即時顯示原文與繁中翻譯，透過獨立 CaptionFeed 提供不中斷字幕流
             - 切換至其他 App（GoodNotes、Safari、PDF 等）背景錄音與即時辨識翻譯持續運作（≥60s）

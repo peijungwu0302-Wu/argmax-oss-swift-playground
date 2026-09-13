@@ -2,6 +2,7 @@
 
 public enum ResourceState: Equatable, Sendable {
     case notDownloaded
+    case preparing(progress: Double?)
     case downloading(bytesReceived: Int64, totalBytes: Int64?, progress: Double)
     case extracting(progress: Double)
     case compiling(progress: Double)
@@ -15,6 +16,7 @@ public enum ResourceState: Equatable, Sendable {
 
     public var progressValue: Double? {
         switch self {
+        case .preparing(let progress): return progress
         case .downloading(_, _, let progress):
             return progress
         case .extracting(let progress):
@@ -30,6 +32,9 @@ public enum ResourceState: Equatable, Sendable {
 
     public var description: String {
         switch self {
+        case .preparing(let progress):
+            if let progress { return "正在準備系統資源（\(Int((progress * 100).rounded()))%）" }
+            return "正在準備系統資源…"
         case .notDownloaded:
             return "尚未下載"
         case .downloading(let received, let total, let progress):
@@ -57,6 +62,11 @@ public enum ResourceState: Equatable, Sendable {
     public func localizedDescription(in language: String) -> String {
         let isEn = language.hasPrefix("en")
         switch self {
+        case .preparing(let progress):
+            if let progress {
+                return isEn ? "Preparing system resource (\(Int((progress * 100).rounded()))%)" : "正在準備系統資源（\(Int((progress * 100).rounded()))%）"
+            }
+            return isEn ? "Preparing system resource…" : "正在準備系統資源…"
         case .notDownloaded:
             return isEn ? "Not Downloaded" : "尚未下載"
         case .downloading(let received, let total, let progress):

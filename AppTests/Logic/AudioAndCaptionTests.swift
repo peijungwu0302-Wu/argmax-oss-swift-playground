@@ -48,8 +48,8 @@ final class AudioAndCaptionTests: XCTestCase {
     @MainActor
     func testUniversalInstallConfiguration() {
         XCTAssertEqual(Bundle.main.bundleIdentifier, "com.peijungwu0302.lecturetranscriber")
-        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String, "1.8.1")
-        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "14")
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String, "1.8.2")
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "15")
         XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "UIDeviceFamily") as? [Int], [1, 2])
         XCTAssertTrue(LectureController().supportsBackgroundAudio)
         XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "UIRequiresFullScreen") as? Bool, false)
@@ -267,6 +267,10 @@ final class AudioAndCaptionTests: XCTestCase {
         let notDownloaded = ResourceState.notDownloaded
         XCTAssertEqual(notDownloaded.description, "尚未下載")
         XCTAssertNil(notDownloaded.progressValue)
+
+        let preparing = ResourceState.preparing(progress: nil)
+        XCTAssertNil(preparing.progressValue)
+        XCTAssertFalse(preparing.description.contains("%"), "Unknown Apple system progress must remain indeterminate")
 
         let downloadingWithTotal = ResourceState.downloading(bytesReceived: 52_428_800, totalBytes: 209_715_200, progress: 0.25)
         XCTAssertEqual(downloadingWithTotal.description, "下載中：50.0 MB / 200.0 MB (25%)")

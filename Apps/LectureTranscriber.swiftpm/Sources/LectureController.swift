@@ -7,8 +7,8 @@ final class LectureController: ObservableObject {
     @Published var session: LectureSession?
     @Published var history: [LectureSession] = []
     @Published var model = SpeechModel.turbo.rawValue
-    @Published var recognitionEngine = "apple"
-    @Published var language = "zh"
+    @Published var recognitionEngine = UserDefaults.standard.string(forKey: "recognitionEngine") ?? "apple"
+    @Published var language = UserDefaults.standard.string(forKey: "recognitionLanguage") ?? "zh"
     @Published var vocabulary = ""
     @Published var title = ""
     @Published var status = "先載入模型，再開始錄音"
@@ -37,7 +37,9 @@ final class LectureController: ObservableObject {
     @Published var errorMessage: String?
     @Published var lastSaved: Date?
     @Published var search = ""
-    @Published var translationEnabled = false
+    @Published var translationEnabled = UserDefaults.standard.object(forKey: "translationEnabled") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(translationEnabled, forKey: "translationEnabled") }
+    }
     @Published var translationStatus = "開啟後，英語內容會分段翻成繁體中文"
     @Published var translatedDraft = "" {
         didSet {
@@ -66,7 +68,9 @@ final class LectureController: ObservableObject {
     var translationInterval: TimeInterval {
         translationSpeedPreset == .custom ? translationCustomInterval : translationSpeedPreset.defaultInterval
     }
-    @Published var translationProvider: String = "apple"
+    @Published var translationProvider: String = UserDefaults.standard.string(forKey: "translationProvider") ?? "apple" {
+        didSet { UserDefaults.standard.set(translationProvider, forKey: "translationProvider") }
+    }
     @Published var isLowLatencyTranslation: Bool = true
     @Published var resourceState: ResourceState = .notDownloaded
     @Published var recordingQuality = RecordingQuality(rawValue: UserDefaults.standard.string(forKey: "recordingQuality") ?? "compact") ?? .compact
@@ -80,7 +84,7 @@ final class LectureController: ObservableObject {
     var canProcessLiveAudio: Bool { isInForeground || pipActive || (supportsBackgroundAudio && isRecording) }
 
     @Published var notesPrompt = UserDefaults.standard.string(forKey: "notesPrompt") ?? "以繁體中文整理重點、決議、待辦；保留英文術語和來源時間戳。"
-    @Published var translationSource = "en"
+    @Published var translationSource = UserDefaults.standard.string(forKey: "translationSource") ?? "en"
     var supportsBackgroundAudio: Bool { (Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String])?.contains("audio") == true }
     var backgroundDescription: String { supportsBackgroundAudio ? "私人安裝版在背景保存錄音並持續即時辨識；切換 App 時 PiP 字幕與即時動態仍持續更新。" : "Playground 版請保持字幕視窗可見；測試背景錄音請使用 IPA。" }
     func audioSize(_ lecture: LectureSession) -> String {
@@ -167,7 +171,8 @@ final class LectureController: ObservableObject {
     }
     func setTranslationSource(_ value: String) {
         guard value == "en" || value == "ja", value != translationSource else { return }
-        translationSource = value; session?.translationSource = value; session?.translations = []
+        translationSource = value; UserDefaults.standard.set(value, forKey: "translationSource")
+        session?.translationSource = value; session?.translations = []
         restartTranslation(); persist()
     }
     func restartTranslation() {
@@ -181,7 +186,8 @@ final class LectureController: ObservableObject {
     }
     func setLanguage(_ value: String) {
         guard canManageSessions else { return }
-        language = value; session?.language = value; loadedModel = nil
+        language = value; UserDefaults.standard.set(value, forKey: "recognitionLanguage")
+        session?.language = value; loadedModel = nil
         liveDraft = ""; provisional = []
         persist()
     }
@@ -207,7 +213,8 @@ final class LectureController: ObservableObject {
     }
     func setRecognitionEngine(_ value: String) {
         guard canManageSessions else { return }
-        recognitionEngine = value; session?.recognitionEngine = value; loadedModel = nil
+        recognitionEngine = value; UserDefaults.standard.set(value, forKey: "recognitionEngine")
+        session?.recognitionEngine = value; loadedModel = nil
         // Root cause fix: Never restart translation or bump generation on engine switch!
         // Translation session stays alive and receives new text smoothly.
         liveDraft = ""; provisional = []
@@ -224,11 +231,15 @@ final class LectureController: ObservableObject {
     private func loadModel(_ name: String) async throws {
         if usesAppleSpeech {
             guard #available(iOS 26.0, *) else { throw LectureError.message("Apple 即時引擎需要 iPadOS 26；請在錄音設定改用 WhisperKit。") }
-            status = "正在準備 Apple 語音模型，首次需下載語言資源…"
-            resourceState = .downloading(bytesReceived: 0, totalBytes: nil, progress: 0.1)
+            status = L10n.tr("正在準備語音辨識…", "Preparing speech recognition…")
+            resourceState = .preparing(progress: nil)
+            progress = nil
             await engine.unload(); await senseVoice.unload()
             if appleSpeech == nil { appleSpeech = AppleSpeechEngine() }
-            try await appleSpeech?.prepare(language: session?.language ?? language)
+            try await appleSpeech?.prepare(language: session?.language ?? language) { [weak self] value in
+                self?.resourceState = .preparing(progress: value)
+                self?.progress = value
+            }
             loadedModel = "apple"; status = "Apple 即時語音已就緒"; progress = nil
             resourceState = .ready
             return
