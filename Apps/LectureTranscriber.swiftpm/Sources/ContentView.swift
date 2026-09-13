@@ -18,6 +18,10 @@ struct ContentView: View {
     @State private var editedLine: TranscriptLine?
     @State private var followLatest = true
     @State private var pendingDeletion: LectureSession?
+    @State private var historySearch = ""
+    @State private var renamingSession: LectureSession?
+    @State private var renameTitle = ""
+    @State private var showRenameAlert = false
     @State private var captionMode = true
     @State private var compactMode = false
     @State private var pipPreview = false
@@ -127,7 +131,7 @@ struct ContentView: View {
             .modifier(LiveTranslationModifier(controller: controller))
             .sheet(isPresented: $showHistory, onDismiss: { if importAfterHistory { importAfterHistory = false; showImport = true } }) { historySheet }
             .sheet(isPresented: $showAudio) {
-                if let lecture = controller.session { NavigationStack { AudioLibraryView(controller: controller, lecture: lecture).toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showAudio = false } } } } }
+                if let lecture = controller.session { NavigationStack { LectureDetailView(controller: controller, session: lecture).toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showAudio = false } } } } }
             }
             .fileImporter(isPresented: $showImport, allowedContentTypes: [.audio, .data]) { result in
                 switch result {
@@ -163,10 +167,17 @@ struct ContentView: View {
             CaptionPiPPreview(pip: pip, original: controller.caption, translated: controller.translationEnabled ? controller.translationCaption : "",
                               sourceSize: captionFontSize, translationSize: translationFontSize)
                 .aspectRatio(3, contentMode: .fit)
-            HStack {
+            HStack(spacing: 12) {
                 Button(pip.active ? "結束子母畫面" : "啟動子母畫面") {
                     if pip.active { pip.stop() } else { pip.start(recording: controller.isRecording) }
                 }
+                Picker("模式", selection: $pip.displayMode) {
+                    ForEach(PiPDisplayMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.menu)
+
                 Menu("控制") {
                     Button("完整畫面") { pip.detach(); pipPreview = false; controller.pipEnabled = false; compactMode = false }
                     Button("改用可縮小視窗字幕") { pip.detach(); pipPreview = false; controller.pipEnabled = false; compactMode = true }
@@ -462,6 +473,11 @@ struct ContentView: View {
                         .font(.caption)
                 }
                 Section("字幕與會議 beta") {
+                    Picker("子母畫面顯示模式", selection: $pip.displayMode) {
+                        ForEach(PiPDisplayMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
                     Button("開啟子母畫面字幕") { showSettings = false; pipPreview = true; controller.pipEnabled = true }
                     Button("精簡小視窗字幕") { showSettings = false; pip.detach(); pipPreview = false; controller.pipEnabled = false; compactMode = true }
                     Button("錄後講者分析／命名") { showSettings = false; showSpeakers = true }.disabled(!controller.canManageSessions || controller.session == nil)
@@ -601,49 +617,147 @@ struct ContentView: View {
         }.tint(gold)
     }
 
+    private var filteredHistory: [LectureSession] {
+        if historySearch.isEmpty { return controller.history }
+        return controller.history.filter { session in
+            session.title.localizedCaseInsensitiveContains(historySearch) ||
+            session.lines.contains { $0.text.localizedCaseInsensitiveContains(historySearch) }
+        }
+    }
+
     private var historySheet: some View {
         NavigationStack {
             List {
-                if controller.history.isEmpty { Text("還沒有已儲存的課堂").foregroundStyle(.secondary) }
-                ForEach(controller.history) { session in
-                    HStack {
-                        Button {
-                            controller.open(session); showHistory = false
-                        } label: {
+                if filteredHistory.isEmpty {
+                    Text(controller.history.isEmpty ? "還沒有已儲存的課堂" : "沒有符合搜尋的課堂")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(filteredHistory) { session in
+                    NavigationLink {
+                        LectureDetailView(controller: controller, session: session)
+                    } label: {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(session.title).font(.headline)
-                            Text("\(session.createdAt.formatted()) · \(TranscriptExport.clock(session.duration))")
-                                .font(.caption).foregroundStyle(.secondary)
-                            Text("音訊 " + controller.audioSize(session)).font(.caption).foregroundStyle(.secondary)
-                            if session.hasPendingAudio { Label("有錄音等待補辨識", systemImage: "arrow.clockwise").font(.caption) }
-                        }.padding(.vertical, 5)
-                        }.buttonStyle(.plain)
-                        Spacer()
-                        NavigationLink {
-                            AudioLibraryView(controller: controller, lecture: session)
-                        } label: { Image(systemName: "waveform").accessibilityLabel("錄音檔案") }.fixedSize()
+                            Text(session.title)
+                                .font(.headline)
+                                .foregroundStyle(.primary)
+
+                            HStack(spacing: 8) {
+                                Text(session.createdAt.formatted(date: .numeric, time: .shortened))
+                                Text("·")
+                                Text(TranscriptExport.clock(session.duration))
+                                Text("·")
+                                Text("音訊 " + controller.audioSize(session))
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                            if !session.transcriptVersions.isEmpty {
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(spacing: 4) {
+                                        ForEach(session.transcriptVersions) { v in
+                                            HStack(spacing: 2) {
+                                                if v.isPreferred {
+                                                    Image(systemName: "star.fill")
+                                                        .font(.system(size: 8))
+                                                }
+                                                Text(v.name)
+                                            }
+                                            .font(.system(size: 11, weight: v.isPreferred ? .bold : .regular))
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(v.isPreferred ? gold.opacity(0.18) : Color.secondary.opacity(0.12))
+                                            .foregroundStyle(v.isPreferred ? gold : Color.primary)
+                                            .clipShape(Capsule())
+                                        }
+                                    }
+                                }
+                            }
+
+                            let lineCount = session.lines.count
+                            let charCount = session.lines.reduce(0) { $0 + $1.text.count }
+                            let versionLabel = session.preferredVersion != nil ? "（\(session.preferredVersion!.name)）" : ""
+                            Text("\(lineCount) 行 · \(charCount) 字 \(versionLabel)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+
+                            if session.hasPendingAudio {
+                                Label("有錄音等待補辨識", systemImage: "arrow.clockwise")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button("刪除", role: .destructive) {
+                            pendingDeletion = session
+                        }
+                        Button("重命名") {
+                            renamingSession = session
+                            renameTitle = session.title
+                            showRenameAlert = true
+                        }
+                        .tint(.blue)
+                    }
+                    .contextMenu {
+                        Button {
+                            controller.open(session)
+                            showHistory = false
+                        } label: {
+                            Label("載入繼續錄音", systemImage: "mic")
+                        }
+                        Button {
+                            renamingSession = session
+                            renameTitle = session.title
+                            showRenameAlert = true
+                        } label: {
+                            Label("重新命名", systemImage: "pencil")
+                        }
                         Button(role: .destructive) {
                             pendingDeletion = session
-                        } label: { Image(systemName: "trash") }
-                        .buttonStyle(.borderless).accessibilityLabel("刪除 \(session.title)")
+                        } label: {
+                            Label("刪除課堂", systemImage: "trash")
+                        }
                     }
-                    .swipeActions(allowsFullSwipe: false) { Button("刪除", role: .destructive) { pendingDeletion = session } }
                     .disabled(!controller.canManageSessions)
                 }
-            }.navigationTitle("本機課堂")
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button("匯入音訊") { importAfterHistory = true; showHistory = false }.disabled(!controller.canManageSessions)
+            }
+            .searchable(text: $historySearch, prompt: "搜尋課堂標題或逐字稿")
+            .navigationTitle("本機課堂")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button {
+                        importAfterHistory = true
+                        showHistory = false
+                    } label: {
+                        Label("＋ 匯入錄音", systemImage: "square.and.arrow.down")
+                            .font(.body.bold())
                     }
-                    ToolbarItem(placement: .confirmationAction) { Button("完成") { showHistory = false } }
+                    .disabled(!controller.canManageSessions)
                 }
-                .confirmationDialog("刪除這堂課？", isPresented: Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } }), titleVisibility: .visible) {
-                    Button("刪除錄音與逐字稿", role: .destructive) {
-                        if let item = pendingDeletion { controller.deleteLecture(item.id) }
-                        pendingDeletion = nil
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { showHistory = false }
+                }
+            }
+            .alert("重新命名課堂", isPresented: $showRenameAlert) {
+                TextField("課堂名稱", text: $renameTitle)
+                Button("儲存") {
+                    if let s = renamingSession {
+                        controller.renameLecture(s.id, title: renameTitle)
                     }
-                    Button("取消", role: .cancel) { pendingDeletion = nil }
-                } message: { Text("將刪除「\(pendingDeletion?.title ?? "")」的錄音、逐字稿、標記與本機匯出檔，無法復原。已分享出去的檔案不受影響。") }
+                    renamingSession = nil
+                }
+                Button("取消", role: .cancel) {
+                    renamingSession = nil
+                }
+            }
+            .confirmationDialog("刪除這堂課？", isPresented: Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } }), titleVisibility: .visible) {
+                Button("刪除錄音與所有逐字稿", role: .destructive) {
+                    if let item = pendingDeletion { controller.deleteLecture(item.id) }
+                    pendingDeletion = nil
+                }
+                Button("取消", role: .cancel) { pendingDeletion = nil }
+            } message: { Text("將刪除「\(pendingDeletion?.title ?? "")」的錄音、所有版本逐字稿、標記與本機匯出檔，無法復原。已分享出去的檔案不受影響。") }
         }
     }
 }

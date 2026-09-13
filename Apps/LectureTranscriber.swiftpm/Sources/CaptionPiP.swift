@@ -8,11 +8,27 @@ final class CaptionVideoView: UIView {
     var displayLayer: AVSampleBufferDisplayLayer { layer as! AVSampleBufferDisplayLayer }
 }
 
+enum PiPDisplayMode: String, CaseIterable, Identifiable, Codable {
+    case bilingual = "bilingual"
+    case chineseOnly = "chineseOnly"
+    case originalOnly = "originalOnly"
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .bilingual: return "雙語（原文 + 繁中）"
+        case .chineseOnly: return "只顯示中文"
+        case .originalOnly: return "只顯示原文"
+        }
+    }
+}
+
 @MainActor final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureControllerDelegate, AVPictureInPictureSampleBufferPlaybackDelegate {
     @Published private(set) var active = false
     @Published private(set) var possible = false
     @Published private(set) var paused = false
     @Published private(set) var status = ""
+    @Published var displayMode: PiPDisplayMode = .bilingual
     private var pip: AVPictureInPictureController?
     private weak var surface: CaptionVideoView?
     private var observation: NSKeyValueObservation?
@@ -86,11 +102,35 @@ final class CaptionVideoView: UIView {
         context.translateBy(x: 0, y: CGFloat(height)); context.scaleBy(x: 1, y: -1)
         UIGraphicsPushContext(context)
         let paragraph = NSMutableParagraphStyle(); paragraph.lineBreakMode = .byTruncatingTail
-        let topHeight: CGFloat = translated.isEmpty ? 280 : 152
-        (original as NSString).draw(in: CGRect(x: 24, y: 14, width: 912, height: topHeight), withAttributes: [
-            .font: UIFont.systemFont(ofSize: min(72, sourceSize * 2), weight: .medium), .foregroundColor: UIColor.white, .paragraphStyle: paragraph])
-        (translated as NSString).draw(in: CGRect(x: 24, y: 176, width: 912, height: 130), withAttributes: [
-            .font: UIFont.systemFont(ofSize: min(64, translationSize * 2)), .foregroundColor: UIColor.systemYellow, .paragraphStyle: paragraph])
+        switch displayMode {
+        case .chineseOnly:
+            let textToDraw = translated.isEmpty ? original : translated
+            (textToDraw as NSString).draw(in: CGRect(x: 24, y: 30, width: 912, height: 260), withAttributes: [
+                .font: UIFont.systemFont(ofSize: min(64, translationSize * 2), weight: .medium),
+                .foregroundColor: UIColor.systemYellow,
+                .paragraphStyle: paragraph
+            ])
+        case .originalOnly:
+            (original as NSString).draw(in: CGRect(x: 24, y: 30, width: 912, height: 260), withAttributes: [
+                .font: UIFont.systemFont(ofSize: min(64, sourceSize * 2), weight: .medium),
+                .foregroundColor: UIColor.white,
+                .paragraphStyle: paragraph
+            ])
+        case .bilingual:
+            let topHeight: CGFloat = translated.isEmpty ? 280 : 152
+            (original as NSString).draw(in: CGRect(x: 24, y: 14, width: 912, height: topHeight), withAttributes: [
+                .font: UIFont.systemFont(ofSize: min(72, sourceSize * 2), weight: .medium),
+                .foregroundColor: UIColor.white,
+                .paragraphStyle: paragraph
+            ])
+            if !translated.isEmpty {
+                (translated as NSString).draw(in: CGRect(x: 24, y: 176, width: 912, height: 130), withAttributes: [
+                    .font: UIFont.systemFont(ofSize: min(64, translationSize * 2)),
+                    .foregroundColor: UIColor.systemYellow,
+                    .paragraphStyle: paragraph
+                ])
+            }
+        }
         UIGraphicsPopContext()
         var format: CMVideoFormatDescription?
         guard CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: pixel, formatDescriptionOut: &format) == noErr,
