@@ -7,6 +7,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
+concurrency:
+  group: lecture-app-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   playground-package:
     runs-on: macos-26
