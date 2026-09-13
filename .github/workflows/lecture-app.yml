@@ -102,14 +102,15 @@ jobs:
             ${{ runner.temp }}/LectureTranscriber-v1.7.0.ipa
             ${{ runner.temp }}/LectureTranscriber-1.7.0-unsigned.ipa
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/release/v1.7.0'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v1.7.0
           files: |
             ${{ runner.temp }}/LectureTranscriber-v1.7.0.ipa
             Deliverables/update.json
             Deliverables/sidestore.json
-          name: LectureTranscriber ${{ github.ref_name }}
+          name: LectureTranscriber v1.7.0
           body: |
             ## LectureTranscriber ${{ github.ref_name }}
             - 單一課堂多版本逐字稿架構（Apple Speech Live 即時辨識、Whisper v3 錄後高精確轉錄、SenseVoice）
