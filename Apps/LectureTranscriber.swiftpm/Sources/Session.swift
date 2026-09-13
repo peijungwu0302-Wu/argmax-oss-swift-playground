@@ -599,6 +599,7 @@ struct LectureSession: Codable, Identifiable, Sendable {
                 let lastIndex = transcriptVersions[idx].lines.count - 1
                 transcriptVersions[idx].lines[lastIndex].text = joined.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
                 transcriptVersions[idx].lines[lastIndex].end = addition.end
+                transcriptVersions[idx].lines[lastIndex].words = joined
                 if let tvCount = transcriptVersions[idx].translationVersions?.count, tvCount > 0 {
                     for i in 0..<tvCount {
                         transcriptVersions[idx].translationVersions?[i].lines.removeAll { $0.id == last.id }
