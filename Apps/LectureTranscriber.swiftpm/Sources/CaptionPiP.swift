@@ -13,12 +13,14 @@ enum PiPDisplayMode: String, CaseIterable, Identifiable, Codable {
     case chineseOnly = "chineseOnly"
     case originalOnly = "originalOnly"
 
+    static let translationOnly = PiPDisplayMode.chineseOnly
+
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .bilingual: return "雙語（原文 + 繁中）"
-        case .chineseOnly: return "只顯示中文"
-        case .originalOnly: return "只顯示原文"
+        case .bilingual: return L10n.tr("雙語（原文 + 繁中）", "Bilingual (Original + Chinese)")
+        case .chineseOnly: return L10n.tr("僅翻譯（繁體中文）", "Translation Only")
+        case .originalOnly: return L10n.tr("僅原文", "Original Only")
         }
     }
 }
@@ -49,7 +51,8 @@ enum PiPDisplayMode: String, CaseIterable, Identifiable, Codable {
         }
         view.displayLayer.videoGravity = .resizeAspect
         guard AVPictureInPictureController.isPictureInPictureSupported() else {
-            status = "此環境不支援子母畫面，請使用精簡視窗字幕。"; return
+            status = L10n.tr("此環境不支援子母畫面，請使用精簡視窗字幕。", "Picture in Picture not supported in this environment.")
+            return
         }
         pip = AVPictureInPictureController(contentSource: .init(sampleBufferDisplayLayer: view.displayLayer, playbackDelegate: self))
         pip?.delegate = self; pip?.requiresLinearPlayback = true
@@ -60,7 +63,7 @@ enum PiPDisplayMode: String, CaseIterable, Identifiable, Codable {
         render()
         timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in Task { @MainActor in self?.render() } }
         RunLoop.main.add(timer!, forMode: .common)
-        status = "子母畫面為 beta；請保持此預覽可見後啟動。"
+        status = L10n.tr("子母畫面為 beta；請保持此預覽可見後啟動。", "PiP is in beta; keep this preview visible then start.")
     }
     func detach() {
         pip?.stopPictureInPicture(); pip?.delegate = nil; pip = nil
@@ -68,7 +71,7 @@ enum PiPDisplayMode: String, CaseIterable, Identifiable, Codable {
         active = false; possible = false; paused = false
     }
     func update(original: String, translated: String, sourceSize: Double, translationSize: Double) {
-        self.original = original.isEmpty ? "等待語音…" : original; self.translated = translated
+        self.original = original.isEmpty ? L10n.tr("等待語音…", "Waiting for speech…") : original; self.translated = translated
         self.sourceSize = sourceSize; self.translationSize = translationSize; render()
     }
     func start(recording: Bool) {
@@ -79,16 +82,18 @@ enum PiPDisplayMode: String, CaseIterable, Identifiable, Codable {
             try audio.setActive(true)
             render()
             guard let pip, pip.isPictureInPicturePossible else {
-                status = "系統尚未允許子母畫面；請保持預覽可見，或改用精簡小視窗。"; return
+                status = L10n.tr("系統尚未允許子母畫面；請保持預覽可見，或改用精簡小視窗。", "System has not allowed PiP yet; keep preview visible or use compact window.")
+                return
             }
             pip.startPictureInPicture()
-        } catch { status = "子母畫面啟動失敗：" + error.localizedDescription }
+        } catch { status = L10n.tr("子母畫面啟動失敗：", "Failed to start PiP: ") + error.localizedDescription }
     }
     func stop() { pip?.stopPictureInPicture() }
 
     private func render() {
         guard !paused, let layer = surface?.displayLayer else { return }
-        let width = 960, height = 320
+        // 5:1 Aspect Ratio Subtitle Bar: 1200 x 240
+        let width = 1200, height = 240
         var pixel: CVPixelBuffer?
         let attributes = [kCVPixelBufferCGImageCompatibilityKey: true, kCVPixelBufferCGBitmapContextCompatibilityKey: true] as CFDictionary
         guard CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32ARGB, attributes, &pixel) == kCVReturnSuccess,
@@ -98,35 +103,55 @@ enum PiPDisplayMode: String, CaseIterable, Identifiable, Codable {
         guard let context = CGContext(data: CVPixelBufferGetBaseAddress(pixel), width: width, height: height, bitsPerComponent: 8,
                                       bytesPerRow: CVPixelBufferGetBytesPerRow(pixel), space: CGColorSpaceCreateDeviceRGB(),
                                       bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue) else { return }
-        context.setFillColor(UIColor(white: 0.08, alpha: 1).cgColor); context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        // Solid high-contrast dark background
+        context.setFillColor(UIColor(white: 0.07, alpha: 0.96).cgColor)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
         context.translateBy(x: 0, y: CGFloat(height)); context.scaleBy(x: 1, y: -1)
         UIGraphicsPushContext(context)
-        let paragraph = NSMutableParagraphStyle(); paragraph.lineBreakMode = .byTruncatingTail
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byWordWrapping
+        paragraph.alignment = .natural
+        paragraph.lineSpacing = 4
+
+        let horizontalPadding: CGFloat = 36
+        let textWidth = CGFloat(width) - (horizontalPadding * 2)
+
         switch displayMode {
         case .chineseOnly:
             let textToDraw = translated.isEmpty ? original : translated
-            (textToDraw as NSString).draw(in: CGRect(x: 24, y: 30, width: 912, height: 260), withAttributes: [
-                .font: UIFont.systemFont(ofSize: min(64, translationSize * 2), weight: .medium),
-                .foregroundColor: UIColor.systemYellow,
+            let fontSize = min(54.0, max(28.0, translationSize * 2.0))
+            (textToDraw as NSString).draw(in: CGRect(x: horizontalPadding, y: 32, width: textWidth, height: CGFloat(height) - 64), withAttributes: [
+                .font: UIFont.systemFont(ofSize: fontSize, weight: .semibold),
+                .foregroundColor: UIColor(red: 1.0, green: 0.86, blue: 0.35, alpha: 1.0),
                 .paragraphStyle: paragraph
             ])
         case .originalOnly:
-            (original as NSString).draw(in: CGRect(x: 24, y: 30, width: 912, height: 260), withAttributes: [
-                .font: UIFont.systemFont(ofSize: min(64, sourceSize * 2), weight: .medium),
+            let fontSize = min(54.0, max(28.0, sourceSize * 2.0))
+            (original as NSString).draw(in: CGRect(x: horizontalPadding, y: 32, width: textWidth, height: CGFloat(height) - 64), withAttributes: [
+                .font: UIFont.systemFont(ofSize: fontSize, weight: .medium),
                 .foregroundColor: UIColor.white,
                 .paragraphStyle: paragraph
             ])
         case .bilingual:
-            let topHeight: CGFloat = translated.isEmpty ? 280 : 152
-            (original as NSString).draw(in: CGRect(x: 24, y: 14, width: 912, height: topHeight), withAttributes: [
-                .font: UIFont.systemFont(ofSize: min(72, sourceSize * 2), weight: .medium),
-                .foregroundColor: UIColor.white,
-                .paragraphStyle: paragraph
-            ])
-            if !translated.isEmpty {
-                (translated as NSString).draw(in: CGRect(x: 24, y: 176, width: 912, height: 130), withAttributes: [
-                    .font: UIFont.systemFont(ofSize: min(64, translationSize * 2)),
-                    .foregroundColor: UIColor.systemYellow,
+            if translated.isEmpty {
+                let fontSize = min(50.0, max(28.0, sourceSize * 2.0))
+                (original as NSString).draw(in: CGRect(x: horizontalPadding, y: 36, width: textWidth, height: CGFloat(height) - 72), withAttributes: [
+                    .font: UIFont.systemFont(ofSize: fontSize, weight: .medium),
+                    .foregroundColor: UIColor.white,
+                    .paragraphStyle: paragraph
+                ])
+            } else {
+                let origFontSize = min(38.0, max(22.0, sourceSize * 1.5))
+                let transFontSize = min(40.0, max(24.0, translationSize * 1.6))
+
+                (original as NSString).draw(in: CGRect(x: horizontalPadding, y: 20, width: textWidth, height: 96), withAttributes: [
+                    .font: UIFont.systemFont(ofSize: origFontSize, weight: .regular),
+                    .foregroundColor: UIColor(white: 0.90, alpha: 1.0),
+                    .paragraphStyle: paragraph
+                ])
+                (translated as NSString).draw(in: CGRect(x: horizontalPadding, y: 122, width: textWidth, height: 98), withAttributes: [
+                    .font: UIFont.systemFont(ofSize: transFontSize, weight: .semibold),
+                    .foregroundColor: UIColor(red: 1.0, green: 0.86, blue: 0.35, alpha: 1.0),
                     .paragraphStyle: paragraph
                 ])
             }

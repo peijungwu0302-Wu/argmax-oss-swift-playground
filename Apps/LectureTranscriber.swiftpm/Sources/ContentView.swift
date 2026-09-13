@@ -457,115 +457,224 @@ struct ContentView: View {
     private var settingsSheet: some View {
         NavigationStack {
             Form {
-                Section("版本與 SideStore 更新") {
-                    Text("目前版本：" + updates.current)
-                    Toggle("開啟 App 時檢查更新", isOn: $automaticallyCheckUpdates)
-                    Button("檢查更新") { Task { await updates.check() } }.disabled(updates.checking)
-                    if let update = updates.available {
-                        Text(update.version + "：" + update.notes)
-                        Button("透過 SideStore 更新") { updates.openSideStore(source: false) }
-                            .disabled(!controller.canManageSessions || pip.active)
-                    }
-                    Button("加入 SideStore 更新來源") { updates.openSideStore(source: true) }
-                        .disabled(!controller.canManageSessions || pip.active)
-                    Text(updates.status).font(.caption)
-                    Text("由 SideStore 下載、簽署與安裝；錄音／處理期間不啟動更新。檢查更新只讀取版本資訊。")
-                        .font(.caption)
-                }
-                SigningExpirationSection()
-                Section("字幕與會議 beta") {
-                    Picker("子母畫面顯示模式", selection: $pip.displayMode) {
-                        ForEach(PiPDisplayMode.allCases) { mode in
-                            Text(mode.title).tag(mode)
-                        }
-                    }
-                    Button("開啟子母畫面字幕") { showSettings = false; pipPreview = true; controller.pipEnabled = true }
-                    Button("精簡小視窗字幕") { showSettings = false; pip.detach(); pipPreview = false; controller.pipEnabled = false; compactMode = true }
-                    Button("錄後講者分析／命名") { showSettings = false; showSpeakers = true }.disabled(!controller.canManageSessions || controller.session == nil)
-                    Text("小視窗向系統請求較小的最小尺寸；仍受 iPadOS 視窗模式限制。PiP、講者辨識需真機核對。")
-                        .font(.caption)
-                }
-                Section("文字大小") {
-                    Text("原文字幕：\(Int(captionFontSize))")
-                    Slider(value: $captionFontSize, in: 14...48, step: 1).accessibilityLabel("原文字幕大小")
-                    Text("中文翻譯：\(Int(translationFontSize))")
-                    Slider(value: $translationFontSize, in: 14...48, step: 1).accessibilityLabel("翻譯字幕大小")
-                    Text("逐字稿：\(Int(transcriptFontSize))")
-                    Slider(value: $transcriptFontSize, in: 14...36, step: 1).accessibilityLabel("逐字稿大小")
-                    Text("English caption 字幕預覽").font(.system(size: captionFontSize))
-                    Text("中文翻譯預覽").font(.system(size: translationFontSize))
-                }
-                Section("錄後重新轉錄") {
-                    Button("SenseVoice 重新轉錄（另存新課堂）") {
-                        showSettings = false
-                        Task { await controller.retranscribeRecording() }
-                    }.disabled(!controller.canManageSessions || controller.session?.parts.contains { $0.sampleCount > 0 } != true)
-                    Text("從全部已保存音訊重跑，另存課堂與音訊副本；原逐字稿、手動修改、翻譯與筆記都保留在原課堂。需要額外儲存空間，請保持 App 在前景。辨識仍可能有錯字或接縫漏字。")
-                        .font(.caption)
-                }
-                Section("語音辨識") {
-                    Picker("辨識引擎", selection: Binding(get: { controller.recognitionEngine }, set: { value in
+                // SECTION 1: 辨識核心 (置頂)
+                Section(L10n.tr("1. 辨識核心", "1. Recognition Engine")) {
+                    Picker(L10n.tr("辨識引擎", "Speech Engine"), selection: Binding(get: { controller.recognitionEngine }, set: { value in
                         controller.setRecognitionEngine(value)
                         if value == "apple" && controller.language == "auto" { controller.setLanguage("zh") }
                         if value == "sensevoice" { controller.setLanguage("auto") }
                     })) {
-                        Text("Apple 即時語音 · iPadOS 26").tag("apple")
-                        Text("WhisperKit · Turbo 等模型").tag("whisper")
-                        Text("SenseVoice Core ML · 中英混說實驗版").tag("sensevoice")
+                        Text(L10n.tr("Apple 即時語音 · iPadOS 26", "Apple Speech · Live")).tag("apple")
+                        Text(L10n.tr("WhisperKit · Turbo 等模型", "WhisperKit · Models")).tag("whisper")
+                        Text(L10n.tr("SenseVoice Core ML · 中英混說實驗版", "SenseVoice Core ML · Bilingual")).tag("sensevoice")
                     }.disabled(!controller.canManageSessions)
+
                     if controller.usesWhisper {
-                    Picker("語音模型", selection: $controller.model) {
-                        ForEach(SpeechModel.allCases) { Text($0.title).tag($0.rawValue) }
-                    }.disabled(controller.settingsLocked)
+                        Picker(L10n.tr("語音模型", "Whisper Model"), selection: $controller.model) {
+                            ForEach(SpeechModel.allCases) { Text($0.title).tag($0.rawValue) }
+                        }.disabled(controller.settingsLocked)
                     }
-                    Button { Task { await controller.prepareModel() } } label: {
-                        Label(controller.loadedModel != nil ? "模型已就緒" : "載入模型", systemImage: "arrow.down.circle")
+
+                    HStack {
+                        Text(L10n.tr("核心狀態", "Engine Status"))
+                        Spacer()
+                        Text(controller.loadedModel != nil ? L10n.tr("已載入就緒", "Loaded & Ready") : L10n.tr("尚未載入", "Not Loaded"))
+                            .font(.caption.bold())
+                            .foregroundStyle(controller.loadedModel != nil ? .green : .secondary)
+                    }
+
+                    Text(L10n.tr("純中文／英文推薦 Apple；多語言混說推薦 SenseVoice；離線錄後長文高精度推薦 WhisperKit。", "Apple Speech recommended for pure Zh/En; SenseVoice for bilingual speech; WhisperKit for high accuracy."))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+
+                // SECTION 2: 即時翻譯
+                Section(L10n.tr("2. 即時翻譯", "2. Live Translation")) {
+                    Toggle(L10n.tr("即時翻譯字幕", "Live Translation"), isOn: $controller.translationEnabled)
+                        .tint(.green)
+
+                    Picker(L10n.tr("更新頻率預設檔", "Update Frequency"), selection: $controller.translationSpeedPreset) {
+                        ForEach(TranslationSpeedPreset.allCases) { preset in
+                            Text(preset.title).tag(preset)
+                        }
+                    }
+
+                    if controller.translationSpeedPreset == .custom {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(L10n.tr("自訂更新間隔：\(String(format: "%.2f", controller.translationCustomInterval)) 秒", "Custom interval: \(String(format: "%.2f", controller.translationCustomInterval))s"))
+                                .font(.caption)
+                            Slider(value: $controller.translationCustomInterval, in: 0.20...2.00, step: 0.05)
+                        }
+                    }
+
+                    Toggle(L10n.tr("低延遲即時模式", "Low Latency Live Mode"), isOn: $controller.isLowLatencyTranslation)
+
+                    Picker(L10n.tr("翻譯服務提供者", "Translation Provider"), selection: $controller.translationProvider) {
+                        Text(L10n.tr("Apple 裝置端翻譯（內建）", "Apple On-Device (Built-in)")).tag("apple")
+                        Text(L10n.tr("Google 雲端翻譯（未啟用）", "Google Cloud (Disabled)")).tag("google")
+                        Text(L10n.tr("Microsoft 翻譯（未啟用）", "Microsoft Azure (Disabled)")).tag("microsoft")
+                    }
+
+                    if controller.translationEnabled {
+                        Text(controller.translationStatus)
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button(L10n.tr("重試翻譯", "Retry Translation")) {
+                            controller.restartTranslation()
+                        }.font(.caption)
+                    }
+
+                    Text(L10n.tr("雙軌機制：LIVE 優先更新最新語音，BACKLOG 按順序補齊已定稿段落。切換辨識引擎不影響翻譯進行。", "Dual-lane architecture: LIVE prioritizes newest draft speech, BACKLOG completes confirmed lines. Engine switches do not interrupt translation."))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+
+                // SECTION 3: 語言設定
+                Section(L10n.tr("3. 語言設定", "3. Language Settings")) {
+                    Picker(L10n.tr("App 介面語言", "App UI Language"), selection: Binding(get: { L10n.shared.appLanguage }, set: { L10n.shared.appLanguage = $0 })) {
+                        ForEach(AppLanguage.allCases) { lang in
+                            Text(lang.displayName).tag(lang)
+                        }
+                    }
+
+                    Picker(L10n.tr("辨識語言", "Recognition Language"), selection: Binding(get: {
+                        RecognitionLanguage.isMixed(controller.language) ? "mixed" : controller.language
+                    }, set: { value in
+                        controller.setLanguage(value == "mixed" && controller.language == "en" ? "mixed-en" : value)
+                    })) {
+                        Text(L10n.tr("自動", "Auto")).tag("auto")
+                        Text(L10n.tr("中英夾雜", "Mixed")).tag("mixed")
+                        Text(L10n.tr("中文", "Chinese")).tag("zh")
+                        Text(L10n.tr("英文", "English")).tag("en")
                     }.disabled(!controller.canManageSessions)
-                    Text("純中文／英文可用 Apple；中英混說可試 SenseVoice Core ML INT8（首次下載約 240 MB）。開始錄音會自動載入，之後可離線辨識。")
+
+                    Picker(L10n.tr("翻譯來源語言", "Translation Source"), selection: Binding(get: { controller.translationSource }, set: { controller.setTranslationSource($0) })) {
+                        Text(L10n.tr("英文 → 繁中", "English → Chinese")).tag("en")
+                        Text(L10n.tr("日文 → 繁中", "Japanese → Chinese")).tag("ja")
+                    }
+
+                    let cap = EngineCapability.isSupported(engine: controller.recognitionEngine, language: controller.language)
+                    Text(cap.detail)
+                        .font(.caption).foregroundStyle(cap.supported ? .secondary : .orange)
+                }
+
+                // SECTION 4: PiP 字幕
+                Section(L10n.tr("4. PiP 字幕與精簡視窗", "4. Caption PiP & Compact Window")) {
+                    Picker(L10n.tr("字幕顯示模式", "Display Mode"), selection: $pip.displayMode) {
+                        ForEach(PiPDisplayMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    Button(L10n.tr("開啟子母畫面字幕條 (1200×240)", "Start PiP Subtitle Bar (1200×240)")) {
+                        showSettings = false; pipPreview = true; controller.pipEnabled = true
+                    }
+                    Button(L10n.tr("精簡小視窗字幕", "Compact Window Subtitles")) {
+                        showSettings = false; pip.detach(); pipPreview = false; controller.pipEnabled = false; compactMode = true
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(L10n.tr("原文字幕大小：\(Int(captionFontSize))", "Original Font Size: \(Int(captionFontSize))"))
+                        Slider(value: $captionFontSize, in: 14...48, step: 1)
+                            .accessibilityLabel("原文字幕大小")
+                            .accessibilityIdentifier("原文字幕大小")
+                        Text(L10n.tr("翻譯字幕大小：\(Int(translationFontSize))", "Translation Font Size: \(Int(translationFontSize))"))
+                        Slider(value: $translationFontSize, in: 14...48, step: 1)
+                            .accessibilityLabel("翻譯字幕大小")
+                            .accessibilityIdentifier("翻譯字幕大小")
+                        Text(L10n.tr("逐字稿字級：\(Int(transcriptFontSize))", "Transcript Font Size: \(Int(transcriptFontSize))"))
+                        Slider(value: $transcriptFontSize, in: 14...36, step: 1)
+                            .accessibilityLabel("逐字稿大小")
+                            .accessibilityIdentifier("逐字稿大小")
+                    }
+                }
+
+                // SECTION 5: 模型與資源管理
+                Section(L10n.tr("5. 模型與資源管理", "5. Model & Resource Management")) {
+                    HStack {
+                        Text(L10n.tr("目前進度", "Current Progress"))
+                        Spacer()
+                        Text(controller.resourceState.description)
+                            .font(.caption)
+                            .foregroundStyle(controller.resourceState.isReady ? .green : .secondary)
+                    }
+                    if let p = controller.resourceState.progressValue {
+                        ProgressView(value: p)
+                    }
+                    Button {
+                        Task { await controller.prepareModel() }
+                    } label: {
+                        Label(controller.loadedModel != nil ? L10n.tr("模型已就緒", "Model Ready") : L10n.tr("下載 / 載入模型", "Download / Load Model"), systemImage: "arrow.down.circle")
+                    }
+                    .accessibilityLabel("載入模型")
+                    .accessibilityIdentifier("載入模型")
+                    .disabled(!controller.canManageSessions)
+
+                    Text(L10n.tr("模型統一儲存於 Application Support / SpeechModels，支援完全離線辨識。進度條依真實傳輸位元組計算，絕無假百分比。", "Models stored in Application Support / SpeechModels for offline use. Real byte-level download progress."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Section("錄音儲存品質") {
-                    Picker("儲存品質", selection: Binding(get: { controller.recordingQuality }, set: { controller.setRecordingQuality($0) })) {
+
+                // SECTION 6: 錄音品質與儲存
+                Section(L10n.tr("6. 錄音品質與儲存", "6. Audio Quality & Storage")) {
+                    Picker(L10n.tr("儲存品質", "Audio Quality"), selection: Binding(get: { controller.recordingQuality }, set: { controller.setRecordingQuality($0) })) {
                         ForEach(RecordingQuality.allCases) { Text($0.title).tag($0) }
-                    }.disabled(!controller.canManageSessions).accessibilityIdentifier("recordingQuality")
-                    Text("只影響接下來的新錄音片段。辨識使用未經 AAC 壓縮的 16 kHz 單聲道音訊；停止並補完辨識後才壓縮保存。")
+                    }
+                    .accessibilityIdentifier("recordingQuality")
+                    .disabled(!controller.canManageSessions)
+
+                    Text(L10n.tr("只影響接下來的新錄音片段。辨識使用未經 AAC 壓縮的 16 kHz 單聲道音訊；停止並補完辨識後才壓縮保存。", "Affects new segments. Raw 16 kHz PCM used during capture; compressed upon completion."))
                         .font(.caption)
-                    Text("錄音中暫存約 115 MB／小時，壓縮時還需要成品空間。原本的錄音不會自動轉檔；中斷或壓縮失敗時保留原始音訊。")
-                        .font(.caption).foregroundStyle(.secondary)
                 }
-                Section("課堂專有名詞") {
-                    TextField("例如：CRISPR、Cas9、gene editing", text: $controller.vocabulary, axis: .vertical)
+
+                // SECTION 7: 專有名詞提示
+                Section(L10n.tr("7. 專有名詞自訂詞庫", "7. Vocabulary & Prompt")) {
+                    TextField(L10n.tr("例如：CRISPR、Cas9、gene editing", "e.g. CRISPR, Cas9, gene editing"), text: $controller.vocabulary, axis: .vertical)
                         .lineLimit(3...5).disabled(controller.settingsLocked || !controller.usesWhisper)
                         .onChange(of: controller.vocabulary) { value in
                             if value.count > 500 { controller.vocabulary = String(value.prefix(500)) }
                         }
-                    Text("目前專有名詞提示只用於 WhisperKit；不能保證人名與術語正確。").font(.caption)
-                }
-                Section("辨識狀態") {
-                    if let seconds = controller.lastDecodeSeconds {
-                        Text(String(format: "本輪辨識 %.1f 秒", seconds))
-                        Text(String(format: "草稿音訊落後 %.1f 秒", controller.draftBehindSeconds))
-                    }
-                    Text("尚未定稿 \(Int(controller.pendingSeconds)) 秒")
-                    if controller.usesSenseVoice && !controller.senseVoiceInputStatus.isEmpty {
-                        Text(controller.senseVoiceInputStatus).font(.caption)
-                    }
-                    Text(controller.backgroundDescription)
+                    Text(L10n.tr("自訂專有名詞提示 WhisperKit 解碼偏好，最多 500 字元。", "Custom prompt words hinting WhisperKit decoding, max 500 characters."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Section("翻譯來源語言") {
-                    Picker("翻成繁體中文", selection: Binding(get: { controller.translationSource }, set: { controller.setTranslationSource($0) })) {
-                        Text("英文 → 中文（中英混說保留中文）").tag("en")
-                        Text("日文 → 中文").tag("ja")
+
+                // SECTION 8: 智慧筆記
+                Section(L10n.tr("8. 智慧筆記與 AI 整理", "8. Smart Notes & Summary")) {
+                    Text(L10n.tr("AI 整理使用 iPadOS 26 的 Apple Intelligence。若未啟用將產生具時間戳之原文整理。", "AI notes use on-device Apple Intelligence or structured timeline outline."))
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button(L10n.tr("SenseVoice 重新轉錄（另存新課堂）", "Retranscribe with SenseVoice (Save As New)")) {
+                        showSettings = false
+                        Task { await controller.retranscribeRecording() }
+                    }.disabled(!controller.canManageSessions || controller.session?.parts.contains { $0.sampleCount > 0 } != true)
+                }
+
+                // SECTION 9: 側載簽名維護
+                Section(L10n.tr("9. 側載簽名維護", "9. SideStore Self-Refresh")) {
+                    SigningExpirationSection()
+                }
+
+                // SECTION 10: 關於與版本
+                Section(L10n.tr("10. 關於與版本更新", "10. About & Version")) {
+                    Text(L10n.tr("目前版本：", "Current Version: ") + updates.current)
+                    Toggle(L10n.tr("開啟 App 時檢查更新", "Check updates on launch"), isOn: $automaticallyCheckUpdates)
+                    Button(L10n.tr("檢查更新", "Check for Updates")) { Task { await updates.check() } }
+                        .accessibilityLabel("檢查更新")
+                        .accessibilityIdentifier("檢查更新")
+                        .disabled(updates.checking)
+                    if let update = updates.available {
+                        Text(update.version + "：" + update.notes)
+                        Button(L10n.tr("透過 SideStore 更新", "Update via SideStore")) { updates.openSideStore(source: false) }
+                            .disabled(!controller.canManageSessions || pip.active)
                     }
-                    Text("來源切換後會重新翻譯已有段落；語音辨識引擎不變。日文可用 SenseVoice 自動辨識。").font(.caption)
+                    Button(L10n.tr("加入 SideStore 更新來源", "Add SideStore Source")) { updates.openSideStore(source: true) }
+                        .disabled(!controller.canManageSessions || pip.active)
+                    Text(updates.status).font(.caption)
+                    Text(L10n.tr("由 SideStore 下載、簽署與安裝；錄音／處理期間不啟動更新。", "Downloaded, signed, and installed via SideStore."))
+                        .font(.caption).foregroundStyle(.secondary)
                 }
-                Section("會議整理") {
-                    Text("AI 整理使用 iPadOS 26 的 Apple Intelligence。請在系統設定啟用並完成模型下載；若不可用，會產生保留時間戳的原文整理。")
-                        .font(.callout)
+            }
+            .navigationTitle(L10n.tr("錄音設定", "Settings"))
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(L10n.tr("完成", "Done")) { showSettings = false }
+                        .accessibilityLabel("完成")
+                        .accessibilityIdentifier("完成")
                 }
-            }.navigationTitle("錄音設定")
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showSettings = false } } }
+            }
         }
     }
 
@@ -626,120 +735,155 @@ struct ContentView: View {
         }
     }
 
+    private var groupedHistory: [(title: String, sessions: [LectureSession])] {
+        let calendar = Calendar.current
+        var today: [LectureSession] = []
+        var yesterday: [LectureSession] = []
+        var earlier: [LectureSession] = []
+
+        for session in filteredHistory {
+            if calendar.isDateInToday(session.createdAt) {
+                today.append(session)
+            } else if calendar.isDateInYesterday(session.createdAt) {
+                yesterday.append(session)
+            } else {
+                earlier.append(session)
+            }
+        }
+
+        var result: [(title: String, sessions: [LectureSession])] = []
+        if !today.isEmpty {
+            result.append((L10n.tr("今天", "Today"), today))
+        }
+        if !yesterday.isEmpty {
+            result.append((L10n.tr("昨天", "Yesterday"), yesterday))
+        }
+        if !earlier.isEmpty {
+            result.append((L10n.tr("更早之前", "Earlier"), earlier))
+        }
+        return result
+    }
+
     private var historySheet: some View {
         NavigationStack {
             List {
                 if filteredHistory.isEmpty {
-                    Text(controller.history.isEmpty ? "還沒有已儲存的課堂" : "沒有符合搜尋的課堂")
+                    Text(controller.history.isEmpty ? L10n.tr("還沒有已儲存的課堂", "No saved lectures yet") : L10n.tr("沒有符合搜尋的課堂", "No matching lectures found"))
+                        .accessibilityIdentifier("還沒有已儲存的課堂")
                         .foregroundStyle(.secondary)
                 }
-                ForEach(filteredHistory) { session in
-                    NavigationLink {
-                        LectureDetailView(controller: controller, session: session)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(session.title)
-                                .font(.headline)
-                                .foregroundStyle(.primary)
+                ForEach(groupedHistory, id: \.title) { group in
+                    Section(header: Text(group.title).font(.subheadline.bold()).foregroundStyle(gold)) {
+                        ForEach(group.sessions) { session in
+                            NavigationLink {
+                                LectureDetailView(controller: controller, session: session)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(session.title)
+                                        .font(.headline)
+                                        .foregroundStyle(.primary)
 
-                            HStack(spacing: 8) {
-                                Text(session.createdAt.formatted(date: .numeric, time: .shortened))
-                                Text("·")
-                                Text(TranscriptExport.clock(session.duration))
-                                Text("·")
-                                Text("音訊 " + controller.audioSize(session))
-                            }
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                                    HStack(spacing: 8) {
+                                        Text(session.createdAt.formatted(date: .numeric, time: .shortened))
+                                        Text("·")
+                                        Text(TranscriptExport.clock(session.duration))
+                                        Text("·")
+                                        Text(L10n.tr("音訊 ", "Audio ") + controller.audioSize(session))
+                                    }
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
 
-                            if !session.transcriptVersions.isEmpty {
-                                ScrollView(.horizontal, showsIndicators: false) {
-                                    HStack(spacing: 4) {
-                                        ForEach(session.transcriptVersions) { v in
-                                            HStack(spacing: 2) {
-                                                if v.isPreferred {
-                                                    Image(systemName: "star.fill")
-                                                        .font(.system(size: 8))
-                                                }
-                                                Text(v.name)
-                                            }
-                                            .font(.system(size: 11, weight: v.isPreferred ? .bold : .regular))
+                                    HStack(spacing: 6) {
+                                        let engineName = session.recognitionEngine ?? "whisper"
+                                        Text(engineName == "apple" ? "Apple Speech" : (engineName == "sensevoice" ? "SenseVoice" : "Whisper"))
+                                            .font(.system(size: 10, weight: .semibold))
                                             .padding(.horizontal, 6)
                                             .padding(.vertical, 2)
-                                            .background(v.isPreferred ? gold.opacity(0.18) : Color.secondary.opacity(0.12))
-                                            .foregroundStyle(v.isPreferred ? gold : Color.primary)
+                                            .background(Color.blue.opacity(0.12))
+                                            .foregroundStyle(Color.blue)
                                             .clipShape(Capsule())
+
+                                        if !session.transcriptVersions.isEmpty {
+                                            Text("\(session.transcriptVersions.count) " + L10n.tr("版本", "versions"))
+                                                .font(.system(size: 10))
+                                                .padding(.horizontal, 5)
+                                                .padding(.vertical, 2)
+                                                .background(gold.opacity(0.15))
+                                                .foregroundStyle(gold)
+                                                .clipShape(Capsule())
                                         }
                                     }
+
+                                    if let firstLine = session.lines.first?.text, !firstLine.isEmpty {
+                                        Text(firstLine)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(2)
+                                    }
+
+                                    if session.hasPendingAudio {
+                                        Label(L10n.tr("有錄音等待補辨識", "Audio pending transcription"), systemImage: "arrow.clockwise")
+                                            .font(.caption)
+                                            .foregroundStyle(.orange)
+                                    }
+                                }
+                                .padding(.vertical, 4)
+                            }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                Button(L10n.tr("刪除", "Delete"), role: .destructive) {
+                                    pendingDeletion = session
+                                }
+                                Button(L10n.tr("重命名", "Rename")) {
+                                    renamingSession = session
+                                    renameTitle = session.title
+                                    showRenameAlert = true
+                                }
+                                .tint(.blue)
+                            }
+                            .contextMenu {
+                                Button {
+                                    controller.open(session)
+                                    showHistory = false
+                                } label: {
+                                    Label(L10n.tr("載入繼續錄音", "Resume in Main"), systemImage: "mic")
+                                }
+                                Button {
+                                    renamingSession = session
+                                    renameTitle = session.title
+                                    showRenameAlert = true
+                                } label: {
+                                    Label(L10n.tr("重新命名", "Rename"), systemImage: "pencil")
+                                }
+                                Button(role: .destructive) {
+                                    pendingDeletion = session
+                                } label: {
+                                    Label(L10n.tr("刪除課堂", "Delete"), systemImage: "trash")
                                 }
                             }
-
-                            let lineCount = session.lines.count
-                            let charCount = session.lines.reduce(0) { $0 + $1.text.count }
-                            let versionLabel = session.preferredVersion != nil ? "（\(session.preferredVersion!.name)）" : ""
-                            Text("\(lineCount) 行 · \(charCount) 字 \(versionLabel)")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-
-                            if session.hasPendingAudio {
-                                Label("有錄音等待補辨識", systemImage: "arrow.clockwise")
-                                    .font(.caption)
-                                    .foregroundStyle(.orange)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button("刪除", role: .destructive) {
-                            pendingDeletion = session
-                        }
-                        Button("重命名") {
-                            renamingSession = session
-                            renameTitle = session.title
-                            showRenameAlert = true
-                        }
-                        .tint(.blue)
-                    }
-                    .contextMenu {
-                        Button {
-                            controller.open(session)
-                            showHistory = false
-                        } label: {
-                            Label("載入繼續錄音", systemImage: "mic")
-                        }
-                        Button {
-                            renamingSession = session
-                            renameTitle = session.title
-                            showRenameAlert = true
-                        } label: {
-                            Label("重新命名", systemImage: "pencil")
-                        }
-                        Button(role: .destructive) {
-                            pendingDeletion = session
-                        } label: {
-                            Label("刪除課堂", systemImage: "trash")
+                            .disabled(!controller.canManageSessions)
                         }
                     }
-                    .disabled(!controller.canManageSessions)
                 }
             }
-            .searchable(text: $historySearch, prompt: "搜尋課堂標題或逐字稿")
-            .navigationTitle("本機課堂")
+            .searchable(text: $historySearch, prompt: L10n.tr("搜尋課堂標題或逐字稿", "Search title or transcript"))
+            .navigationTitle(L10n.tr("本機課堂", "Library"))
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button {
                         importAfterHistory = true
                         showHistory = false
                     } label: {
-                        Label("匯入音訊", systemImage: "square.and.arrow.down")
+                        Label(L10n.tr("匯入音訊", "Import Audio"), systemImage: "square.and.arrow.down")
                             .font(.body.bold())
                     }
                     .accessibilityIdentifier("匯入音訊")
-                    .accessibilityLabel("匯入音訊")
+                    .accessibilityLabel(L10n.tr("匯入音訊", "Import Audio"))
                     .disabled(!controller.canManageSessions)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { showHistory = false }
+                    Button(L10n.tr("完成", "Done")) { showHistory = false }
+                        .accessibilityLabel("完成")
+                        .accessibilityIdentifier("完成")
                 }
             }
             .alert("重新命名課堂", isPresented: $showRenameAlert) {

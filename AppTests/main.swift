@@ -377,3 +377,25 @@ check(exportWhisper.contains("這是 Whisper v3 高精準辨識的第一行"), "
 
 print("PASS: v1.7.0 multi-version transcript, legacy migration, single audio preservation and version export")
 
+// v1.8.0 TranslationVersion decoupled architecture checks
+let tv1 = TranslationVersion(
+    name: "Apple 離線繁中",
+    provider: "apple",
+    sourceLocale: "en",
+    targetLocale: "zh-Hant",
+    lines: [TranslatedLine(id: firstVer.lines[0].id, source: firstVer.lines[0].text, text: "這是 1.8.0 獨立翻譯版本的第一行")],
+    isPreferred: true
+)
+var v180Session = multiVersionSession
+if !v180Session.transcriptVersions.isEmpty {
+    v180Session.transcriptVersions[0].translationVersions = [tv1]
+    v180Session.transcriptVersions[0].preferredTranslationVersionID = tv1.id
+}
+let encodedV180 = try JSONEncoder().encode(v180Session)
+let decodedV180 = try JSONDecoder().decode(LectureSession.self, from: encodedV180)
+check(decodedV180.transcriptVersions[0].translationVersions?.count == 1, "Decoded session retains translationVersions")
+check(decodedV180.transcriptVersions[0].activeTranslationVersion?.name == "Apple 離線繁中", "Active translation version matches preferred")
+check(decodedV180.transcriptVersions[0].translations?.first?.text == "這是 1.8.0 獨立翻譯版本的第一行", "Legacy translations property seamlessly returns active translation version lines")
+
+print("PASS: v1.8.0 TranslationVersion decoupled architecture and backward/forward compatibility")
+

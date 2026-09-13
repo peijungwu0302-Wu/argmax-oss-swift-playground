@@ -19,8 +19,18 @@ actor WhisperEngine {
     private var currentModel: String?
     func unload() { kit = nil; currentModel = nil }
     func supportsWordTiming() -> Bool { kit?.textDecoder.supportsWordTimestamps ?? false }
+
     func load(_ model: String, progress: @escaping @Sendable (String, Double?) -> Void) async throws {
-        if currentModel == model, kit != nil { return }
+        try await load(model, progressState: { state in
+            progress(state.description, state.progressValue)
+        })
+    }
+
+    func load(_ model: String, progressState: @escaping @Sendable (ResourceState) -> Void) async throws {
+        if currentModel == model, kit != nil {
+            progressState(.ready)
+            return
+        }
         kit = nil; currentModel = nil
         let base = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             .appendingPathComponent("SpeechModels", isDirectory: true)
@@ -31,19 +41,21 @@ actor WhisperEngine {
            FileManager.default.fileExists(atPath: base.appendingPathComponent(relative).path) {
             folder = base.appendingPathComponent(relative)
         } else {
-            progress("下載語音模型，首次使用需要網路…", 0)
+            progressState(.downloading(bytesReceived: 0, totalBytes: nil, progress: 0))
             folder = try await WhisperKit.download(variant: model, downloadBase: base) { download in
-                progress("正在下載語音模型…", download.fractionCompleted)
+                let received = download.completedUnitCount
+                let total = download.totalUnitCount > 0 ? download.totalUnitCount : nil
+                progressState(.downloading(bytesReceived: received, totalBytes: total, progress: download.fractionCompleted))
             }
             let relative = String(folder.path.dropFirst(base.path.count + 1))
             try relative.write(to: cacheFile, atomically: true, encoding: .utf8)
         }
-        progress("正在準備裝置上的模型，首次可能需要幾分鐘…", nil)
+        progressState(.compiling(progress: 0.5))
         let config = WhisperKitConfig(modelFolder: folder.path, tokenizerFolder: base,
             verbose: false, prewarm: true, load: true, download: false)
         kit = try await WhisperKit(config)
         currentModel = model
-        progress("模型已就緒", 1)
+        progressState(.ready)
     }
     func transcribe(file: URL, start: Int, count: Int, offset: Double, language: String,
                     vocabulary: String, final: Bool,

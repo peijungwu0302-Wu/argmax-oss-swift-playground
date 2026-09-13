@@ -48,8 +48,8 @@ final class AudioAndCaptionTests: XCTestCase {
     @MainActor
     func testUniversalInstallConfiguration() {
         XCTAssertEqual(Bundle.main.bundleIdentifier, "com.peijungwu0302.lecturetranscriber")
-        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String, "1.7.0")
-        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "12")
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String, "1.8.0")
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "13")
         XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "UIDeviceFamily") as? [Int], [1, 2])
         XCTAssertTrue(LectureController().supportsBackgroundAudio)
         XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "UIRequiresFullScreen") as? Bool, false)
@@ -261,5 +261,70 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertEqual(profile?.uuid, "12345678-ABCD-EF01-2345-6789ABCDEF01")
         XCTAssertNotNil(profile?.expirationDate)
         XCTAssertNotNil(profile?.creationDate)
+    }
+
+    func testResourceStateByteProgressFormatting() {
+        let notDownloaded = ResourceState.notDownloaded
+        XCTAssertEqual(notDownloaded.description, "尚未下載")
+        XCTAssertNil(notDownloaded.progressValue)
+
+        let downloadingWithTotal = ResourceState.downloading(bytesReceived: 52_428_800, totalBytes: 209_715_200, progress: 0.25)
+        XCTAssertEqual(downloadingWithTotal.description, "下載中：50.0 MB / 200.0 MB (25%)")
+        XCTAssertEqual(downloadingWithTotal.progressValue, 0.25)
+
+        let downloadingWithoutTotal = ResourceState.downloading(bytesReceived: 31_457_280, totalBytes: nil, progress: 0)
+        XCTAssertEqual(downloadingWithoutTotal.description, "下載中：已接收 30.0 MB")
+
+        let ready = ResourceState.ready
+        XCTAssertTrue(ready.isReady)
+        XCTAssertEqual(ready.progressValue, 1.0)
+    }
+
+    func testTranslationVersionPersistenceRoundtrip() throws {
+        let line = TranscriptLine(start: 1.0, end: 3.5, text: "Artificial Intelligence in Healthcare")
+        let transLine = TranslatedLine(id: line.id, source: line.text, text: "醫療領域的人工智慧")
+        let tv = TranslationVersion(
+            name: "Apple 離線即時翻譯",
+            provider: "apple",
+            sourceLocale: "en",
+            targetLocale: "zh-Hant",
+            lines: [transLine],
+            isPreferred: true
+        )
+        let transcriptVersion = TranscriptVersion(
+            name: "Whisper v3 轉錄",
+            engine: .whisper,
+            language: "en",
+            lines: [line],
+            translations: [transLine],
+            source: .retranscription,
+            isPreferred: true,
+            translationVersions: [tv],
+            preferredTranslationVersionID: tv.id
+        )
+        var session = LectureSession(
+            title: "生醫 AI 專題",
+            language: "en",
+            transcriptVersions: [transcriptVersion],
+            preferredVersionID: transcriptVersion.id
+        )
+
+        let data = try JSONEncoder().encode(session)
+        let decoded = try JSONDecoder().decode(LectureSession.self, from: data)
+
+        XCTAssertEqual(decoded.title, "生醫 AI 專題")
+        XCTAssertEqual(decoded.transcriptVersions.count, 1)
+        let decodedVer = decoded.transcriptVersions[0]
+        XCTAssertEqual(decodedVer.translationVersions?.count, 1)
+        XCTAssertEqual(decodedVer.translationVersions?[0].lines.first?.text, "醫療領域的人工智慧")
+        XCTAssertEqual(decoded.translation(for: line)?.text, "醫療領域的人工智慧")
+        XCTAssertEqual(decoded.translations?.first?.text, "醫療領域的人工智慧")
+    }
+
+    func testTranslationSpeedPresets() {
+        XCTAssertEqual(TranslationSpeedPreset.ultraFast.defaultInterval, 0.25)
+        XCTAssertEqual(TranslationSpeedPreset.fast.defaultInterval, 0.40)
+        XCTAssertEqual(TranslationSpeedPreset.balanced.defaultInterval, 0.70)
+        XCTAssertEqual(TranslationSpeedPreset.stable.defaultInterval, 1.00)
     }
 }

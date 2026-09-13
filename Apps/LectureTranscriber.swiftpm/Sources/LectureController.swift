@@ -32,6 +32,31 @@ final class LectureController: ObservableObject {
     @Published var translationDraftSource = ""
     @Published var translationGeneration = UUID()
     @Published var translationDraftKey: DraftTranslationKey?
+    @Published var translationSpeedPreset: TranslationSpeedPreset = {
+        if let raw = UserDefaults.standard.string(forKey: "translationSpeedPreset"),
+           let preset = TranslationSpeedPreset(rawValue: raw) {
+            return preset
+        }
+        return .fast
+    }() {
+        didSet {
+            UserDefaults.standard.set(translationSpeedPreset.rawValue, forKey: "translationSpeedPreset")
+        }
+    }
+    @Published var translationCustomInterval: Double = {
+        let val = UserDefaults.standard.double(forKey: "translationCustomInterval")
+        return val >= 0.20 && val <= 2.00 ? val : 0.40
+    }() {
+        didSet {
+            UserDefaults.standard.set(translationCustomInterval, forKey: "translationCustomInterval")
+        }
+    }
+    var translationInterval: TimeInterval {
+        translationSpeedPreset == .custom ? translationCustomInterval : translationSpeedPreset.defaultInterval
+    }
+    @Published var translationProvider: String = "apple"
+    @Published var isLowLatencyTranslation: Bool = true
+    @Published var resourceState: ResourceState = .notDownloaded
     @Published var recordingQuality = RecordingQuality(rawValue: UserDefaults.standard.string(forKey: "recordingQuality") ?? "compact") ?? .compact
     @Published var liveDraftStart: Double = 0
     @Published private(set) var pendingAppleLanguage: String?
@@ -144,7 +169,9 @@ final class LectureController: ObservableObject {
     }
     func setLanguage(_ value: String) {
         guard canManageSessions else { return }
-        language = value; session?.language = value; loadedModel = nil; restartTranslation(); persist()
+        language = value; session?.language = value; loadedModel = nil
+        liveDraft = ""; provisional = []
+        persist()
     }
     func selectAppleLanguage(_ value: String) {
         guard usesAppleSpeech, value == "zh" || value == "en", !isBusy,
@@ -169,7 +196,9 @@ final class LectureController: ObservableObject {
     func setRecognitionEngine(_ value: String) {
         guard canManageSessions else { return }
         recognitionEngine = value; session?.recognitionEngine = value; loadedModel = nil
-        restartTranslation()
+        // Root cause fix: Never restart translation or bump generation on engine switch!
+        // Translation session stays alive and receives new text smoothly.
+        liveDraft = ""; provisional = []
         persist()
     }
 
@@ -184,33 +213,41 @@ final class LectureController: ObservableObject {
         if usesAppleSpeech {
             guard #available(iOS 26.0, *) else { throw LectureError.message("Apple 即時引擎需要 iPadOS 26；請在錄音設定改用 WhisperKit。") }
             status = "正在準備 Apple 語音模型，首次需下載語言資源…"
+            resourceState = .downloading(bytesReceived: 0, totalBytes: nil, progress: 0.1)
             await engine.unload(); await senseVoice.unload()
             if appleSpeech == nil { appleSpeech = AppleSpeechEngine() }
             try await appleSpeech?.prepare(language: session?.language ?? language)
             loadedModel = "apple"; status = "Apple 即時語音已就緒"; progress = nil
+            resourceState = .ready
             return
         }
         await appleSpeech?.cancel(); appleSpeech = nil
         if usesSenseVoice {
             await engine.unload()
-            try await senseVoice.load(language: session?.language ?? language) { [weak self] text, fraction in
+            try await senseVoice.load(language: session?.language ?? language) { [weak self] state in
                 Task { @MainActor in
                     guard let self, self.isBusy else { return }
-                    self.status = text; self.progress = fraction
+                    self.resourceState = state
+                    self.status = state.description
+                    self.progress = state.progressValue
                 }
             }
             loadedModel = "sensevoice"; status = "SenseVoice 已就緒 · 中英混說實驗版"; progress = nil
+            resourceState = .ready
             return
         }
         await senseVoice.unload()
         status = "正在載入模型…"
-        try await engine.load(name) { [weak self] text, fraction in
+        try await engine.load(name) { [weak self] state in
             Task { @MainActor in
                 guard let self, self.isBusy else { return }
-                self.status = text; self.progress = fraction
+                self.resourceState = state
+                self.status = state.description
+                self.progress = state.progressValue
             }
         }
         loadedModel = name; status = "模型已就緒"; progress = nil
+        resourceState = .ready
     }
 
     func start() async {
@@ -727,6 +764,24 @@ final class LectureController: ObservableObject {
         }
     }
 
+    func setPreferredTranslationVersion(sessionID: UUID, versionID: UUID, translationVersionID: UUID) {
+        guard var current = (session?.id == sessionID ? session : history.first(where: { $0.id == sessionID })) else { return }
+        guard let idx = current.transcriptVersions.firstIndex(where: { $0.id == versionID }) else { return }
+        current.transcriptVersions[idx].preferredTranslationVersionID = translationVersionID
+        if let tvCount = current.transcriptVersions[idx].translationVersions?.count, tvCount > 0 {
+            for i in 0..<tvCount {
+                current.transcriptVersions[idx].translationVersions?[i].isPreferred = (current.transcriptVersions[idx].translationVersions?[i].id == translationVersionID)
+            }
+        }
+        do {
+            try store?.save(current)
+            if session?.id == sessionID { session = current }
+            reloadHistory()
+        } catch {
+            fail("無法切換翻譯版本", error)
+        }
+    }
+
     func deleteTranscriptVersion(sessionID: UUID, versionID: UUID) {
         guard canManageSessions, var current = (session?.id == sessionID ? session : history.first(where: { $0.id == sessionID })) else { return }
         guard current.transcriptVersions.count > 1 else {
@@ -926,7 +981,6 @@ final class LectureController: ObservableObject {
     }
     func foregrounded() {
         isInForeground = true
-        if translationEnabled { restartTranslation() }
         if isRecording && worker == nil {
             worker = Task { [weak self] in
                 guard let self else { return }

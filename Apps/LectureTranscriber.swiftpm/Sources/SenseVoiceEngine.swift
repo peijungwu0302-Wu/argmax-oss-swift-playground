@@ -2,6 +2,37 @@ import Foundation
 import CryptoKit
 @preconcurrency import CoreML
 
+private final class SenseVoiceDownloadDelegate: NSObject, URLSessionDownloadDelegate, Sendable {
+    private let onProgress: @Sendable (Int64, Int64) -> Void
+    private let onFinish: @Sendable (Result<URL, Error>) -> Void
+
+    init(onProgress: @escaping @Sendable (Int64, Int64) -> Void,
+         onFinish: @escaping @Sendable (Result<URL, Error>) -> Void) {
+        self.onProgress = onProgress
+        self.onFinish = onFinish
+    }
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
+        onProgress(totalBytesWritten, totalBytesExpectedToWrite)
+    }
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        do {
+            try FileManager.default.moveItem(at: location, to: temp)
+            onFinish(.success(temp))
+        } catch {
+            onFinish(.failure(error))
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error {
+            onFinish(.failure(error))
+        }
+    }
+}
+
 // Core ML pipeline adapted from FluidInference/FluidAudio (Apache-2.0).
 // See THIRD-PARTY-NOTICES.txt. No sherpa/ONNX binary package or unzip process.
 actor SenseVoiceEngine {
@@ -36,9 +67,32 @@ actor SenseVoiceEngine {
 
     func unload() { preprocessor = nil; encoder = nil; vocabulary = []; buckets = [] }
 
+    private func downloadFile(from url: URL, onBytes: @escaping @Sendable (Int64, Int64) -> Void) async throws -> URL {
+        try await withCheckedThrowingContinuation { continuation in
+            let delegate = SenseVoiceDownloadDelegate(
+                onProgress: onBytes,
+                onFinish: { result in
+                    continuation.resume(with: result)
+                }
+            )
+            let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+            let task = session.downloadTask(with: url)
+            task.resume()
+        }
+    }
+
     func load(language: String, progress: @escaping @Sendable (String, Double?) -> Void) async throws {
+        try await load(language: language, progressState: { state in
+            progress(state.description, state.progressValue)
+        })
+    }
+
+    func load(language: String, progressState: @escaping @Sendable (ResourceState) -> Void) async throws {
         selectedLanguage = languageIndex(language)
-        if preprocessor != nil, encoder != nil { return }
+        if preprocessor != nil, encoder != nil {
+            progressState(.ready)
+            return
+        }
         let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
                                                appropriateFor: nil, create: true)
             .appendingPathComponent("SpeechModels/SenseVoice-CoreML-" + Self.revision, isDirectory: true)
@@ -51,14 +105,17 @@ actor SenseVoiceEngine {
             try Task.checkCancellation()
             let destination = root.appendingPathComponent(path)
             if !Self.matches(destination, size: size, digest: digest) {
-                progress("下載 SenseVoice Core ML（約 \(total / 1_000_000) MB），請保持 App 開啟…", Double(completed) / Double(total))
                 let address = "https://huggingface.co/FluidInference/sensevoice-small-coreml/resolve/\(Self.revision)/\(path)"
                 guard let url = URL(string: address) else { throw LectureError.message("模型網址無效。") }
-                let (temporary, response) = try await URLSession.shared.download(from: url)
+                let currentCompleted = completed
+                let temporary = try await downloadFile(from: url) { bytesWritten, _ in
+                    let received = Int64(currentCompleted) + bytesWritten
+                    let fraction = Double(received) / Double(total)
+                    progressState(.downloading(bytesReceived: received, totalBytes: Int64(total), progress: fraction))
+                }
                 defer { try? FileManager.default.removeItem(at: temporary) }
                 try Task.checkCancellation()
-                guard (response as? HTTPURLResponse)?.statusCode == 200,
-                      Self.matches(temporary, size: size, digest: digest) else {
+                guard Self.matches(temporary, size: size, digest: digest) else {
                     throw LectureError.message("SenseVoice 模型下載或校驗未完成，請重新載入；已完成的檔案會保留。")
                 }
                 try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -66,8 +123,10 @@ actor SenseVoiceEngine {
                 try FileManager.default.moveItem(at: temporary, to: destination)
             }
             completed += size
+            let fraction = Double(completed) / Double(total)
+            progressState(.downloading(bytesReceived: Int64(completed), totalBytes: Int64(total), progress: fraction))
         }
-        progress("正在準備 SenseVoice Core ML，首次載入可能需要幾分鐘…", nil)
+        progressState(.compiling(progress: 0.3))
         let front = MLModelConfiguration(); front.computeUnits = .cpuOnly
         let inference = MLModelConfiguration()
         #if targetEnvironment(simulator) || os(macOS)
@@ -76,20 +135,19 @@ actor SenseVoiceEngine {
         inference.computeUnits = .cpuAndNeuralEngine
         #endif
         let pre = try await MLModel.load(contentsOf: root.appendingPathComponent("SenseVoicePreprocessor.mlmodelc"), configuration: front)
+        progressState(.compiling(progress: 0.7))
         let enc = try await MLModel.load(contentsOf: root.appendingPathComponent(encoderName), configuration: inference)
         let vocab = try JSONDecoder().decode([String].self, from: Data(contentsOf: root.appendingPathComponent("vocab.json")))
         guard vocab.count == 25055,
               let constraint = enc.modelDescription.inputDescriptionsByName["speech"]?.multiArrayConstraint else {
             throw LectureError.message("SenseVoice 模型介面或詞表不相符。")
         }
-        // Read shapes from the actual artifact: the FP32 fallback has a fixed
-        // 1800-frame input, unlike the short enumerated INT8 buckets.
         let enumerated = constraint.shapeConstraint.enumeratedShapes
         let shapes = enumerated.isEmpty ? [constraint.shape] : enumerated
         let supported = shapes.filter { $0.count == 3 && $0[2].intValue == 560 }.map { $0[1].intValue }.sorted()
         guard !supported.isEmpty else { throw LectureError.message("SenseVoice 輸入尺寸不受支援。") }
         preprocessor = pre; encoder = enc; vocabulary = vocab; buckets = supported
-        progress("SenseVoice Core ML 已就緒", 1)
+        progressState(.ready)
     }
 
     func transcribe(_ samples: [Float], owned: Range<Int>? = nil) throws -> String {

@@ -201,6 +201,57 @@ enum TranscriptSource: String, Codable, Sendable, Equatable {
     case legacy = "legacy"
 }
 
+struct TranslationVersion: Codable, Identifiable, Sendable, Equatable {
+    var id: UUID = UUID()
+    var createdAt: Date = Date()
+    var name: String
+    var provider: String // "apple", "google", "microsoft"
+    var sourceLocale: String // "en", "ja", etc.
+    var targetLocale: String // "zh-Hant"
+    var lines: [TranslatedLine] = []
+    var isPreferred: Bool = false
+
+    enum CodingKeys: String, CodingKey {
+        case id, createdAt, name, provider, sourceLocale, targetLocale, lines, isPreferred
+    }
+
+    init(id: UUID = UUID(),
+         createdAt: Date = Date(),
+         name: String,
+         provider: String = "apple",
+         sourceLocale: String = "en",
+         targetLocale: String = "zh-Hant",
+         lines: [TranslatedLine] = [],
+         isPreferred: Bool = false) {
+        self.id = id
+        self.createdAt = createdAt
+        self.name = name
+        self.provider = provider
+        self.sourceLocale = sourceLocale
+        self.targetLocale = targetLocale
+        self.lines = lines
+        self.isPreferred = isPreferred
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        if let d = try? container.decode(Date.self, forKey: .createdAt) {
+            self.createdAt = d
+        } else if let s = try? container.decode(String.self, forKey: .createdAt), let d = ISO8601DateFormatter().date(from: s) {
+            self.createdAt = d
+        } else {
+            self.createdAt = Date()
+        }
+        self.name = try container.decodeIfPresent(String.self, forKey: .name) ?? "即時翻譯"
+        self.provider = try container.decodeIfPresent(String.self, forKey: .provider) ?? "apple"
+        self.sourceLocale = try container.decodeIfPresent(String.self, forKey: .sourceLocale) ?? "en"
+        self.targetLocale = try container.decodeIfPresent(String.self, forKey: .targetLocale) ?? "zh-Hant"
+        self.lines = try container.decodeIfPresent([TranslatedLine].self, forKey: .lines) ?? []
+        self.isPreferred = try container.decodeIfPresent(Bool.self, forKey: .isPreferred) ?? false
+    }
+}
+
 struct TranscriptVersion: Codable, Identifiable, Sendable, Equatable {
     var id: UUID = UUID()
     var createdAt: Date = Date()
@@ -210,14 +261,60 @@ struct TranscriptVersion: Codable, Identifiable, Sendable, Equatable {
     var language: String
     var vocabulary: String? = nil
     var lines: [TranscriptLine] = []
-    var translations: [TranslatedLine]? = nil
     var translationSource: String? = nil
     var source: TranscriptSource
     var isPreferred: Bool = false
+    var translationVersions: [TranslationVersion]? = nil
+    var preferredTranslationVersionID: UUID? = nil
+
+    private var _legacyTranslations: [TranslatedLine]? = nil
+
+    var translations: [TranslatedLine]? {
+        get {
+            if let active = activeTranslationVersion {
+                return active.lines.isEmpty ? nil : active.lines
+            }
+            return _legacyTranslations
+        }
+        set {
+            _legacyTranslations = newValue
+            if let newValue {
+                if translationVersions == nil || translationVersions!.isEmpty {
+                    let tv = TranslationVersion(
+                        id: UUID(),
+                        createdAt: Date(),
+                        name: "即時翻譯",
+                        provider: "apple",
+                        sourceLocale: translationSource ?? "en",
+                        targetLocale: "zh-Hant",
+                        lines: newValue,
+                        isPreferred: true
+                    )
+                    translationVersions = [tv]
+                    preferredTranslationVersionID = tv.id
+                } else if let id = preferredTranslationVersionID, let idx = translationVersions?.firstIndex(where: { $0.id == id }) {
+                    translationVersions![idx].lines = newValue
+                } else {
+                    translationVersions![0].lines = newValue
+                }
+            } else {
+                translationVersions = nil
+                preferredTranslationVersionID = nil
+            }
+        }
+    }
+
+    var activeTranslationVersion: TranslationVersion? {
+        if let id = preferredTranslationVersionID, let v = translationVersions?.first(where: { $0.id == id }) {
+            return v
+        }
+        return translationVersions?.first(where: { $0.isPreferred }) ?? translationVersions?.first
+    }
 
     enum CodingKeys: String, CodingKey {
         case id, createdAt, name, engine, model, language, vocabulary
         case lines, translations, translationSource, source, isPreferred
+        case translationVersions, preferredTranslationVersionID
     }
 
     init(id: UUID = UUID(),
@@ -231,7 +328,9 @@ struct TranscriptVersion: Codable, Identifiable, Sendable, Equatable {
          translations: [TranslatedLine]? = nil,
          translationSource: String? = nil,
          source: TranscriptSource,
-         isPreferred: Bool = false) {
+         isPreferred: Bool = false,
+         translationVersions: [TranslationVersion]? = nil,
+         preferredTranslationVersionID: UUID? = nil) {
         self.id = id
         self.createdAt = createdAt
         self.name = name
@@ -240,10 +339,12 @@ struct TranscriptVersion: Codable, Identifiable, Sendable, Equatable {
         self.language = language
         self.vocabulary = vocabulary
         self.lines = lines
-        self.translations = translations
         self.translationSource = translationSource
         self.source = source
         self.isPreferred = isPreferred
+        self.translationVersions = translationVersions
+        self.preferredTranslationVersionID = preferredTranslationVersionID
+        self.translations = translations
     }
 
     init(from decoder: Decoder) throws {
@@ -262,14 +363,40 @@ struct TranscriptVersion: Codable, Identifiable, Sendable, Equatable {
         self.language = try container.decodeIfPresent(String.self, forKey: .language) ?? "zh"
         self.vocabulary = try container.decodeIfPresent(String.self, forKey: .vocabulary)
         self.lines = try container.decodeIfPresent([TranscriptLine].self, forKey: .lines) ?? []
-        self.translations = try container.decodeIfPresent([TranslatedLine].self, forKey: .translations)
         self.translationSource = try container.decodeIfPresent(String.self, forKey: .translationSource)
         self.source = try container.decodeIfPresent(TranscriptSource.self, forKey: .source) ?? .live
         self.isPreferred = try container.decodeIfPresent(Bool.self, forKey: .isPreferred) ?? false
+        self.translations = try container.decodeIfPresent([TranslatedLine].self, forKey: .translations)
+        let loadedTVs = try container.decodeIfPresent([TranslationVersion].self, forKey: .translationVersions)
+        if let loadedTVs, !loadedTVs.isEmpty {
+            self.translationVersions = loadedTVs
+            self.preferredTranslationVersionID = try container.decodeIfPresent(UUID.self, forKey: .preferredTranslationVersionID)
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(name, forKey: .name)
+        try container.encode(engine, forKey: .engine)
+        try container.encodeIfPresent(model, forKey: .model)
+        try container.encode(language, forKey: .language)
+        try container.encodeIfPresent(vocabulary, forKey: .vocabulary)
+        try container.encode(lines, forKey: .lines)
+        try container.encodeIfPresent(translations, forKey: .translations)
+        try container.encodeIfPresent(translationSource, forKey: .translationSource)
+        try container.encode(source, forKey: .source)
+        try container.encode(isPreferred, forKey: .isPreferred)
+        try container.encodeIfPresent(translationVersions, forKey: .translationVersions)
+        try container.encodeIfPresent(preferredTranslationVersionID, forKey: .preferredTranslationVersionID)
     }
 
     func translation(for line: TranscriptLine) -> TranslatedLine? {
-        translations?.first { $0.id == line.id && $0.source == line.text }
+        if let active = activeTranslationVersion {
+            return active.lines.first { $0.id == line.id && $0.source == line.text }
+        }
+        return _legacyTranslations?.first { $0.id == line.id && $0.source == line.text }
     }
 }
 

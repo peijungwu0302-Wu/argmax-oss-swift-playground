@@ -440,7 +440,7 @@ struct LectureDetailView: View {
 
     private var versionPickerSection: some View {
         VStack(spacing: 8) {
-            HStack {
+            HStack(spacing: 10) {
                 Menu {
                     ForEach(currentSession.transcriptVersions) { v in
                         Button {
@@ -452,7 +452,7 @@ struct LectureDetailView: View {
                                 }
                                 Text(v.name)
                                 if v.isPreferred {
-                                    Text("（預設）")
+                                    Text("（\(L10n.tr("預設", "Default"))）")
                                 }
                             }
                         }
@@ -461,7 +461,7 @@ struct LectureDetailView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "doc.text.fill")
                             .foregroundStyle(gold)
-                        Text(currentVersion?.name ?? "選擇逐字稿版本")
+                        Text(currentVersion?.name ?? L10n.tr("選擇逐字稿版本", "Select Transcript"))
                             .font(.subheadline.bold())
                             .foregroundStyle(ink)
                         Image(systemName: "chevron.down")
@@ -474,11 +474,45 @@ struct LectureDetailView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
 
+                if let tvs = currentVersion?.translationVersions, tvs.count > 1 {
+                    Menu {
+                        ForEach(tvs) { tv in
+                            Button {
+                                if let vID = currentVersion?.id {
+                                    controller.setPreferredTranslationVersion(sessionID: currentSession.id, versionID: vID, translationVersionID: tv.id)
+                                }
+                            } label: {
+                                HStack {
+                                    if tv.id == currentVersion?.activeTranslationVersion?.id {
+                                        Image(systemName: "checkmark")
+                                    }
+                                    Text(tv.name)
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "character.bubble.fill")
+                                .foregroundStyle(gold)
+                            Text(currentVersion?.activeTranslationVersion?.name ?? L10n.tr("翻譯版本", "Translation"))
+                                .font(.caption.bold())
+                                .foregroundStyle(ink)
+                            Image(systemName: "chevron.down")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 8)
+                        .background(Color.white.opacity(0.8))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+
                 Spacer()
 
                 if let v = currentVersion {
                     if !v.isPreferred {
-                        Button("設為預設") {
+                        Button(L10n.tr("設為預設", "Set as Default")) {
                             controller.setPreferredVersion(sessionID: currentSession.id, versionID: v.id)
                         }
                         .font(.caption)
@@ -496,10 +530,10 @@ struct LectureDetailView: View {
                 }
             }
 
-            Picker("檢視模式", selection: $displayMode) {
-                Text("雙語對照").tag(PiPDisplayMode.bilingual)
-                Text("僅中文").tag(PiPDisplayMode.chineseOnly)
-                Text("僅原文").tag(PiPDisplayMode.originalOnly)
+            Picker(L10n.tr("檢視模式", "View Mode"), selection: $displayMode) {
+                Text(L10n.tr("雙語對照", "Bilingual")).tag(PiPDisplayMode.bilingual)
+                Text(L10n.tr("僅中文", "Chinese Only")).tag(PiPDisplayMode.chineseOnly)
+                Text(L10n.tr("僅原文", "Original Only")).tag(PiPDisplayMode.originalOnly)
             }
             .pickerStyle(.segmented)
         }

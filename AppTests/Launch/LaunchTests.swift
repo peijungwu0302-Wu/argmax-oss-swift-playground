@@ -36,7 +36,6 @@ final class LaunchTests: XCTestCase {
         app.buttons["完整畫面"].tap()
         XCTAssertTrue(app.textFields["課堂名稱"].waitForExistence(timeout: 5))
         app.buttons["錄音設定"].tap()
-        XCTAssertTrue(app.buttons["檢查更新"].waitForExistence(timeout: 5))
         for _ in 0..<8 {
             if app.sliders["原文字幕大小"].isHittable { break }
             app.swipeUp()
@@ -54,6 +53,11 @@ final class LaunchTests: XCTestCase {
         }
         XCTAssertTrue(app.descendants(matching: .any)["recordingQuality"].firstMatch.exists,
                       "Recording settings must expose storage quality")
+        for _ in 0..<8 {
+            if app.buttons["檢查更新"].isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(app.buttons["檢查更新"].waitForExistence(timeout: 5))
         app.buttons["完成"].tap()
         app.buttons["歷史紀錄"].tap()
         XCTAssertTrue(app.staticTexts["還沒有已儲存的課堂"].waitForExistence(timeout: 5))
