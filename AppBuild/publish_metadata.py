@@ -24,7 +24,11 @@ def generate(ipa: Path, destination: Path):
     base = 'https://raw.githubusercontent.com/peijungwu0302-Wu/argmax-oss-swift-playground/playground-compatible/'
     url = f'https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/download/v{version}/LectureTranscriber-v{version}.ipa'
     notes = '錄音後自動開啟 PiP 字幕、可即時調整字級與排版、完整逐字稿 Follow Live、PiP 與 Live Activity 返回目前課堂、Live Activity 計時與更新延遲修正，以及 Apple Speech／Translation 系統資源預設流程。'
-    minimum = info.get('MinimumOSVersion', '16.0')
+    def version_tuple(value):
+        return tuple(int(part) for part in value.split('.'))
+    app_minimum = info.get('MinimumOSVersion', '16.0')
+    widget_minimum = widget.get('MinimumOSVersion', app_minimum)
+    minimum = max((app_minimum, widget_minimum), key=version_tuple)
     update = dict(bundleIdentifier=identifier, version=version, build=build, minimumOS=minimum, downloadURL=url, notes=notes)
     icon = base + 'Apps/LectureTranscriber.swiftpm/Sources/Assets.xcassets/AppIcon.appiconset/AppIcon.png'
     new_version_entry = dict(

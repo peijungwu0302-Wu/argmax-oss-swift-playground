@@ -9,9 +9,17 @@
       "name": "課堂逐字稿 LectureTranscriber",
       "bundleIdentifier": "com.peijungwu0302.lecturetranscriber",
       "developerName": "Peijung Wu",
-      "localizedDescription": "PiP 浮動長條字幕穩定性修復（32BGRA+IOSurface+立即顯示）、支援 3:1/5:1/6:1 比例、切換 App（GoodNotes/Safari/PDF）後台持續錄音與即時辨識翻譯、新增鎖定畫面 Live Activity（即時動態）與動態島（Dynamic Island）整合、SideStore 單一 Extension 側載相容。",
+      "localizedDescription": "錄音後自動開啟 PiP 字幕、可即時調整字級與排版、完整逐字稿 Follow Live、PiP 與 Live Activity 返回目前課堂、Live Activity 計時與更新延遲修正，以及 Apple Speech／Translation 系統資源預設流程。",
       "iconURL": "https://raw.githubusercontent.com/peijungwu0302-Wu/argmax-oss-swift-playground/playground-compatible/Apps/LectureTranscriber.swiftpm/Sources/Assets.xcassets/AppIcon.appiconset/AppIcon.png",
       "versions": [
+        {
+          "version": "1.8.2",
+          "date": "2026-09-13T22:22:03Z",
+          "localizedDescription": "錄音後自動開啟 PiP 字幕、可即時調整字級與排版、完整逐字稿 Follow Live、PiP 與 Live Activity 返回目前課堂、Live Activity 計時與更新延遲修正，以及 Apple Speech／Translation 系統資源預設流程。",
+          "downloadURL": "https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/download/v1.8.2/LectureTranscriber-v1.8.2.ipa",
+          "size": 3826155,
+          "minOSVersion": "16.1"
+        },
         {
           "version": "1.8.1",
           "date": "2026-09-13T20:04:00Z",
