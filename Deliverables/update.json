@@ -1,8 +1,8 @@
 {
   "bundleIdentifier": "com.peijungwu0302.lecturetranscriber",
-  "version": "1.8.0",
-  "build": 13,
-  "minimumOS": "16.0",
-  "downloadURL": "https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/download/v1.8.0/LectureTranscriber-v1.8.0.ipa",
-  "notes": "實時繁中翻譯速度與穩定性提升、切換辨識引擎不中斷翻譯、雙軌優先佇列與可調頻率、統一 ResourceState 真實位元組進度、全新 1200×240 (5:1) PiP 長條字幕、日期分組課堂庫、跨片段連續播放與時間軸跳轉高亮、多版本翻譯解耦相容、中英雙語在地化、iPhone/iPad 通用 SideStore 側載最佳化。"
+  "version": "1.8.1",
+  "build": 14,
+  "minimumOS": "16.1",
+  "downloadURL": "https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/download/v1.8.1/LectureTranscriber-v1.8.1.ipa",
+  "notes": "PiP 浮動長條字幕穩定性修復（32BGRA+IOSurface+立即顯示）、支援 3:1/5:1/6:1 比例、切換 App（GoodNotes/Safari/PDF）後台持續錄音與即時辨識翻譯、新增鎖定畫面 Live Activity（即時動態）與動態島（Dynamic Island）整合、SideStore 單一 Extension 側載相容。"
 }
