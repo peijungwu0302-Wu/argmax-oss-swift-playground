@@ -106,7 +106,7 @@ struct ContentView: View {
                     .disabled(controller.session == nil)
                     Button {
                         controller.pipEnabled = true
-                        pip.setStaticTest(false)
+                        pip.setSamplePreview(false)
                         pip.start(recording: controller.isRecording)
                     } label: {
                         Image(systemName: pip.active ? "pip.fill" : "pip.enter")
@@ -582,7 +582,7 @@ struct ContentView: View {
                         ForEach(PiPCaptionGap.allCases) { Text($0.title).tag($0) }
                     }
                     Button(L10n.tr("在子母畫面中預覽", "Preview in Picture in Picture")) {
-                        pip.setStaticTest(!controller.isRecording)
+                        pip.setSamplePreview(!controller.isRecording)
                         controller.pipEnabled = true
                         pip.start(recording: controller.isRecording)
                     }

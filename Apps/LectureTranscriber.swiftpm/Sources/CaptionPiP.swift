@@ -68,7 +68,7 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
             render(force: true)
         }
     }
-    @Published var isStaticTest: Bool = false {
+    @Published var isSamplePreview: Bool = false {
         didSet { render(force: true) }
     }
 
@@ -82,7 +82,7 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
     private var lastRenderedTranslation = ""
     private var lastRenderedMode: PiPDisplayMode?
     private var lastRenderedRatio: PiPAspectRatio?
-    private var lastRenderedStaticTest: Bool?
+    private var lastRenderedSamplePreview: Bool?
     private var lastPresentationSignature = ""
     private var autoStartTask: Task<Void, Never>?
     var restoreUserInterface: (() -> Void)?
@@ -227,8 +227,8 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
         pip?.stopPictureInPicture()
     }
 
-    func setStaticTest(_ enabled: Bool) {
-        self.isStaticTest = enabled
+    func setSamplePreview(_ enabled: Bool) {
+        self.isSamplePreview = enabled
     }
 
     func render(force: Bool = false) {
@@ -240,7 +240,7 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
            translated == lastRenderedTranslation,
            displayMode == lastRenderedMode,
            aspectRatio == lastRenderedRatio,
-           isStaticTest == lastRenderedStaticTest,
+           isSamplePreview == lastRenderedSamplePreview,
            presentationSignature == lastPresentationSignature {
             return
         }
@@ -318,7 +318,7 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
         let horizontalPadding = metrics.horizontalPadding
         let textWidth = CGFloat(width) - (horizontalPadding * 2)
 
-        if isStaticTest {
+        if isSamplePreview {
             original = "The system is asymptotically stable."
             translated = "這個系統是漸近穩定的。"
         }
@@ -424,7 +424,7 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
             lastRenderedTranslation = translated
             lastRenderedMode = displayMode
             lastRenderedRatio = aspectRatio
-            lastRenderedStaticTest = isStaticTest
+            lastRenderedSamplePreview = isSamplePreview
             lastPresentationSignature = presentationSignature
         }
     }
@@ -522,4 +522,3 @@ struct CaptionPiPPreview: UIViewRepresentable {
         // when views are transitioned or moved into the background.
     }
 }
-
