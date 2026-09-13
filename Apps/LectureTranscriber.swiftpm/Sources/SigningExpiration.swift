@@ -40,7 +40,8 @@ public struct SigningProfile: Equatable, Sendable {
     /// Extract and decode the XML PropertyList payload from the PKCS#7 signed container.
     public static func parse(data: Data) -> SigningProfile? {
         guard let start = data.range(of: Data("<?xml".utf8)),
-              let end = data.range(of: Data("</plist>".utf8), options: .backwards, range: start.lowerBound..<data.count) else {
+              let end = data.range(of: Data("</plist>".utf8), options: .backwards),
+              start.lowerBound < end.upperBound else {
             return nil
         }
         let plistData = data.subdata(in: start.lowerBound..<end.upperBound)
