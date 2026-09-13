@@ -306,6 +306,8 @@ struct LectureSession: Codable, Identifiable, Sendable {
          vocabulary: String? = nil,
          recognitionEngine: String? = nil,
          parts: [AudioPart] = [],
+         lines: [TranscriptLine] = [],
+         translations: [TranslatedLine]? = nil,
          transcriptVersions: [TranscriptVersion] = [],
          preferredVersionID: UUID? = nil,
          bookmarks: [Bookmark] = []) {
@@ -317,9 +319,28 @@ struct LectureSession: Codable, Identifiable, Sendable {
         self.vocabulary = vocabulary
         self.recognitionEngine = recognitionEngine
         self.parts = parts
-        self.transcriptVersions = transcriptVersions
-        self.preferredVersionID = preferredVersionID
         self.bookmarks = bookmarks
+        if !transcriptVersions.isEmpty {
+            self.transcriptVersions = transcriptVersions
+            self.preferredVersionID = preferredVersionID ?? transcriptVersions.first?.id
+        } else if !lines.isEmpty || (translations != nil && !translations!.isEmpty) {
+            let ver = TranscriptVersion(
+                id: UUID(),
+                createdAt: createdAt,
+                name: "逐字稿",
+                engine: .apple,
+                language: language,
+                lines: lines,
+                translations: translations,
+                source: .live,
+                isPreferred: true
+            )
+            self.transcriptVersions = [ver]
+            self.preferredVersionID = ver.id
+        } else {
+            self.transcriptVersions = []
+            self.preferredVersionID = preferredVersionID
+        }
     }
 
     var preferredVersionIndex: Int {
