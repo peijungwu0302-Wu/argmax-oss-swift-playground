@@ -2,6 +2,7 @@ import WidgetKit
 import SwiftUI
 import ActivityKit
 
+@available(iOS 16.1, *)
 @main
 struct LectureTranscriberWidgetBundle: WidgetBundle {
     var body: some Widget {
@@ -9,6 +10,7 @@ struct LectureTranscriberWidgetBundle: WidgetBundle {
     }
 }
 
+@available(iOS 16.1, *)
 struct LectureTranscriberActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: LectureActivityAttributes.self) { context in
@@ -84,6 +86,7 @@ struct LectureTranscriberActivityWidget: Widget {
     }
 }
 
+@available(iOS 16.1, *)
 struct LockScreenLiveActivityView: View {
     let context: ActivityViewContext<LectureActivityAttributes>
 
