@@ -13,10 +13,10 @@ def generate(ipa: Path, destination: Path):
     assert info['CFBundleIdentifier'] == identifier
     assert sorted(info['UIDeviceFamily']) == [1, 2]
     version, build = info['CFBundleShortVersionString'], int(info['CFBundleVersion'])
-    assert ipa.name == f'LectureTranscriber-{version}-unsigned.ipa'
+    assert ipa.name in [f'LectureTranscriber-{version}-unsigned.ipa', f'LectureTranscriber-v{version}.ipa']
     base = 'https://raw.githubusercontent.com/peijungwu0302-Wu/argmax-oss-swift-playground/playground-compatible/'
-    url = base + 'Deliverables/' + ipa.name
-    notes = '較長前後文錄後轉錄、逐段原音核對與音訊另存、離線講者 beta、PiP beta、可調字級與 SideStore 更新。'
+    url = f'https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/download/v{version}/LectureTranscriber-v{version}.ipa'
+    notes = '單一課堂多版本逐字稿架構（Apple Speech Live 即時辨識、Whisper v3 錄後高精確轉錄、SenseVoice）、整合式 LectureDetailView 跨片段連續播放與點擊時間軸 Seek、逐字稿雙語/僅中文/僅原文檢視、版本切換與比較、專有名詞詞庫提示、自動舊版 session.json 無痛相容升級、SideStore 側載最佳化。'
     minimum = info.get('MinimumOSVersion', '16.0')
     update = dict(bundleIdentifier=identifier, version=version, build=build, minimumOS=minimum, downloadURL=url, notes=notes)
     icon = base + 'Apps/LectureTranscriber.swiftpm/Sources/Assets.xcassets/AppIcon.appiconset/AppIcon.png'

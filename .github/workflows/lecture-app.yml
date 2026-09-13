@@ -1,11 +1,12 @@
 name: Lecture App Validation
 on:
   push:
-    branches: [playground-compatible]
-    paths: ['Apps/**', 'AppBuild/**', 'AppTests/**', '.github/workflows/lecture-app.yml']
+    branches: [playground-compatible, 'release/**', main]
+    tags: ['v*']
+    paths: ['Apps/**', 'AppBuild/**', 'AppTests/**', '.github/workflows/lecture-app.yml', 'Deliverables/**']
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 jobs:
   playground-package:
     runs-on: macos-26
@@ -91,11 +92,34 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild -project AppBuild/LectureTranscriber.xcodeproj -scheme LectureTranscriber -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/UniversalBuild" CODE_SIGNING_ALLOWED=NO build 2>&1 | tee "$RUNNER_TEMP/lecture-device.log"
-          python3 AppBuild/package_ipa.py "$RUNNER_TEMP/UniversalBuild/Build/Products/Debug-iphoneos/LectureTranscriber.app" "$RUNNER_TEMP/LectureTranscriber-unsigned.ipa"
+          python3 AppBuild/package_ipa.py "$RUNNER_TEMP/UniversalBuild/Build/Products/Debug-iphoneos/LectureTranscriber.app" "$RUNNER_TEMP/LectureTranscriber-v1.7.0.ipa"
+          cp "$RUNNER_TEMP/LectureTranscriber-v1.7.0.ipa" "$RUNNER_TEMP/LectureTranscriber-1.7.0-unsigned.ipa"
       - uses: actions/upload-artifact@v4
         with:
-          name: LectureTranscriber-unsigned-IPA
-          path: ${{ runner.temp }}/LectureTranscriber-unsigned.ipa
+          name: LectureTranscriber-v1.7.0-IPA
+          path: |
+            ${{ runner.temp }}/LectureTranscriber-v1.7.0.ipa
+            ${{ runner.temp }}/LectureTranscriber-1.7.0-unsigned.ipa
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ runner.temp }}/LectureTranscriber-v1.7.0.ipa
+            Deliverables/update.json
+            Deliverables/sidestore.json
+          name: LectureTranscriber ${{ github.ref_name }}
+          body: |
+            ## LectureTranscriber ${{ github.ref_name }}
+            - 單一課堂多版本逐字稿架構（Apple Speech Live 即時辨識、Whisper v3 錄後高精確轉錄、SenseVoice）
+            - 全新整合式 LectureDetailView：跨片段連續播放、進度條拖曳 Seek、點擊句子時間戳直接跳轉播放
+            - 逐字稿檢視模式（雙語對照 / 僅中文 / 僅原文）
+            - 逐字稿版本切換、設為預設、版本比對（側邊／垂直並排）
+            - 專有名詞自訂詞庫（Vocabulary Prompt）提示 WhisperKit
+            - 舊版 session.json 自動無痛相容升級
+            - iPhone / iPad 通用單一 IPA，支援 SideStore 側載個人簽署安裝
+          draft: false
+          prerelease: false
       - name: Report validation errors
         if: failure()
         run: |

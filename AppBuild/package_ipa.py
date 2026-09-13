@@ -7,7 +7,7 @@ with (app / "Info.plist").open("rb") as f:
     info = plistlib.load(f)
 assert info["CFBundleIdentifier"] == "com.peijungwu0302.lecturetranscriber"
 assert sorted(info["UIDeviceFamily"]) == [1, 2]
-assert info["CFBundleShortVersionString"] == "1.6.0" and info["CFBundleVersion"] == "11"
+assert info["CFBundleShortVersionString"] == "1.7.0" and info["CFBundleVersion"] == "12"
 assert "audio" in info["UIBackgroundModes"]
 assert info.get("UIRequiresFullScreen") is False
 assert not list(app.rglob("*.appex")), "Extensions would consume additional App IDs"
