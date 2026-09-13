@@ -23,6 +23,13 @@ final class LectureController: ObservableObject {
     @Published var liveDraft = "" {
         didSet {
             CaptionFeed.shared.update(original: caption, translation: validTranslatedDraft)
+            if !liveDraft.isEmpty {
+                LiveActivityCoordinator.shared.updatePartial(
+                    original: caption,
+                    translation: validTranslatedDraft,
+                    revision: draftRevision
+                )
+            }
         }
     }
     @Published var lastDecodeSeconds: Double?
@@ -502,7 +509,7 @@ final class LectureController: ObservableObject {
         } else { provisional = lines }
     }
 
-    private func stopCapture() {
+    private func stopCapture(endLiveActivity: Bool = true) {
         guard isRecording else { return }
         recorder.stop()
         updateAudioCount()
@@ -510,15 +517,15 @@ final class LectureController: ObservableObject {
         meter?.invalidate(); meter = nil
         UIApplication.shared.isIdleTimerDisabled = false
         persist()
-        CaptionFeed.shared.update(isRecording: false, isPaused: false)
-        LiveActivityCoordinator.shared.stop()
+        CaptionFeed.shared.update(isRecording: false, isPaused: !endLiveActivity)
+        if endLiveActivity { LiveActivityCoordinator.shared.stop() }
     }
 
     func pause() async {
         guard isRecording, !isBusy else { return }
         isBusy = true
         LiveActivityCoordinator.shared.updatePause(isPaused: true, elapsed: duration)
-        stopCapture()
+        stopCapture(endLiveActivity: false)
         status = "正在補完最後一段…"
         await worker?.value
         worker = nil

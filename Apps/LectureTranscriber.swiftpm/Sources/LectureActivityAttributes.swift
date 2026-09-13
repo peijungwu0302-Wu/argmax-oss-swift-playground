@@ -13,6 +13,7 @@ public struct LectureActivityAttributes: ActivityAttributes {
         public var latestTranslation: String
         public var captionMode: String // "bilingual", "chineseOnly", "originalOnly"
         public var recognitionEngineName: String // e.g. "Apple Live", "Whisper", "SenseVoice"
+        public var captionRevision: Int
 
         public init(
             isRecording: Bool,
@@ -22,7 +23,8 @@ public struct LectureActivityAttributes: ActivityAttributes {
             latestOriginal: String,
             latestTranslation: String,
             captionMode: String = "bilingual",
-            recognitionEngineName: String = "Apple Live"
+            recognitionEngineName: String = "Apple Live",
+            captionRevision: Int = 0
         ) {
             self.isRecording = isRecording
             self.isPaused = isPaused
@@ -32,6 +34,7 @@ public struct LectureActivityAttributes: ActivityAttributes {
             self.latestTranslation = latestTranslation
             self.captionMode = captionMode
             self.recognitionEngineName = recognitionEngineName
+            self.captionRevision = captionRevision
         }
     }
 

@@ -36,7 +36,7 @@ struct LectureTranscriberActivityWidget: Widget {
                             .font(.caption2.monospacedDigit())
                             .foregroundStyle(.yellow)
                     } else {
-                        Text(timerInterval: context.state.timerReferenceDate...Date.distantFuture, pauseTime: nil)
+                        Text(timerInterval: context.state.timerReferenceDate...Date.distantFuture, pauseTime: nil, countsDown: false)
                             .font(.caption2.monospacedDigit())
                             .foregroundStyle(.red)
                     }
@@ -73,7 +73,7 @@ struct LectureTranscriberActivityWidget: Widget {
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.yellow)
                 } else {
-                    Text(timerInterval: context.state.timerReferenceDate...Date.distantFuture, pauseTime: nil)
+                    Text(timerInterval: context.state.timerReferenceDate...Date.distantFuture, pauseTime: nil, countsDown: false)
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.red)
                         .frame(maxWidth: 44)
@@ -116,7 +116,7 @@ struct LockScreenLiveActivityView: View {
                         Circle()
                             .fill(.red)
                             .frame(width: 6, height: 6)
-                        Text(timerInterval: context.state.timerReferenceDate...Date.distantFuture, pauseTime: nil)
+                        Text(timerInterval: context.state.timerReferenceDate...Date.distantFuture, pauseTime: nil, countsDown: false)
                     }
                     .font(.caption.monospacedDigit().bold())
                     .foregroundStyle(.primary)
@@ -160,6 +160,7 @@ struct LockScreenLiveActivityView: View {
                     .clipShape(Capsule())
             }
         }
+        .widgetURL(URL(string: "lecturetranscriber://lecture/\(context.attributes.lectureID)/transcript"))
         .padding(14)
         .background(Color(uiColor: .systemBackground))
     }
