@@ -694,7 +694,25 @@ Our goal is to make this SDK better and better over time and we'd love your help
 
 Argmax OSS is released under the MIT License. See [LICENSE](LICENSE) for more details.
 
-This project incorporates third-party software under their own license terms. See [NOTICES](NOTICES) for attributions.
+## Release to SideStore
+
+To release a new version to SideStore and GitHub Releases:
+
+```bash
+./scripts/release_sidestore.sh 1.7.1
+```
+
+The script performs the following steps in strict order:
+1. **Build** universal real-device arm64 IPA for iPhone and iPad
+2. **Validate** IPA zip integrity and bundle structure (`Payload/*.app/`)
+3. **Create/Update** GitHub Release for tag `v<VERSION>`
+4. **Upload** release asset (`LectureTranscriber-v<VERSION>.ipa`)
+5. **Verify** public download URL reachability
+6. **Re-download** and validate public IPA package integrity and minimum size
+7. **Update** SideStore source manifest (`Deliverables/sidestore.json`) and in-app update manifest (`Deliverables/update.json`)
+8. **Commit and push** manifest changes to GitHub
+
+SideStore manifest will not be updated if the IPA asset is unavailable or invalid.
 
 ## Citation
 
