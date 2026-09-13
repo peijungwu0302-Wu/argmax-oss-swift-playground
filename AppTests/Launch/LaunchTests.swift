@@ -16,7 +16,7 @@ final class LaunchTests: XCTestCase {
         primary.buttons["中文"].tap()
         XCTAssertTrue(primary.buttons["中文"].isSelected)
         XCTAssertTrue(app.buttons["字幕模式"].exists)
-        XCTAssertTrue(app.buttons["開啟子母字幕"].exists)
+        XCTAssertTrue(app.buttons["openPiPCaptions"].exists)
         app.buttons["錄音設定"].tap()
         for _ in 0..<8 {
             if app.sliders["pipFontScale"].isHittable { break }
@@ -24,14 +24,18 @@ final class LaunchTests: XCTestCase {
         }
         XCTAssertTrue(app.sliders["pipFontScale"].waitForExistence(timeout: 5))
         app.sliders["pipFontScale"].adjust(toNormalizedSliderPosition: 0.7)
-        XCTAssertTrue(app.buttons["在子母畫面中預覽"].exists)
-        XCTAssertTrue(app.buttons["還原子母字幕預設設定"].exists)
-        for _ in 0..<8 {
-            if app.buttons["準備語音資源"].isHittable { break }
+        for _ in 0..<5 {
+            if app.buttons["previewPiP"].isHittable { break }
             app.swipeUp()
         }
-        XCTAssertTrue(app.buttons["準備語音資源"].waitForExistence(timeout: 5))
-        for _ in 0..<4 {
+        XCTAssertTrue(app.buttons["previewPiP"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["resetPiP"].exists)
+        for _ in 0..<10 {
+            if app.buttons["prepareSpeechResource"].isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(app.buttons["prepareSpeechResource"].waitForExistence(timeout: 5))
+        for _ in 0..<10 {
             if app.descendants(matching: .any)["recordingQuality"].firstMatch.isHittable { break }
             app.swipeUp()
         }

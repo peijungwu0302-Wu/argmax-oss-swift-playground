@@ -110,7 +110,9 @@ struct ContentView: View {
                         pip.start(recording: controller.isRecording)
                     } label: {
                         Image(systemName: pip.active ? "pip.fill" : "pip.enter")
-                    }.accessibilityLabel(L10n.tr("開啟子母字幕", "Open PiP Captions"))
+                    }
+                    .accessibilityLabel(L10n.tr("開啟子母字幕", "Open PiP Captions"))
+                    .accessibilityIdentifier("openPiPCaptions")
                     Button { captionMode.toggle() } label: {
                         Image(systemName: captionMode ? "captions.bubble.fill" : "captions.bubble")
                     }.accessibilityLabel("字幕模式")
@@ -586,9 +588,11 @@ struct ContentView: View {
                         controller.pipEnabled = true
                         pip.start(recording: controller.isRecording)
                     }
+                    .accessibilityIdentifier("previewPiP")
                     Button(L10n.tr("還原子母字幕預設設定", "Reset PiP Caption Settings")) {
                         pipSettings.reset()
                     }
+                    .accessibilityIdentifier("resetPiP")
                     VStack(alignment: .leading, spacing: 4) {
                         Text(L10n.tr("原文字幕大小：\(Int(captionFontSize))", "Original Font Size: \(Int(captionFontSize))"))
                         Slider(value: $captionFontSize, in: 14...48, step: 1)
@@ -643,7 +647,7 @@ struct ContentView: View {
                         }
                     }
                     .accessibilityLabel("載入模型")
-                    .accessibilityIdentifier("載入模型")
+                    .accessibilityIdentifier("prepareSpeechResource")
                     .disabled(!controller.canManageSessions)
 
                     Text(controller.usesAppleSpeech
