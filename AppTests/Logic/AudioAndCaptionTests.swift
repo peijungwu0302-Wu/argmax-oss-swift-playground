@@ -169,4 +169,97 @@ final class AudioAndCaptionTests: XCTestCase {
         controller.restartTranslation()
         XCTAssertEqual(controller.validTranslatedDraft, "")
     }
+
+    func testSigningExpirationTimeFormattingSecondLevelPrecision() {
+        // Must preserve full second-level precision without rounding to day, hour, minute
+        let seconds: TimeInterval = 6 * 86400 + 23 * 3600 + 47 * 60 + 18
+        let formatted = SigningTimeFormatter.formatRemaining(seconds: seconds)
+        XCTAssertEqual(formatted, "6 天 23:47:18")
+
+        let underOneDay: TimeInterval = 23 * 3600 + 47 * 60 + 18
+        XCTAssertEqual(SigningTimeFormatter.formatRemaining(seconds: underOneDay), "23:47:18")
+
+        XCTAssertEqual(SigningTimeFormatter.formatRemaining(seconds: 0), "已到期 00:00:00")
+        XCTAssertEqual(SigningTimeFormatter.formatRemaining(seconds: -10), "已到期 00:00:00")
+
+        // Expiration delta formatting
+        XCTAssertEqual(SigningTimeFormatter.formatDelta(seconds: 27), "+27 秒")
+        XCTAssertEqual(SigningTimeFormatter.formatDelta(seconds: -15), "-15 秒")
+        XCTAssertEqual(SigningTimeFormatter.formatDelta(seconds: 0), "+0 秒")
+    }
+
+    func testSelfRefreshVerificationDiagnostics() {
+        let beforeExp = Date(timeIntervalSince1970: 1789310172) // 14:36:12
+        let afterExpRenewed = Date(timeIntervalSince1970: 1789310199) // 14:36:39 (+27s)
+        let beforeCreation = Date(timeIntervalSince1970: 1788705372)
+        let afterCreation = Date(timeIntervalSince1970: 1788705399)
+
+        // Case 1: Successfully extended
+        let diagSuccess = SelfRefreshDiagnostics(
+            beforeExpirationDate: beforeExp,
+            afterExpirationDate: afterExpRenewed,
+            beforeCreationDate: beforeCreation,
+            afterCreationDate: afterCreation,
+            beforeProfileUUID: "uuid-1",
+            afterProfileUUID: "uuid-2"
+        )
+        XCTAssertEqual(diagSuccess.status, .verified)
+        XCTAssertTrue(diagSuccess.isExpirationExtended)
+        XCTAssertEqual(diagSuccess.expirationDeltaSeconds, 27)
+        XCTAssertEqual(diagSuccess.isUUIDChanged, true)
+        XCTAssertEqual(diagSuccess.isCreationDateChanged, true)
+
+        // Case 2: Expiration timestamp remains exactly unchanged -> NOT renewed
+        let diagUnchanged = SelfRefreshDiagnostics(
+            beforeExpirationDate: beforeExp,
+            afterExpirationDate: beforeExp,
+            beforeCreationDate: beforeCreation,
+            afterCreationDate: afterCreation,
+            beforeProfileUUID: "uuid-1",
+            afterProfileUUID: "uuid-1"
+        )
+        XCTAssertEqual(diagUnchanged.status, .notRenewed)
+        XCTAssertFalse(diagUnchanged.isExpirationExtended)
+        XCTAssertEqual(diagUnchanged.expirationDeltaSeconds, 0)
+
+        // Case 3: Expiration decreased -> NOT renewed
+        let diagDecreased = SelfRefreshDiagnostics(
+            beforeExpirationDate: beforeExp,
+            afterExpirationDate: beforeExp.addingTimeInterval(-60)
+        )
+        XCTAssertEqual(diagDecreased.status, .notRenewed)
+        XCTAssertFalse(diagDecreased.isExpirationExtended)
+    }
+
+    func testSigningProfileMobileProvisionParsing() {
+        let sampleXML = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>Name</key>
+            <string>SideStore LectureTranscriber</string>
+            <key>TeamName</key>
+            <string>Peijung Wu</string>
+            <key>UUID</key>
+            <string>12345678-ABCD-EF01-2345-6789ABCDEF01</string>
+            <key>CreationDate</key>
+            <date>2026-09-13T14:36:12Z</date>
+            <key>ExpirationDate</key>
+            <date>2026-09-20T14:36:42Z</date>
+        </dict>
+        </plist>
+        """
+        var dummyContainer = Data([0x30, 0x82, 0x01, 0x00]) // Mock DER prefix
+        dummyContainer.append(Data(sampleXML.utf8))
+        dummyContainer.append(Data([0x00, 0x00])) // Mock DER suffix
+
+        let profile = SigningProfile.parse(data: dummyContainer)
+        XCTAssertNotNil(profile)
+        XCTAssertEqual(profile?.name, "SideStore LectureTranscriber")
+        XCTAssertEqual(profile?.teamName, "Peijung Wu")
+        XCTAssertEqual(profile?.uuid, "12345678-ABCD-EF01-2345-6789ABCDEF01")
+        XCTAssertNotNil(profile?.expirationDate)
+        XCTAssertNotNil(profile?.creationDate)
+    }
 }

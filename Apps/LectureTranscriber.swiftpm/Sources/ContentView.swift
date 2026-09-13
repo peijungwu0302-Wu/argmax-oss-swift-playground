@@ -472,6 +472,7 @@ struct ContentView: View {
                     Text("由 SideStore 下載、簽署與安裝；錄音／處理期間不啟動更新。檢查更新只讀取版本資訊。")
                         .font(.caption)
                 }
+                SigningExpirationSection()
                 Section("字幕與會議 beta") {
                     Picker("子母畫面顯示模式", selection: $pip.displayMode) {
                         ForEach(PiPDisplayMode.allCases) { mode in
