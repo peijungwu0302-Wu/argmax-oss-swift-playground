@@ -17,7 +17,7 @@
           "date": "2026-09-13T14:30:00Z",
           "localizedDescription": "單一課堂多版本逐字稿架構（Apple Speech Live 即時辨識、Whisper v3 錄後高精確轉錄、SenseVoice）、整合式 LectureDetailView 跨片段連續播放與點擊時間軸 Seek、逐字稿雙語/僅中文/僅原文檢視、版本切換與比較、專有名詞詞庫提示、自動舊版 session.json 無痛相容升級、SideStore 側載最佳化。",
           "downloadURL": "https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/download/v1.7.0/LectureTranscriber-v1.7.0.ipa",
-          "size": 3145728,
+          "size": 3462737,
           "minOSVersion": "16.0"
         },
         {
