@@ -119,3 +119,40 @@ struct PiPLayoutMetrics {
         )
     }
 }
+
+struct PiPInlinePreview: View {
+    @ObservedObject var settings: PiPPresentationSettings
+
+    private var horizontalAlignment: HorizontalAlignment {
+        switch settings.alignment { case .left: return .leading; case .center: return .center; case .right: return .trailing }
+    }
+    private var frameAlignment: Alignment {
+        switch settings.alignment { case .left: return .leading; case .center: return .center; case .right: return .trailing }
+    }
+    private var ratio: CGFloat {
+        switch settings.aspectRatio { case .standard: return 3; case .bar: return 5; case .ultraWide: return 6 }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if settings.verticalPosition != .top { Spacer(minLength: 8) }
+            VStack(alignment: horizontalAlignment, spacing: settings.gap.points / 2) {
+                if settings.captionMode != .chineseOnly {
+                    Text("The system is asymptotically stable.")
+                        .foregroundStyle(.white)
+                }
+                if settings.captionMode != .originalOnly {
+                    Text("這個系統是漸近穩定的。")
+                        .foregroundStyle(Color(red: 1, green: 0.86, blue: 0.35))
+                }
+            }
+            .font(.system(size: 12 * settings.fontScale))
+            .frame(maxWidth: .infinity, alignment: frameAlignment)
+            if settings.verticalPosition != .bottom { Spacer(minLength: 8) }
+        }
+        .padding(.horizontal, 14)
+        .aspectRatio(ratio, contentMode: .fit)
+        .background(Color(white: 0.08), in: RoundedRectangle(cornerRadius: 10))
+        .accessibilityLabel(L10n.tr("子母字幕預覽", "PiP caption preview"))
+    }
+}

@@ -24,11 +24,12 @@ final class LectureController: ObservableObject {
         didSet {
             CaptionFeed.shared.update(original: caption, translation: validTranslatedDraft)
             if !liveDraft.isEmpty {
-                print("CaptionLatency speech_partial=\(Date().timeIntervalSince1970) revision=\(draftRevision)")
+                captionRevisionCounter += 1
+                print("CaptionLatency speech_partial=\(Date().timeIntervalSince1970) revision=\(captionRevisionCounter)")
                 LiveActivityCoordinator.shared.updatePartial(
                     original: caption,
                     translation: validTranslatedDraft,
-                    revision: draftRevision
+                    revision: captionRevisionCounter
                 )
             }
         }
@@ -108,6 +109,7 @@ final class LectureController: ObservableObject {
     private var saveCounter = 0
     private var activeDecodeID: UUID?
     private var draftRevision = 0
+    private var captionRevisionCounter = 0
     private var previousHypothesis: [TranscriptLine] = []
     private var appleCaptions = AppleCaptionState()
 

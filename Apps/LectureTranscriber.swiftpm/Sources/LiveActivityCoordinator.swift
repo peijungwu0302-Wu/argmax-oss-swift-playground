@@ -169,7 +169,7 @@ final class LiveActivityCoordinator: ObservableObject {
         let decision = updatePolicy.accept(kind: kind, revision: revision, original: original, translation: translation, at: now)
         guard decision != .ignore else { return }
         lastOriginal = original
-        if !translation.isEmpty { lastTranslation = translation }
+        lastTranslation = translation
         lastRevision = max(lastRevision, revision)
         if decision == .send {
             pendingPartialTask?.cancel()

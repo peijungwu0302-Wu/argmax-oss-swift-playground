@@ -621,6 +621,7 @@ struct ContentView: View {
 
                 // SECTION 4: PiP 字幕
                 Section(L10n.tr("4. 子母字幕", "4. PiP Captions")) {
+                    PiPInlinePreview(settings: pipSettings)
                     Toggle(L10n.tr("自動開啟子母字幕", "Automatically Start PiP Captions"), isOn: $pipSettings.autoStart)
                     Picker(L10n.tr("字幕顯示模式", "Display Mode"), selection: $pipSettings.captionMode) {
                         ForEach(PiPDisplayMode.allCases) { mode in
