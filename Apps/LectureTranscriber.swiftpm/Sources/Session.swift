@@ -743,6 +743,20 @@ struct SessionStore {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(session).write(to: folder(session.id).appendingPathComponent("session.json"), options: .atomic)
     }
+    func load(_ id: UUID) -> LectureSession? {
+        let file = folder(id).appendingPathComponent("session.json")
+        guard FileManager.default.fileExists(atPath: file.path),
+              let data = try? Data(contentsOf: file),
+              var session = try? JSONDecoder().decode(LectureSession.self, from: data) else { return nil }
+        for index in session.parts.indices {
+            let audio = folder(id).appendingPathComponent(session.parts[index].fileName)
+            if let width = AudioStorage.bytesPerSample(fileName: audio.lastPathComponent),
+               let size = try? FileManager.default.attributesOfItem(atPath: audio.path)[.size] as? NSNumber {
+                session.parts[index].sampleCount = size.intValue / width
+            }
+        }
+        return session
+    }
     func loadAll() throws -> [LectureSession] {
         var result: [LectureSession] = []
         for directory in try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) {
