@@ -6,6 +6,8 @@ struct SharedFile: Identifiable { let id = UUID(); let url: URL }
 
 struct ContentView: View {
     @ObservedObject var controller: LectureController
+    @EnvironmentObject private var navigation: AppNavigationState
+    @EnvironmentObject private var pipSettings: PiPPresentationSettings
     @State private var showHistory = false
     @State private var showImport = false
     @State private var importAfterHistory = false
@@ -41,7 +43,9 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             GeometryReader { geometry in
-                if pipPreview {
+                if case .fullTranscript(let id) = navigation.route {
+                    FullTranscriptView(controller: controller, lectureID: id)
+                } else if pipPreview {
                     pipWorkspace
                 } else if compactMode {
                     compactWorkspace
@@ -96,9 +100,20 @@ struct ContentView: View {
                     }.disabled(!controller.canManageSessions)
                 }
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
-                    Button { compactMode.toggle() } label: {
-                        Image(systemName: compactMode ? "arrow.up.left.and.arrow.down.right" : "rectangle.inset.filled")
-                    }.accessibilityLabel(compactMode ? "完整畫面" : "精簡字幕")
+                    Button {
+                        if let id = controller.session?.id { navigation.showFullTranscript(for: id) }
+                    } label: {
+                        Image(systemName: "doc.text")
+                    }
+                    .accessibilityLabel(L10n.tr("完整逐字稿", "Full Transcript"))
+                    .disabled(controller.session == nil)
+                    Button {
+                        controller.pipEnabled = true
+                        pip.setStaticTest(false)
+                        pip.start(recording: controller.isRecording)
+                    } label: {
+                        Image(systemName: pip.active ? "pip.fill" : "pip.enter")
+                    }.accessibilityLabel(L10n.tr("開啟子母字幕", "Open PiP Captions"))
                     if !compactMode {
                     Button { captionMode.toggle() } label: {
                         Image(systemName: captionMode ? "captions.bubble.fill" : "captions.bubble")
@@ -128,6 +143,17 @@ struct ContentView: View {
                 }
             }
             .tint(gold)
+            .background(
+                CaptionPiPPreview(
+                    pip: pip,
+                    original: controller.caption,
+                    translated: controller.translationEnabled ? controller.translationCaption : "",
+                    sourceSize: captionFontSize,
+                    translationSize: translationFontSize
+                )
+                .frame(width: 2, height: 2)
+                .opacity(0.01)
+            )
             .modifier(LiveTranslationModifier(controller: controller))
             .sheet(isPresented: $showHistory, onDismiss: { if importAfterHistory { importAfterHistory = false; showImport = true } }) { historySheet }
             .sheet(isPresented: $showAudio) {
@@ -160,6 +186,14 @@ struct ContentView: View {
         .task { if automaticallyCheckUpdates { await updates.check() } }
         .onChange(of: pip.active) { value in controller.pipActive = value && !pip.paused }
         .onChange(of: pip.paused) { value in controller.pipActive = pip.active && !value }
+        .onChange(of: controller.isRecording) { recording in
+            if recording { pip.startAutomaticallyWhenReady(recording: true) }
+        }
+        .onAppear {
+            pip.restoreUserInterface = {
+                navigation.restoreCurrentLectureTranscript(activeLectureID: controller.session?.id)
+            }
+        }
     }
 
     private var pipWorkspace: some View {
@@ -438,11 +472,22 @@ struct ContentView: View {
                         else { await controller.start() }
                     }
                 } label: {
-                    Label(recordLabel, systemImage: controller.isRecording ? "stop.fill" : "mic.fill")
+                    Label(recordLabel, systemImage: controller.isRecording ? "pause.fill" : "mic.fill")
                         .font(.headline).frame(maxWidth: .infinity, minHeight: 36)
                 }
                 .buttonStyle(.borderedProminent).tint(red).clipShape(Capsule())
                 .disabled(controller.isBusy || controller.isSummarizing || (!controller.isRecording && !controller.canStart && controller.session?.hasPendingAudio != true))
+                if controller.session != nil {
+                    Button {
+                        Task { await controller.endLecture() }
+                    } label: {
+                        Image(systemName: "stop.fill").frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.bordered)
+                    .clipShape(Circle())
+                    .disabled(controller.isBusy)
+                    .accessibilityLabel(L10n.tr("結束課堂", "End Lecture"))
+                }
                 Button { showBookmark = true } label: {
                     Image(systemName: "bookmark").font(.title3).frame(width: 44, height: 44)
                 }.buttonStyle(.bordered).clipShape(Circle()).disabled(controller.session == nil)
@@ -458,7 +503,7 @@ struct ContentView: View {
             .frame(maxWidth: 1200).frame(maxWidth: .infinity).background(paper)
     }
     private var recordLabel: String {
-        if controller.isRecording { return "停止並儲存" }
+        if controller.isRecording { return L10n.tr("暫停", "Pause") }
         if controller.session?.hasPendingAudio == true { return "補辨識" }
         return controller.session == nil ? "開始錄音" : "繼續錄音"
     }
@@ -565,24 +610,38 @@ struct ContentView: View {
                 }
 
                 // SECTION 4: PiP 字幕
-                Section(L10n.tr("4. PiP 字幕與精簡視窗", "4. Caption PiP & Compact Window")) {
-                    Picker(L10n.tr("字幕顯示模式", "Display Mode"), selection: $pip.displayMode) {
+                Section(L10n.tr("4. 子母字幕", "4. PiP Captions")) {
+                    Toggle(L10n.tr("自動開啟子母字幕", "Automatically Start PiP Captions"), isOn: $pipSettings.autoStart)
+                    Picker(L10n.tr("字幕顯示模式", "Display Mode"), selection: $pipSettings.captionMode) {
                         ForEach(PiPDisplayMode.allCases) { mode in
                             Text(mode.title).tag(mode)
                         }
                     }
-                    Picker(L10n.tr("字幕比例", "Aspect Ratio"), selection: $pip.aspectRatio) {
+                    Picker(L10n.tr("字幕比例", "Aspect Ratio"), selection: $pipSettings.aspectRatio) {
                         ForEach(PiPAspectRatio.allCases) { ratio in
                             Text(ratio.title).tag(ratio)
                         }
                     }
-                    Toggle(L10n.tr("靜態測試畫面 (PIP TEST)", "Static Test Frame (PIP TEST)"), isOn: $pip.isStaticTest)
-
-                    Button(L10n.tr("開啟子母畫面字幕條", "Start PiP Subtitle Bar")) {
-                        showSettings = false; pipPreview = true; controller.pipEnabled = true
+                    VStack(alignment: .leading) {
+                        Text(L10n.tr("字幕大小：\(Int(pipSettings.fontScale * 100))%", "Caption Size: \(Int(pipSettings.fontScale * 100))%"))
+                        Slider(value: $pipSettings.fontScale, in: 0.75...1.5, step: 0.05)
                     }
-                    Button(L10n.tr("精簡小視窗字幕", "Compact Window Subtitles")) {
-                        showSettings = false; pip.detach(); pipPreview = false; controller.pipEnabled = false; compactMode = true
+                    Picker(L10n.tr("文字對齊", "Text Alignment"), selection: $pipSettings.alignment) {
+                        ForEach(PiPTextAlignment.allCases) { Text($0.title).tag($0) }
+                    }
+                    Picker(L10n.tr("字幕位置", "Caption Position"), selection: $pipSettings.verticalPosition) {
+                        ForEach(PiPVerticalPosition.allCases) { Text($0.title).tag($0) }
+                    }
+                    Picker(L10n.tr("原文與翻譯間距", "Original / Translation Gap"), selection: $pipSettings.gap) {
+                        ForEach(PiPCaptionGap.allCases) { Text($0.title).tag($0) }
+                    }
+                    Button(L10n.tr("在子母畫面中預覽", "Preview in Picture in Picture")) {
+                        pip.setStaticTest(!controller.isRecording)
+                        controller.pipEnabled = true
+                        pip.start(recording: controller.isRecording)
+                    }
+                    Button(L10n.tr("還原子母字幕預設設定", "Reset PiP Caption Settings")) {
+                        pipSettings.reset()
                     }
                     VStack(alignment: .leading, spacing: 4) {
                         Text(L10n.tr("原文字幕大小：\(Int(captionFontSize))", "Original Font Size: \(Int(captionFontSize))"))

@@ -56,12 +56,14 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
     @Published private(set) var status = ""
     @Published var displayMode: PiPDisplayMode = .bilingual {
         didSet {
+            PiPPresentationSettings.shared.captionMode = displayMode
             CaptionFeed.shared.update(captionMode: displayMode)
             render(force: true)
         }
     }
     @Published var aspectRatio: PiPAspectRatio = .bar {
         didSet {
+            PiPPresentationSettings.shared.aspectRatio = aspectRatio
             CaptionFeed.shared.update(aspectRatio: aspectRatio)
             render(force: true)
         }
@@ -81,12 +83,22 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
     private var lastRenderedMode: PiPDisplayMode?
     private var lastRenderedRatio: PiPAspectRatio?
     private var lastRenderedStaticTest: Bool?
+    private var lastPresentationSignature = ""
+    private var autoStartTask: Task<Void, Never>?
+    var restoreUserInterface: (() -> Void)?
 
     override init() {
         super.init()
         let feed = CaptionFeed.shared
-        self.displayMode = feed.captionMode
-        self.aspectRatio = feed.aspectRatio
+        let settings = PiPPresentationSettings.shared
+        self.displayMode = settings.captionMode
+        self.aspectRatio = settings.aspectRatio
+        settings.onChange = { [weak self] in
+            guard let self else { return }
+            if self.displayMode != settings.captionMode { self.displayMode = settings.captionMode }
+            if self.aspectRatio != settings.aspectRatio { self.aspectRatio = settings.aspectRatio }
+            self.render(force: true)
+        }
         feed.onUpdate = { [weak self] updatedFeed in
             self?.feedDidUpdate(updatedFeed)
         }
@@ -150,6 +162,7 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
     }
 
     func detach() {
+        autoStartTask?.cancel()
         pip?.stopPictureInPicture()
         pip?.delegate = nil
         pip = nil
@@ -182,12 +195,31 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
             try audio.setActive(true)
             render(force: true)
             guard let pip, pip.isPictureInPicturePossible else {
-                status = L10n.tr("系統尚未允許子母畫面；請稍候再試或改用精簡小視窗。", "System has not allowed PiP yet; keep preview visible or use compact window.")
+                status = L10n.tr("子母畫面尚未就緒，請稍候再按「開啟子母字幕」。", "PiP is not ready yet. Try Open PiP Captions again shortly.")
                 return
             }
             pip.startPictureInPicture()
         } catch {
             status = L10n.tr("子母畫面啟動失敗：", "Failed to start PiP: ") + error.localizedDescription
+        }
+    }
+
+    func startAutomaticallyWhenReady(recording: Bool, maximumAttempts: Int = 5) {
+        guard PiPPresentationSettings.shared.autoStart, !active else { return }
+        autoStartTask?.cancel()
+        autoStartTask = Task { [weak self] in
+            guard let self else { return }
+            for attempt in 0..<maximumAttempts {
+                guard !Task.isCancelled, !self.active else { return }
+                if self.possible {
+                    self.start(recording: recording)
+                    return
+                }
+                if attempt + 1 < maximumAttempts {
+                    try? await Task.sleep(nanoseconds: 350_000_000)
+                }
+            }
+            self.status = L10n.tr("無法自動開啟；錄音仍持續，可按「開啟子母字幕」重試。", "Automatic PiP was unavailable. Recording continues; use Open PiP Captions to retry.")
         }
     }
 
@@ -208,7 +240,8 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
            translated == lastRenderedTranslation,
            displayMode == lastRenderedMode,
            aspectRatio == lastRenderedRatio,
-           isStaticTest == lastRenderedStaticTest {
+           isStaticTest == lastRenderedStaticTest,
+           presentationSignature == lastPresentationSignature {
             return
         }
 
@@ -263,85 +296,78 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
         context.scaleBy(x: 1, y: -1)
         UIGraphicsPushContext(context)
 
+        let settings = PiPPresentationSettings.shared
+        let actualSize = currentRenderSize ?? CGSize(width: width, height: height)
+        let actualMetrics = PiPLayoutMetrics.make(renderSize: actualSize, ratio: aspectRatio,
+                                                   mode: displayMode, fontScale: settings.fontScale, gap: settings.gap)
+        let renderScale = CGFloat(width) / max(1, actualSize.width)
+        let metrics = PiPLayoutMetrics(
+            horizontalPadding: actualMetrics.horizontalPadding * renderScale,
+            verticalPadding: actualMetrics.verticalPadding * renderScale,
+            originalFont: actualMetrics.originalFont * renderScale,
+            translationFont: actualMetrics.translationFont * renderScale,
+            blockGap: actualMetrics.blockGap * renderScale,
+            lineSpacing: actualMetrics.lineSpacing * renderScale,
+            maxLines: actualMetrics.maxLines
+        )
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byWordWrapping
-        paragraph.alignment = .natural
-        paragraph.lineSpacing = 4
+        paragraph.alignment = settings.alignment.nsAlignment
+        paragraph.lineSpacing = metrics.lineSpacing
 
-        let horizontalPadding: CGFloat = 36
+        let horizontalPadding = metrics.horizontalPadding
         let textWidth = CGFloat(width) - (horizontalPadding * 2)
 
         if isStaticTest {
-            // TEST P1: Static Renderer Test
-            let testParagraph = NSMutableParagraphStyle()
-            testParagraph.alignment = .center
-            testParagraph.lineSpacing = 8
-
-            let titleRect = CGRect(x: horizontalPadding, y: CGFloat(height) * 0.15, width: textWidth, height: CGFloat(height) * 0.35)
-            let subRect = CGRect(x: horizontalPadding, y: CGFloat(height) * 0.52, width: textWidth, height: CGFloat(height) * 0.35)
-
-            ("PIP TEST" as NSString).draw(in: titleRect, withAttributes: [
-                .font: UIFont.systemFont(ofSize: min(56.0, CGFloat(height) * 0.28), weight: .heavy),
-                .foregroundColor: UIColor.white,
-                .paragraphStyle: testParagraph
-            ])
-            ("測試字幕 123" as NSString).draw(in: subRect, withAttributes: [
-                .font: UIFont.systemFont(ofSize: min(48.0, CGFloat(height) * 0.24), weight: .bold),
-                .foregroundColor: UIColor(red: 1.0, green: 0.86, blue: 0.35, alpha: 1.0),
-                .paragraphStyle: testParagraph
-            ])
-        } else {
-            switch displayMode {
+            original = "The system is asymptotically stable."
+            translated = "這個系統是漸近穩定的。"
+        }
+        switch displayMode {
             case .chineseOnly:
                 let textToDraw = translated.isEmpty ? original : translated
-                let fontSize = min(54.0, max(26.0, translationSize * (CGFloat(height) / 120.0)))
-                let rect = CGRect(x: horizontalPadding, y: 28, width: textWidth, height: CGFloat(height) - 56)
+                let rect = captionRect(blockHeight: metrics.translationFont * CGFloat(metrics.maxLines + 1), canvasHeight: CGFloat(height), metrics: metrics, position: settings.verticalPosition)
                 (textToDraw as NSString).draw(in: rect, withAttributes: [
-                    .font: UIFont.systemFont(ofSize: fontSize, weight: .semibold),
+                    .font: UIFont.systemFont(ofSize: metrics.translationFont, weight: .semibold),
                     .foregroundColor: UIColor(red: 1.0, green: 0.86, blue: 0.35, alpha: 1.0),
                     .paragraphStyle: paragraph
                 ])
 
             case .originalOnly:
-                let fontSize = min(54.0, max(26.0, sourceSize * (CGFloat(height) / 120.0)))
-                let rect = CGRect(x: horizontalPadding, y: 28, width: textWidth, height: CGFloat(height) - 56)
+                let rect = captionRect(blockHeight: metrics.originalFont * CGFloat(metrics.maxLines + 1), canvasHeight: CGFloat(height), metrics: metrics, position: settings.verticalPosition)
                 (original as NSString).draw(in: rect, withAttributes: [
-                    .font: UIFont.systemFont(ofSize: fontSize, weight: .medium),
+                    .font: UIFont.systemFont(ofSize: metrics.originalFont, weight: .medium),
                     .foregroundColor: UIColor.white,
                     .paragraphStyle: paragraph
                 ])
 
             case .bilingual:
                 if translated.isEmpty {
-                    let fontSize = min(50.0, max(26.0, sourceSize * (CGFloat(height) / 120.0)))
-                    let rect = CGRect(x: horizontalPadding, y: 32, width: textWidth, height: CGFloat(height) - 64)
+                    let rect = captionRect(blockHeight: metrics.originalFont * CGFloat(metrics.maxLines + 1), canvasHeight: CGFloat(height), metrics: metrics, position: settings.verticalPosition)
                     (original as NSString).draw(in: rect, withAttributes: [
-                        .font: UIFont.systemFont(ofSize: fontSize, weight: .medium),
+                        .font: UIFont.systemFont(ofSize: metrics.originalFont, weight: .medium),
                         .foregroundColor: UIColor.white,
                         .paragraphStyle: paragraph
                     ])
                 } else {
-                    let ratioScale = CGFloat(height) / 240.0
-                    let origFontSize = min(40.0, max(20.0, sourceSize * 1.4 * ratioScale))
-                    let transFontSize = min(42.0, max(22.0, translationSize * 1.5 * ratioScale))
-
-                    let origHeight = (CGFloat(height) - 40) * 0.44
-                    let transHeight = (CGFloat(height) - 40) * 0.56
-                    let origY: CGFloat = 16
-                    let transY: CGFloat = origY + origHeight + 8
+                    let available = CGFloat(height) - metrics.verticalPadding * 2 - metrics.blockGap
+                    let origHeight = available * 0.46
+                    let transHeight = available * 0.54
+                    let totalHeight = origHeight + metrics.blockGap + transHeight
+                    let block = captionRect(blockHeight: totalHeight, canvasHeight: CGFloat(height), metrics: metrics, position: settings.verticalPosition)
+                    let origY = block.minY
+                    let transY = origY + origHeight + metrics.blockGap
 
                     (original as NSString).draw(in: CGRect(x: horizontalPadding, y: origY, width: textWidth, height: origHeight), withAttributes: [
-                        .font: UIFont.systemFont(ofSize: origFontSize, weight: .regular),
+                        .font: UIFont.systemFont(ofSize: metrics.originalFont, weight: .regular),
                         .foregroundColor: UIColor(white: 0.92, alpha: 1.0),
                         .paragraphStyle: paragraph
                     ])
                     (translated as NSString).draw(in: CGRect(x: horizontalPadding, y: transY, width: textWidth, height: transHeight), withAttributes: [
-                        .font: UIFont.systemFont(ofSize: transFontSize, weight: .semibold),
+                        .font: UIFont.systemFont(ofSize: metrics.translationFont, weight: .semibold),
                         .foregroundColor: UIColor(red: 1.0, green: 0.86, blue: 0.35, alpha: 1.0),
                         .paragraphStyle: paragraph
                     ])
                 }
-            }
         }
         UIGraphicsPopContext()
 
@@ -399,6 +425,7 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
             lastRenderedMode = displayMode
             lastRenderedRatio = aspectRatio
             lastRenderedStaticTest = isStaticTest
+            lastPresentationSignature = presentationSignature
         }
     }
 
@@ -448,7 +475,27 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
     }
 
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController, restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {
+        restoreUserInterface?()
         completionHandler(true)
+    }
+
+    private var presentationSignature: String {
+        let settings = PiPPresentationSettings.shared
+        return "\(settings.fontScale)|\(settings.alignment.rawValue)|\(settings.verticalPosition.rawValue)|\(settings.gap.rawValue)|\(currentRenderSize?.width ?? 0)x\(currentRenderSize?.height ?? 0)"
+    }
+
+    private func captionRect(blockHeight: CGFloat, canvasHeight: CGFloat, metrics: PiPLayoutMetrics,
+                             position: PiPVerticalPosition) -> CGRect {
+        let available = max(1, canvasHeight - metrics.verticalPadding * 2)
+        let height = min(available, blockHeight)
+        let y: CGFloat
+        switch position {
+        case .top: y = metrics.verticalPadding
+        case .center: y = (canvasHeight - height) / 2
+        case .bottom: y = canvasHeight - metrics.verticalPadding - height
+        }
+        return CGRect(x: metrics.horizontalPadding, y: y,
+                      width: max(1, CGFloat(aspectRatio.dimensions.width) - metrics.horizontalPadding * 2), height: height)
     }
 }
 

@@ -538,6 +538,13 @@ final class LectureController: ObservableObject {
         reloadHistory()
     }
 
+    func endLecture() async {
+        if isRecording { await pause() }
+        LiveActivityCoordinator.shared.stop()
+        CaptionFeed.shared.update(isRecording: false, isPaused: false)
+        status = L10n.tr("課堂已結束並儲存", "Lecture ended and saved")
+    }
+
     func recover() async {
         guard !isBusy, !isSummarizing, !isRecording, let session else { return }
         isBusy = true
