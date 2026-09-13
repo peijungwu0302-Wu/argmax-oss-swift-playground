@@ -386,4 +386,35 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertEqual(decoded.elapsedWhenPaused, 45.5)
         #endif
     }
+
+    func testLiveActivityClockPausesAndResumesWithoutEpochConversion() {
+        let start = Date(timeIntervalSince1970: 1_789_310_000)
+        var clock = LiveActivityClock(startedAt: start)
+
+        clock.pause(at: start.addingTimeInterval(264))
+        XCTAssertEqual(clock.elapsedWhenPaused, 264, accuracy: 0.001)
+        XCTAssertEqual(clock.timerReferenceDate, start)
+
+        clock.resume(at: start.addingTimeInterval(600))
+        XCTAssertEqual(clock.elapsedWhenPaused, 264, accuracy: 0.001)
+        XCTAssertEqual(clock.timerReferenceDate, start.addingTimeInterval(336),
+                       "Resume must derive a reference date from elapsed seconds, never treat elapsed seconds as Unix time")
+
+        clock.pause(at: start.addingTimeInterval(696))
+        XCTAssertEqual(clock.elapsedWhenPaused, 360, accuracy: 0.001)
+    }
+
+    func testLiveActivityPolicyCoalescesPartialsAndImmediatelyAcceptsFinalEvents() {
+        var policy = LiveActivityUpdatePolicy(partialInterval: 1)
+        let t0 = Date(timeIntervalSince1970: 1_789_310_000)
+
+        XCTAssertEqual(policy.accept(kind: .meaningfulPartial, revision: 1, original: "The", translation: "", at: t0), .send)
+        XCTAssertEqual(policy.accept(kind: .meaningfulPartial, revision: 2, original: "The system", translation: "", at: t0.addingTimeInterval(0.4)), .coalesce)
+        XCTAssertEqual(policy.accept(kind: .meaningfulPartial, revision: 3, original: "The system is stable", translation: "", at: t0.addingTimeInterval(1.1)), .send)
+        XCTAssertEqual(policy.accept(kind: .finalOriginal, revision: 4, original: "The system is stable.", translation: "", at: t0.addingTimeInterval(1.2)), .send)
+        XCTAssertEqual(policy.accept(kind: .finalTranslation, revision: 4, original: "The system is stable.", translation: "系統是穩定的。", at: t0.addingTimeInterval(1.3)), .send)
+        XCTAssertEqual(policy.accept(kind: .meaningfulPartial, revision: 5, original: "Next", translation: "", at: t0.addingTimeInterval(1.4)), .coalesce)
+        XCTAssertEqual(policy.accept(kind: .meaningfulPartial, revision: 5, original: "Next", translation: "", at: t0.addingTimeInterval(2.5)), .ignore,
+                       "Unchanged caption text must not wake ActivityKit")
+    }
 }
