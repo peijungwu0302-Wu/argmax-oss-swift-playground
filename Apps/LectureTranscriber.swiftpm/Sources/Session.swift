@@ -178,7 +178,7 @@ struct WindowDecision {
             provisional: lines.filter { line in !confirmed.contains(where: { $0.id == line.id }) }, consumed: consumed)
     }
 }
-enum TranscriptEngine: String, Codable, CaseIterable, Sendable {
+enum TranscriptEngine: String, Codable, CaseIterable, Sendable, Equatable {
     case apple = "apple"
     case whisper = "whisper"
     case sensevoice = "sensevoice"
@@ -194,7 +194,7 @@ enum TranscriptEngine: String, Codable, CaseIterable, Sendable {
     }
 }
 
-enum TranscriptSource: String, Codable, Sendable {
+enum TranscriptSource: String, Codable, Sendable, Equatable {
     case live = "live"
     case retranscription = "retranscription"
     case imported = "imported"
@@ -214,6 +214,11 @@ struct TranscriptVersion: Codable, Identifiable, Sendable, Equatable {
     var translationSource: String? = nil
     var source: TranscriptSource
     var isPreferred: Bool = false
+
+    enum CodingKeys: String, CodingKey {
+        case id, createdAt, name, engine, model, language, vocabulary
+        case lines, translations, translationSource, source, isPreferred
+    }
 
     init(id: UUID = UUID(),
          createdAt: Date = Date(),
@@ -239,6 +244,28 @@ struct TranscriptVersion: Codable, Identifiable, Sendable, Equatable {
         self.translationSource = translationSource
         self.source = source
         self.isPreferred = isPreferred
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        if let d = try? container.decode(Date.self, forKey: .createdAt) {
+            self.createdAt = d
+        } else if let s = try? container.decode(String.self, forKey: .createdAt), let d = ISO8601DateFormatter().date(from: s) {
+            self.createdAt = d
+        } else {
+            self.createdAt = Date()
+        }
+        self.name = try container.decodeIfPresent(String.self, forKey: .name) ?? "逐字稿"
+        self.engine = try container.decodeIfPresent(TranscriptEngine.self, forKey: .engine) ?? .apple
+        self.model = try container.decodeIfPresent(String.self, forKey: .model)
+        self.language = try container.decodeIfPresent(String.self, forKey: .language) ?? "zh"
+        self.vocabulary = try container.decodeIfPresent(String.self, forKey: .vocabulary)
+        self.lines = try container.decodeIfPresent([TranscriptLine].self, forKey: .lines) ?? []
+        self.translations = try container.decodeIfPresent([TranslatedLine].self, forKey: .translations)
+        self.translationSource = try container.decodeIfPresent(String.self, forKey: .translationSource)
+        self.source = try container.decodeIfPresent(TranscriptSource.self, forKey: .source) ?? .live
+        self.isPreferred = try container.decodeIfPresent(Bool.self, forKey: .isPreferred) ?? false
     }
 
     func translation(for line: TranscriptLine) -> TranslatedLine? {
@@ -448,7 +475,13 @@ struct LectureSession: Codable, Identifiable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         self.title = try container.decodeIfPresent(String.self, forKey: .title) ?? "課堂"
-        self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        if let d = try? container.decode(Date.self, forKey: .createdAt) {
+            self.createdAt = d
+        } else if let s = try? container.decode(String.self, forKey: .createdAt), let d = ISO8601DateFormatter().date(from: s) {
+            self.createdAt = d
+        } else {
+            self.createdAt = Date()
+        }
         self.model = try container.decodeIfPresent(String.self, forKey: .model) ?? "openai_whisper-large-v3-v20240930_turbo"
         self.language = try container.decodeIfPresent(String.self, forKey: .language) ?? "zh"
         self.vocabulary = try container.decodeIfPresent(String.self, forKey: .vocabulary)
@@ -616,7 +649,7 @@ enum SpeechBoundary {
     }
 }
 
-struct TranslatedLine: Codable, Identifiable, Sendable {
+struct TranslatedLine: Codable, Identifiable, Sendable, Equatable {
     var id: UUID
     var source: String
     var text: String
