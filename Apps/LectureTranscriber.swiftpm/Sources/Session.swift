@@ -274,7 +274,7 @@ struct LectureSession: Codable, Identifiable, Sendable {
     init(id: UUID = UUID(),
          title: String,
          createdAt: Date = Date(),
-         model: String = SpeechModel.turbo.rawValue,
+         model: String = "openai_whisper-large-v3-v20240930_turbo",
          language: String = "zh",
          vocabulary: String? = nil,
          recognitionEngine: String? = nil,
@@ -449,7 +449,7 @@ struct LectureSession: Codable, Identifiable, Sendable {
         self.id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         self.title = try container.decodeIfPresent(String.self, forKey: .title) ?? "課堂"
         self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
-        self.model = try container.decodeIfPresent(String.self, forKey: .model) ?? SpeechModel.turbo.rawValue
+        self.model = try container.decodeIfPresent(String.self, forKey: .model) ?? "openai_whisper-large-v3-v20240930_turbo"
         self.language = try container.decodeIfPresent(String.self, forKey: .language) ?? "zh"
         self.vocabulary = try container.decodeIfPresent(String.self, forKey: .vocabulary)
         self.recognitionEngine = try container.decodeIfPresent(String.self, forKey: .recognitionEngine)
@@ -492,7 +492,7 @@ struct LectureSession: Codable, Identifiable, Sendable {
             } else {
                 engine = .whisper
                 source = transcriptionPass == "context30" ? .retranscription : .live
-                let modelLabel = (model == SpeechModel.turbo.rawValue ? "Turbo" : (model == SpeechModel.base.rawValue ? "Base" : (model == SpeechModel.small.rawValue ? "Small" : "Large v3")))
+                let modelLabel = (model.contains("turbo") ? "Turbo" : (model.contains("base") ? "Base" : (model.contains("small") ? "Small" : "Large v3")))
                 name = transcriptionPass == "context30" ? "Whisper v3 · Retranscription (\(modelLabel))" : "Whisper v3 · Live"
             }
 
@@ -670,7 +670,7 @@ enum TranscriptExport {
         let result = String(format: "%02d:%02d:%02d", total / 3_600_000, (total / 60_000) % 60, (total / 1000) % 60)
         return milliseconds ? result + String(format: ",%03d", total % 1000) : result
     }
-    static func render(_ session: LectureSession, version: TranscriptVersion? = nil, as format: TranscriptFormat) -> String {
+    static func render(_ session: LectureSession, as format: TranscriptFormat, version: TranscriptVersion? = nil) -> String {
         let currentVersion = version ?? session.preferredVersion
         let lines = (currentVersion?.lines ?? session.lines).sorted { $0.start < $1.start }
         if format == .srt {
@@ -777,15 +777,18 @@ struct SessionStore {
             try FileManager.default.removeItem(at: destination)
         }
     }
-    func export(_ session: LectureSession, version: TranscriptVersion? = nil, format: TranscriptFormat) throws -> URL {
+    func export(_ session: LectureSession, format: TranscriptFormat, version: TranscriptVersion? = nil) throws -> URL {
         let v = version ?? session.preferredVersion
         let suffix = (v != nil && session.transcriptVersions.count > 1) ? "_\(v!.name)" : ""
         let baseName = (session.title + suffix).components(separatedBy: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_ ")).inverted)
             .joined(separator: "_").prefix(60)
         let name = baseName.isEmpty ? "逐字稿" : String(baseName)
         let url = folder(session.id).appendingPathComponent("\(name).\(format.fileExtension)")
-        try TranscriptExport.render(session, version: v, as: format).write(to: url, atomically: true, encoding: .utf8)
+        try TranscriptExport.render(session, as: format, version: v).write(to: url, atomically: true, encoding: .utf8)
         return url
+    }
+    func export(_ session: LectureSession, version: TranscriptVersion?, format: TranscriptFormat) throws -> URL {
+        try export(session, format: format, version: version)
     }
 }
 
