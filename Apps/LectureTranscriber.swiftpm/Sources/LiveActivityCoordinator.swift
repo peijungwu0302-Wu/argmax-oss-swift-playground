@@ -30,7 +30,7 @@ struct LiveActivityClock: Equatable {
     var isPaused: Bool { runningSince == nil }
 }
 
-enum LiveActivityCaptionKind { case meaningfulPartial, finalOriginal, finalTranslation }
+enum LiveActivityCaptionKind: Equatable { case meaningfulPartial, finalOriginal, finalTranslation }
 enum LiveActivityUpdateDecision: Equatable { case send, coalesce, ignore }
 
 struct LiveActivityUpdatePolicy {
@@ -147,8 +147,13 @@ final class LiveActivityCoordinator: ObservableObject {
 
     func updateTranscript(original: String, translation: String, revision: Int? = nil) {
         #if canImport(ActivityKit)
-        updateCaption(original: original, translation: translation,
-                      revision: revision ?? lastRevision + 1, kind: .finalOriginal)
+        let isTranslationRevision = !translation.isEmpty && original == lastOriginal
+        updateCaption(
+            original: original,
+            translation: translation,
+            revision: revision ?? (isTranslationRevision ? lastRevision : lastRevision + 1),
+            kind: isTranslationRevision ? .finalTranslation : .finalOriginal
+        )
         #endif
     }
 
@@ -235,6 +240,7 @@ final class LiveActivityCoordinator: ObservableObject {
     private func publishCurrentState() {
         guard let activity = activeActivity as? Activity<LectureActivityAttributes> else { return }
         let state = contentState()
+        print("CaptionLatency activity_update_request=\(Date().timeIntervalSince1970) revision=\(state.captionRevision)")
         Task {
             if #available(iOS 16.2, *) {
                 await activity.update(ActivityContent(state: state, staleDate: nil))

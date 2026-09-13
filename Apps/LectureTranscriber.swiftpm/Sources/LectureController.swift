@@ -24,6 +24,7 @@ final class LectureController: ObservableObject {
         didSet {
             CaptionFeed.shared.update(original: caption, translation: validTranslatedDraft)
             if !liveDraft.isEmpty {
+                print("CaptionLatency speech_partial=\(Date().timeIntervalSince1970) revision=\(draftRevision)")
                 LiveActivityCoordinator.shared.updatePartial(
                     original: caption,
                     translation: validTranslatedDraft,
@@ -350,7 +351,12 @@ final class LectureController: ObservableObject {
             try store.save(current)
             session = current
             if usesAppleSpeech { try await startApple(part, current: current) }
-            do { try recorder.start(at: store.audioURL(current, part), allowsPlayback: pipEnabled) }
+            do {
+                try recorder.start(
+                    at: store.audioURL(current, part),
+                    allowsPlayback: pipEnabled || PiPPresentationSettings.shared.autoStart
+                )
+            }
             catch {
                 // A failed start may still have created a recoverable empty PCM file.
                 session?.parts.removeLast()
@@ -1213,6 +1219,7 @@ final class LectureController: ObservableObject {
                     self.session?.previousLines = nil
                     let newLine = TranscriptLine(start: offset + confirmed.start, end: offset + confirmed.end, text: confirmed.text)
                     self.session?.lines.append(newLine)
+                    print("CaptionLatency final_transcript=\(Date().timeIntervalSince1970)")
                     LiveActivityCoordinator.shared.updateTranscript(original: confirmed.text, translation: self.validTranslatedDraft)
                     CaptionFeed.shared.update(original: self.caption, translation: self.validTranslatedDraft)
                 }
@@ -1287,6 +1294,7 @@ final class LectureController: ObservableObject {
         values.append(TranslatedLine(id: line.id, source: line.text, text: text))
         session?.transcriptVersions[idx].translations = values
         persist()
+        print("CaptionLatency translation_update=\(Date().timeIntervalSince1970)")
         LiveActivityCoordinator.shared.updateTranscript(original: line.text, translation: text)
         CaptionFeed.shared.update(original: caption, translation: text)
     }

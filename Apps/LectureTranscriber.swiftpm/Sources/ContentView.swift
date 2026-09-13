@@ -515,12 +515,12 @@ struct ContentView: View {
                 Section(L10n.tr("1. 辨識核心", "1. Recognition Engine")) {
                     Picker(L10n.tr("辨識引擎", "Speech Engine"), selection: Binding(get: { controller.recognitionEngine }, set: { value in
                         controller.setRecognitionEngine(value)
-                        if value == "apple" && controller.language == "auto" { controller.setLanguage("zh") }
+                        if value == "apple" && RecognitionLanguage.primary(controller.language) == nil { controller.setLanguage("zh") }
                         if value == "sensevoice" { controller.setLanguage("auto") }
                     })) {
-                        Text(L10n.tr("Apple 即時語音 · iPadOS 26", "Apple Speech · Live")).tag("apple")
+                        Text(L10n.tr("Apple Speech · 系統內建 · 最快／最省電", "Apple Speech · System Built-in · Fastest / Efficient")).tag("apple")
                         Text(L10n.tr("WhisperKit · Turbo 等模型", "WhisperKit · Models")).tag("whisper")
-                        Text(L10n.tr("SenseVoice Core ML · 中英混說實驗版", "SenseVoice Core ML · Bilingual")).tag("sensevoice")
+                        Text(L10n.tr("SenseVoice · 中英混合／多語快速", "SenseVoice · Mixed-language / Multilingual Fast")).tag("sensevoice")
                     }.disabled(!controller.canManageSessions)
 
                     if controller.usesWhisper {
@@ -588,16 +588,26 @@ struct ContentView: View {
                         }
                     }
 
-                    Picker(L10n.tr("辨識語言", "Recognition Language"), selection: Binding(get: {
-                        RecognitionLanguage.isMixed(controller.language) ? "mixed" : controller.language
-                    }, set: { value in
-                        controller.setLanguage(value == "mixed" && controller.language == "en" ? "mixed-en" : value)
-                    })) {
-                        Text(L10n.tr("自動", "Auto")).tag("auto")
-                        Text(L10n.tr("中英夾雜", "Mixed")).tag("mixed")
-                        Text(L10n.tr("中文", "Chinese")).tag("zh")
-                        Text(L10n.tr("英文", "English")).tag("en")
-                    }.disabled(!controller.canManageSessions)
+                    if controller.usesAppleSpeech {
+                        Picker(L10n.tr("辨識語言", "Recognition Language"), selection: Binding(
+                            get: { RecognitionLanguage.primary(controller.language) ?? "zh" },
+                            set: { controller.setLanguage($0) }
+                        )) {
+                            Text(L10n.tr("繁體中文", "Traditional Chinese")).tag("zh")
+                            Text("English").tag("en")
+                        }
+                        Text(L10n.tr("Apple Speech 每次使用一個主要語言；中英混說請改用 SenseVoice。", "Apple Speech uses one selected locale. Use SenseVoice for mixed Chinese and English."))
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Picker(L10n.tr("辨識語言", "Recognition Language"), selection: Binding(get: {
+                            RecognitionLanguage.isMixed(controller.language) ? "mixed" : controller.language
+                        }, set: { controller.setLanguage($0) })) {
+                            if controller.usesSenseVoice { Text(L10n.tr("自動語言", "Automatic Language")).tag("auto") }
+                            Text(L10n.tr("中英混合", "Mixed Chinese / English")).tag("mixed")
+                            Text(L10n.tr("中文", "Chinese")).tag("zh")
+                            Text(L10n.tr("英文", "English")).tag("en")
+                        }
+                    }
 
                     Picker(L10n.tr("翻譯來源語言", "Translation Source"), selection: Binding(get: { controller.translationSource }, set: { controller.setTranslationSource($0) })) {
                         Text(L10n.tr("英文 → 繁中", "English → Chinese")).tag("en")
@@ -676,7 +686,7 @@ struct ContentView: View {
                 }
 
                 // SECTION 6: 模型與資源管理
-                Section(L10n.tr("6. 模型與資源管理", "6. Model & Resource Management")) {
+                Section(controller.usesAppleSpeech ? L10n.tr("6. 系統資源", "6. System Resources") : L10n.tr("6. 可下載 App 模型", "6. Downloadable App Models")) {
                     HStack {
                         Text(L10n.tr("目前進度", "Current Progress"))
                         Spacer()
@@ -690,13 +700,19 @@ struct ContentView: View {
                     Button {
                         Task { await controller.prepareModel() }
                     } label: {
-                        Label(controller.loadedModel != nil ? L10n.tr("模型已就緒", "Model Ready") : L10n.tr("下載 / 載入模型", "Download / Load Model"), systemImage: "arrow.down.circle")
+                        if controller.usesAppleSpeech {
+                            Label(controller.loadedModel == "apple" ? L10n.tr("Apple Speech · 系統內建 · 已就緒", "Apple Speech · System Built-in · Ready") : L10n.tr("準備語音資源", "Prepare Speech Resource"), systemImage: "waveform")
+                        } else {
+                            Label(controller.loadedModel != nil ? L10n.tr("模型已就緒", "Model Ready") : L10n.tr("下載 / 載入模型", "Download / Load Model"), systemImage: "arrow.down.circle")
+                        }
                     }
                     .accessibilityLabel("載入模型")
                     .accessibilityIdentifier("載入模型")
                     .disabled(!controller.canManageSessions)
 
-                    Text(L10n.tr("模型統一儲存於 Application Support / SpeechModels，支援完全離線辨識。進度條依真實傳輸位元組計算，絕無假百分比。", "Models stored in Application Support / SpeechModels for offline use. Real byte-level download progress."))
+                    Text(controller.usesAppleSpeech
+                         ? L10n.tr("開始錄音時會自動檢查 Apple Speech 系統資源；不必先在設定中下載。", "Apple Speech system resources are checked automatically when recording starts.")
+                         : L10n.tr("App 模型儲存於 Application Support / SpeechModels，既有模型不會因更新而重新下載。", "App models remain in Application Support / SpeechModels and are retained across updates."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
