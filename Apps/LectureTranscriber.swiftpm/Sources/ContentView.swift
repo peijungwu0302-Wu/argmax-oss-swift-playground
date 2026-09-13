@@ -39,6 +39,10 @@ struct ContentView: View {
     private let ink = Color(red: 0.20, green: 0.19, blue: 0.16)
     private let gold = Color(red: 0.59, green: 0.40, blue: 0.08)
     private let red = Color(red: 0.69, green: 0.18, blue: 0.14)
+    private var isFullTranscript: Bool {
+        if case .fullTranscript = navigation.route { return true }
+        return false
+    }
 
     var body: some View {
         NavigationStack {
@@ -86,13 +90,13 @@ struct ContentView: View {
             .background(CompactWindowSizing(compact: compactMode || pipPreview).frame(width: 0, height: 0))
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
-                    if !compactMode && !pipPreview && captionMode && (controller.isRecording || !controller.caption.isEmpty) { captionPanel }
-                    if !compactMode && !pipPreview { bottomBar }
+                    if !isFullTranscript && !compactMode && !pipPreview && captionMode && (controller.isRecording || !controller.caption.isEmpty) { captionPanel }
+                    if !isFullTranscript && !compactMode && !pipPreview { bottomBar }
                 }
             }
             .navigationTitle(compactMode ? "字幕" : "錄音")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar(compactMode || pipPreview ? .hidden : .visible, for: .navigationBar)
+            .toolbar(compactMode || pipPreview || isFullTranscript ? .hidden : .visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button { controller.reloadHistory(); showHistory = true } label: {
@@ -123,7 +127,6 @@ struct ContentView: View {
                     }
                     Button { showSettings = true } label: { Label("錄音設定", systemImage: "slider.horizontal.3") }
                     Menu {
-                        Button("子母畫面字幕（beta）") { pipPreview = true; controller.pipEnabled = true }
                         Button("講者分析與命名（beta）") { showSpeakers = true }
                         if controller.session?.previousLines != nil { Button("復原最近一次稿件替換") { controller.undoReview() } }
                         Button("錄音檔案：播放與分享") { showAudio = true }
@@ -223,7 +226,6 @@ struct ContentView: View {
                 Menu("控制") {
                     Button("完整畫面") { pip.detach(); pipPreview = false; controller.pipEnabled = false; compactMode = false }
                     Button("改用可縮小視窗字幕") { pip.detach(); pipPreview = false; controller.pipEnabled = false; compactMode = true }
-                    Toggle("靜態測試畫面 (PIP TEST)", isOn: $pip.isStaticTest)
                     Button("字級與設定") { showSettings = true }
                     if controller.isRecording { Button("停止並儲存") { Task { await controller.pause() } }.disabled(controller.isBusy) }
                     else { Button(recordLabel) { Task { if controller.session?.hasPendingAudio == true { await controller.recover() } else { await controller.start() } } }.disabled(!controller.canStart && controller.session?.hasPendingAudio != true) }
@@ -243,7 +245,6 @@ struct ContentView: View {
             Menu {
                 Button("完整畫面") { compactMode = false }
                 Button("字級與設定") { showSettings = true }
-                Button("子母畫面字幕（beta）") { pipPreview = true; controller.pipEnabled = true }
                 Toggle("中文翻譯", isOn: $controller.translationEnabled)
                 if controller.isRecording {
                     Button("停止並儲存") { Task { await controller.pause() } }.disabled(controller.isBusy)

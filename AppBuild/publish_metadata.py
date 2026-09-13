@@ -8,7 +8,14 @@ def generate(ipa: Path, destination: Path):
         paths = [p for p in archive.namelist() if p.startswith('Payload/') and p.count('/') == 2 and p.endswith('/Info.plist')]
         assert len(paths) == 1
         info = plistlib.loads(archive.read(paths[0]))
-        assert not any('.appex/' in p for p in archive.namelist())
+        appex_roots = {
+            p.split('/Info.plist')[0]
+            for p in archive.namelist()
+            if '/PlugIns/' in p and '.appex/Info.plist' in p
+        }
+        assert appex_roots == {'Payload/LectureTranscriber.app/PlugIns/LectureTranscriberWidget.appex'}
+        widget = plistlib.loads(archive.read('Payload/LectureTranscriber.app/PlugIns/LectureTranscriberWidget.appex/Info.plist'))
+        assert widget['CFBundleIdentifier'] == 'com.peijungwu0302.lecturetranscriber.widget'
     identifier = 'com.peijungwu0302.lecturetranscriber'
     assert info['CFBundleIdentifier'] == identifier
     assert sorted(info['UIDeviceFamily']) == [1, 2]
@@ -16,7 +23,7 @@ def generate(ipa: Path, destination: Path):
     assert ipa.name in [f'LectureTranscriber-{version}-unsigned.ipa', f'LectureTranscriber-v{version}.ipa']
     base = 'https://raw.githubusercontent.com/peijungwu0302-Wu/argmax-oss-swift-playground/playground-compatible/'
     url = f'https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/download/v{version}/LectureTranscriber-v{version}.ipa'
-    notes = '實時繁中翻譯速度與穩定性提升、切換辨識引擎不中斷翻譯、雙軌優先佇列與可調頻率、統一 ResourceState 真實位元組進度、全新 1200×240 (5:1) PiP 長條字幕、日期分組課堂庫、跨片段連續播放與時間軸跳轉高亮、多版本翻譯解耦相容、中英雙語在地化、iPhone/iPad 通用 SideStore 側載最佳化。'
+    notes = '錄音後自動開啟 PiP 字幕、可即時調整字級與排版、完整逐字稿 Follow Live、PiP 與 Live Activity 返回目前課堂、Live Activity 計時與更新延遲修正，以及 Apple Speech／Translation 系統資源預設流程。'
     minimum = info.get('MinimumOSVersion', '16.0')
     update = dict(bundleIdentifier=identifier, version=version, build=build, minimumOS=minimum, downloadURL=url, notes=notes)
     icon = base + 'Apps/LectureTranscriber.swiftpm/Sources/Assets.xcassets/AppIcon.appiconset/AppIcon.png'

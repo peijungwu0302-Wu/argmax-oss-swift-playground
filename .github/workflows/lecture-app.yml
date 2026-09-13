@@ -112,14 +112,14 @@ jobs:
             Deliverables/sidestore.json
           name: LectureTranscriber v1.8.2
           body: |
-            ## LectureTranscriber v1.8.2 ("PiP Stability + Live Activity")
-            - 修正 PiP 只顯示黑畫面的問題（修復 CVPixelBuffer 格式為 32BGRA、IOSurface 支援與 DisplayImmediately 立即顯示）
-            - PiP 即時顯示原文與繁中翻譯，透過獨立 CaptionFeed 提供不中斷字幕流
-            - 切換至其他 App（GoodNotes、Safari、PDF 等）背景錄音與即時辨識翻譯持續運作（≥60s）
-            - 新增 3:1 / 5:1 / 6:1 字幕比例，預設使用 5:1 字幕條，支援雙語、僅翻譯、僅原文模式
-            - 新增鎖定畫面 Live Activity（即時動態），系統原生計時器自動跳秒，顯示最新原文與翻譯
-            - 新增 iPhone Dynamic Island（動態島）整合（Compact / Expanded）
-            - 嚴格遵守 SideStore / Personal Team 側載架構：單一 Widget Extension，無 App Groups，無 APNs / Push，無 Home Screen Widget
+            ## LectureTranscriber v1.8.2
+            - 開始錄音後可自動開啟 PiP，並提供 3:1 / 5:1 / 6:1、75%～150% 字幕、對齊、位置及原文／翻譯間距調整
+            - 新增真正 PiP 預覽與 active PiP 即時 presentation 更新
+            - 完整逐字稿保留 finalized 歷史與對應翻譯，Current Draft 獨立顯示，支援 Follow Live
+            - PiP Restore 與 Live Activity deep link 可返回目前課堂完整逐字稿
+            - 修正 Live Activity 巨大計時器，加入 stable partial 節流、final 即時更新與 caption revision 配對
+            - Apple Speech 與 Apple Translation 採系統資源預設流程；SenseVoice 保留中英混合／多語快速定位
+            - 維持單一 Widget Extension、既有 Bundle ID，以及所有錄音、模型與逐字稿資料位置
           draft: false
           prerelease: false
       - name: Report validation errors

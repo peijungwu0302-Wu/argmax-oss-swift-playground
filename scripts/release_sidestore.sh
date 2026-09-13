@@ -68,6 +68,16 @@ if [ "$VERSION" != "1.7.0" ] && [ "$VERSION" != "1.8.0" ]; then
     exit 1
   fi
 fi
+python3 - "${IPA}" <<'PY'
+import plistlib, sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    roots = {name.split('/Info.plist')[0] for name in archive.namelist()
+             if '/PlugIns/' in name and '.appex/Info.plist' in name}
+    expected = {'Payload/LectureTranscriber.app/PlugIns/LectureTranscriberWidget.appex'}
+    assert roots == expected, f'Expected the single existing widget extension, got {sorted(roots)}'
+    widget = plistlib.loads(archive.read(next(iter(roots)) + '/Info.plist'))
+    assert widget['CFBundleIdentifier'] == 'com.peijungwu0302.lecturetranscriber.widget'
+PY
 
 IPA_SIZE=$(wc -c < "${IPA}" | tr -d ' ')
 if [ "$IPA_SIZE" -lt 100000 ]; then
@@ -154,17 +164,30 @@ if [ "$VERSION" != "1.7.0" ] && [ "$VERSION" != "1.8.0" ]; then
     exit 1
   fi
 fi
+python3 - "${TMP_IPA}" <<'PY'
+import plistlib, sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    roots = {name.split('/Info.plist')[0] for name in archive.namelist()
+             if '/PlugIns/' in name and '.appex/Info.plist' in name}
+    expected = {'Payload/LectureTranscriber.app/PlugIns/LectureTranscriberWidget.appex'}
+    assert roots == expected, f'Downloaded IPA extensions differ: {sorted(roots)}'
+PY
 rm -f "${TMP_IPA}"
 echo "✓ Downloaded IPA verified"
 
 # Stage 7: Update SideStore and App Update manifests
 echo "==> [7/8] Updating SideStore and app update manifests..."
 python3 - <<PY
-import json, sys, datetime
+import json, sys, datetime, plistlib, zipfile
 
 version = "${VERSION}"
 url = "${URL}"
 size = int("${IPA_SIZE}")
+with zipfile.ZipFile("${IPA}") as archive:
+    main_info_path = next(name for name in archive.namelist()
+                          if name.startswith("Payload/") and name.count("/") == 2 and name.endswith("/Info.plist"))
+    main_info = plistlib.loads(archive.read(main_info_path))
+build = int(main_info["CFBundleVersion"])
 
 # 1. Update Deliverables/sidestore.json
 with open("Deliverables/sidestore.json", "r", encoding="utf-8") as f:
@@ -200,6 +223,7 @@ with open("Deliverables/update.json", "r", encoding="utf-8") as f:
     up_data = json.load(f)
 
 up_data["version"] = version
+up_data["build"] = build
 up_data["downloadURL"] = url
 
 with open("Deliverables/update.json", "w", encoding="utf-8") as f:
