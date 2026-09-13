@@ -25,8 +25,6 @@ struct ContentView: View {
     @State private var renameTitle = ""
     @State private var showRenameAlert = false
     @State private var captionMode = true
-    @State private var compactMode = false
-    @State private var pipPreview = false
     @State private var reviewedLine: TranscriptLine?
     @State private var showSpeakers = false
     @StateObject private var pip = CaptionPiP()
@@ -49,10 +47,6 @@ struct ContentView: View {
             GeometryReader { geometry in
                 if case .fullTranscript(let id) = navigation.route {
                     FullTranscriptView(controller: controller, lectureID: id)
-                } else if pipPreview {
-                    pipWorkspace
-                } else if compactMode {
-                    compactWorkspace
                 } else {
                 ScrollView {
                     VStack(spacing: 20) {
@@ -87,16 +81,15 @@ struct ContentView: View {
             }
             .background(paper)
             .foregroundStyle(ink)
-            .background(CompactWindowSizing(compact: compactMode || pipPreview).frame(width: 0, height: 0))
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
-                    if !isFullTranscript && !compactMode && !pipPreview && captionMode && (controller.isRecording || !controller.caption.isEmpty) { captionPanel }
-                    if !isFullTranscript && !compactMode && !pipPreview { bottomBar }
+                    if !isFullTranscript && captionMode && (controller.isRecording || !controller.caption.isEmpty) { captionPanel }
+                    if !isFullTranscript { bottomBar }
                 }
             }
-            .navigationTitle(compactMode ? "字幕" : "錄音")
+            .navigationTitle(L10n.tr("錄音", "Recording"))
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar(compactMode || pipPreview || isFullTranscript ? .hidden : .visible, for: .navigationBar)
+            .toolbar(isFullTranscript ? .hidden : .visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button { controller.reloadHistory(); showHistory = true } label: {
@@ -118,13 +111,11 @@ struct ContentView: View {
                     } label: {
                         Image(systemName: pip.active ? "pip.fill" : "pip.enter")
                     }.accessibilityLabel(L10n.tr("開啟子母字幕", "Open PiP Captions"))
-                    if !compactMode {
                     Button { captionMode.toggle() } label: {
                         Image(systemName: captionMode ? "captions.bubble.fill" : "captions.bubble")
                     }.accessibilityLabel("字幕模式")
                     Button { controller.newLecture() } label: { Label("新課堂", systemImage: "square.and.pencil") }
                         .disabled(!controller.canManageSessions)
-                    }
                     Button { showSettings = true } label: { Label("錄音設定", systemImage: "slider.horizontal.3") }
                     Menu {
                         Button("講者分析與命名（beta）") { showSpeakers = true }
@@ -197,63 +188,6 @@ struct ContentView: View {
                 navigation.restoreCurrentLectureTranscript(activeLectureID: controller.session?.id)
             }
         }
-    }
-
-    private var pipWorkspace: some View {
-        let ratioValue: CGFloat = pip.aspectRatio == .standard ? 3.0 : (pip.aspectRatio == .bar ? 5.0 : 6.0)
-        return VStack(spacing: 6) {
-            CaptionPiPPreview(pip: pip, original: controller.caption, translated: controller.translationEnabled ? controller.translationCaption : "",
-                              sourceSize: captionFontSize, translationSize: translationFontSize)
-                .aspectRatio(ratioValue, contentMode: .fit)
-            HStack(spacing: 12) {
-                Button(pip.active ? "結束子母畫面" : "啟動子母畫面") {
-                    if pip.active { pip.stop() } else { pip.start(recording: controller.isRecording) }
-                }
-                Picker("比例", selection: $pip.aspectRatio) {
-                    ForEach(PiPAspectRatio.allCases) { ratio in
-                        Text(ratio.rawValue).tag(ratio)
-                    }
-                }
-                .pickerStyle(.menu)
-
-                Picker("模式", selection: $pip.displayMode) {
-                    ForEach(PiPDisplayMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
-                    }
-                }
-                .pickerStyle(.menu)
-
-                Menu("控制") {
-                    Button("完整畫面") { pip.detach(); pipPreview = false; controller.pipEnabled = false; compactMode = false }
-                    Button("改用可縮小視窗字幕") { pip.detach(); pipPreview = false; controller.pipEnabled = false; compactMode = true }
-                    Button("字級與設定") { showSettings = true }
-                    if controller.isRecording { Button("停止並儲存") { Task { await controller.pause() } }.disabled(controller.isBusy) }
-                    else { Button(recordLabel) { Task { if controller.session?.hasPendingAudio == true { await controller.recover() } else { await controller.start() } } }.disabled(!controller.canStart && controller.session?.hasPendingAudio != true) }
-                }
-            }.font(.caption)
-            Text(pip.status).font(.caption2)
-            Spacer(minLength: 0)
-        }.frame(maxWidth: .infinity, maxHeight: .infinity).background(.black).foregroundStyle(.white)
-    }
-
-    private var compactWorkspace: some View {
-        ScrollView {
-            captionPanel.padding(.trailing, 32)
-        }
-        .background(Color(red: 0.13, green: 0.13, blue: 0.14))
-        .overlay(alignment: .topTrailing) {
-            Menu {
-                Button("完整畫面") { compactMode = false }
-                Button("字級與設定") { showSettings = true }
-                Toggle("中文翻譯", isOn: $controller.translationEnabled)
-                if controller.isRecording {
-                    Button("停止並儲存") { Task { await controller.pause() } }.disabled(controller.isBusy)
-                }
-            } label: {
-                Image(systemName: "ellipsis").frame(width: 44, height: 44).foregroundStyle(.white)
-            }.accessibilityLabel("字幕控制")
-        }
-        .accessibilityIdentifier("compactCaptionWorkspace")
     }
 
     private var appleLanguageControls: some View {
@@ -334,20 +268,18 @@ struct ContentView: View {
 
     private var captionPanel: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if !compactMode {
             HStack {
                 Label("即時字幕", systemImage: "captions.bubble.fill").font(.caption.bold())
                 Spacer()
                 Text(controller.displayedDraft.isEmpty ? "已確認" : "辨識中 · 可修正").font(.caption)
             }.foregroundStyle(.white.opacity(0.7))
-            }
             Text(controller.caption.isEmpty ? "等待語音…" : controller.caption)
-                .font(.system(size: captionFontSize, weight: .medium)).lineLimit(compactMode ? nil : 4)
+                .font(.system(size: captionFontSize, weight: .medium)).lineLimit(4)
                 .frame(maxWidth: .infinity, alignment: .leading).foregroundStyle(.white)
             if controller.translationEnabled && !controller.translationCaption.isEmpty {
-                Text(controller.translationCaption).font(.system(size: translationFontSize)).lineLimit(compactMode ? nil : 4)
+                Text(controller.translationCaption).font(.system(size: translationFontSize)).lineLimit(4)
                     .foregroundStyle(Color(red: 1, green: 0.85, blue: 0.45))
-                if !compactMode && !controller.validTranslatedDraft.isEmpty {
+                if !controller.validTranslatedDraft.isEmpty {
                     Text("翻譯草稿 · 稍晚於原文更新").font(.caption2).foregroundStyle(.white.opacity(0.65))
                 }
             }
@@ -451,7 +383,6 @@ struct ContentView: View {
 
     private var bottomBar: some View {
         VStack(spacing: 10) {
-            if !compactMode {
             HStack(spacing: 12) {
                 Button {
                     if let url = controller.exportNotes(translation: true) { sharedFile = SharedFile(url: url) }
@@ -464,7 +395,6 @@ struct ContentView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(controller.session?.lines.isEmpty != false)
             }.font(.callout)
-            }
             HStack(spacing: 12) {
                 Button {
                     Task {
@@ -480,7 +410,10 @@ struct ContentView: View {
                 .disabled(controller.isBusy || controller.isSummarizing || (!controller.isRecording && !controller.canStart && controller.session?.hasPendingAudio != true))
                 if controller.session != nil {
                     Button {
-                        Task { await controller.endLecture() }
+                        Task {
+                            await controller.endLecture()
+                            pip.stop()
+                        }
                     } label: {
                         Image(systemName: "stop.fill").frame(width: 44, height: 44)
                     }
@@ -637,6 +570,7 @@ struct ContentView: View {
                     VStack(alignment: .leading) {
                         Text(L10n.tr("字幕大小：\(Int(pipSettings.fontScale * 100))%", "Caption Size: \(Int(pipSettings.fontScale * 100))%"))
                         Slider(value: $pipSettings.fontScale, in: 0.75...1.5, step: 0.05)
+                            .accessibilityIdentifier("pipFontScale")
                     }
                     Picker(L10n.tr("文字對齊", "Text Alignment"), selection: $pipSettings.alignment) {
                         ForEach(PiPTextAlignment.allCases) { Text($0.title).tag($0) }

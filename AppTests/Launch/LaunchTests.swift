@@ -16,37 +16,21 @@ final class LaunchTests: XCTestCase {
         primary.buttons["中文"].tap()
         XCTAssertTrue(primary.buttons["中文"].isSelected)
         XCTAssertTrue(app.buttons["字幕模式"].exists)
-        app.buttons["精簡字幕"].tap()
-        XCTAssertTrue(app.scrollViews["compactCaptionWorkspace"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.textFields["課堂名稱"].exists)
-        XCTAssertFalse(app.buttons["開始錄音"].exists)
-        XCTAssertFalse(app.navigationBars["字幕"].exists)
-        let compactAttachment = XCTAttachment(screenshot: app.screenshot())
-        compactAttachment.name = "Compact captions for windowed use"
-        compactAttachment.lifetime = .keepAlways
-        add(compactAttachment)
-        app.buttons["字幕控制"].tap()
-        app.buttons["子母畫面字幕（beta）"].tap()
-        XCTAssertTrue(app.buttons["啟動子母畫面"].waitForExistence(timeout: 5))
-        let pipAttachment = XCTAttachment(screenshot: app.screenshot())
-        pipAttachment.name = "PiP caption preview"
-        pipAttachment.lifetime = .keepAlways
-        add(pipAttachment)
-        app.buttons["控制"].tap()
-        app.buttons["完整畫面"].tap()
-        XCTAssertTrue(app.textFields["課堂名稱"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["開啟子母字幕"].exists)
         app.buttons["錄音設定"].tap()
         for _ in 0..<8 {
-            if app.sliders["原文字幕大小"].isHittable { break }
+            if app.sliders["pipFontScale"].isHittable { break }
             app.swipeUp()
         }
-        XCTAssertTrue(app.sliders["原文字幕大小"].waitForExistence(timeout: 5))
-        app.sliders["原文字幕大小"].adjust(toNormalizedSliderPosition: 0.7)
+        XCTAssertTrue(app.sliders["pipFontScale"].waitForExistence(timeout: 5))
+        app.sliders["pipFontScale"].adjust(toNormalizedSliderPosition: 0.7)
+        XCTAssertTrue(app.buttons["在子母畫面中預覽"].exists)
+        XCTAssertTrue(app.buttons["還原子母字幕預設設定"].exists)
         for _ in 0..<8 {
-            if app.buttons["載入模型"].isHittable { break }
+            if app.buttons["準備語音資源"].isHittable { break }
             app.swipeUp()
         }
-        XCTAssertTrue(app.buttons["載入模型"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["準備語音資源"].waitForExistence(timeout: 5))
         for _ in 0..<4 {
             if app.descendants(matching: .any)["recordingQuality"].firstMatch.isHittable { break }
             app.swipeUp()

@@ -523,12 +523,3 @@ struct CaptionPiPPreview: UIViewRepresentable {
     }
 }
 
-struct CompactWindowSizing: UIViewRepresentable {
-    var compact: Bool
-    func makeUIView(context: Context) -> UIView { UIView() }
-    func updateUIView(_ view: UIView, context: Context) {
-        DispatchQueue.main.async {
-            view.window?.windowScene?.sizeRestrictions?.minimumSize = compact ? CGSize(width: 280, height: 140) : CGSize(width: 320, height: 320)
-        }
-    }
-}
