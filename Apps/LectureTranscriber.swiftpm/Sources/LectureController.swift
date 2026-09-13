@@ -750,9 +750,11 @@ final class LectureController: ObservableObject {
 
     func setPreferredVersion(sessionID: UUID, versionID: UUID) {
         guard var current = (session?.id == sessionID ? session : history.first(where: { $0.id == sessionID })) else { return }
-        for i in current.transcriptVersions.indices {
-            current.transcriptVersions[i].isPreferred = (current.transcriptVersions[i].id == versionID)
+        var versions = current.transcriptVersions
+        for i in versions.indices {
+            versions[i].isPreferred = (versions[i].id == versionID)
         }
+        current.transcriptVersions = versions
         current.preferredVersionID = versionID
         do {
             try store?.save(current)
@@ -768,10 +770,11 @@ final class LectureController: ObservableObject {
         guard var current = (session?.id == sessionID ? session : history.first(where: { $0.id == sessionID })) else { return }
         guard let idx = current.transcriptVersions.firstIndex(where: { $0.id == versionID }) else { return }
         current.transcriptVersions[idx].preferredTranslationVersionID = translationVersionID
-        if let tvCount = current.transcriptVersions[idx].translationVersions?.count, tvCount > 0 {
-            for i in 0..<tvCount {
-                current.transcriptVersions[idx].translationVersions?[i].isPreferred = (current.transcriptVersions[idx].translationVersions?[i].id == translationVersionID)
+        if var tvs = current.transcriptVersions[idx].translationVersions, !tvs.isEmpty {
+            for i in 0..<tvs.count {
+                tvs[i].isPreferred = (tvs[i].id == translationVersionID)
             }
+            current.transcriptVersions[idx].translationVersions = tvs
         }
         do {
             try store?.save(current)
