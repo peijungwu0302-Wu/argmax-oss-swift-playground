@@ -12,9 +12,14 @@ struct LectureUpdate: Codable, Equatable {
     func validate() throws {
         guard bundleIdentifier == "com.peijungwu0302.lecturetranscriber", build > 0,
               !version.isEmpty, downloadURL.scheme == "https",
-              downloadURL.host == "raw.githubusercontent.com",
-              downloadURL.path.hasPrefix("/peijungwu0302-Wu/argmax-oss-swift-playground/"),
               downloadURL.path.hasSuffix(".ipa") else { throw LectureError.message("更新來源或 App 識別不符。") }
+        let trustedRaw = downloadURL.host == "raw.githubusercontent.com" &&
+            downloadURL.path.hasPrefix("/peijungwu0302-Wu/argmax-oss-swift-playground/")
+        let trustedRelease = downloadURL.host == "github.com" &&
+            downloadURL.path.hasPrefix("/peijungwu0302-Wu/argmax-oss-swift-playground/releases/download/")
+        guard trustedRaw || trustedRelease else {
+            throw LectureError.message("更新來源或 App 識別不符。")
+        }
     }
     func newer(than version: String, build: Int) -> Bool {
         let order = self.version.compare(version, options: .numeric)

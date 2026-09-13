@@ -1,5 +1,5 @@
-> **課堂逐字稿 App 1.6.0**：iPhone／iPad 共用 IPA，固定 Bundle ID。較大前後文錄後轉錄、逐段原音與切點核對、離線講者 beta、PiP beta、可調字級及 SideStore 更新。
-> [直接下載 iPhone／iPad IPA](Deliverables/LectureTranscriber-1.6.0-unsigned.ipa) · [下載 iPad ZIP](Deliverables/LectureTranscriber.zip) · [新版操作與測試](Apps/UPDATE-1.6.0.zh-Hant.md) · [SideStore／Windows 私人安裝](Apps/PRIVATE_INSTALL.zh-Hant.md)
+> **課堂逐字稿 App 1.7.0 (Build 12)**：iPhone／iPad 通用單一 IPA，支援 SideStore 個人簽署側載。全新單一課堂多版本逐字稿（Apple Speech Live 即時辨識、Whisper v3 錄後高精準轉錄、SenseVoice）、整合式 `LectureDetailView` 跨片段連續播放與時間戳跳轉 Seek、逐字稿雙語/僅中文/僅原文檢視、版本切換與比對、專有名詞自訂詞庫提示、自動舊版 `session.json` 無痛升級相容。
+> [GitHub Release v1.7.0 下載 IPA](https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/tag/v1.7.0) · [SideStore 安裝指南](Apps/PRIVATE_INSTALL.zh-Hant.md) · [1.7.0 更新說明](Apps/UPDATE-1.7.0.zh-Hant.md) · [歷史說明](Apps/UPDATE-1.6.0.zh-Hant.md)
 
 <div align="center">
 
