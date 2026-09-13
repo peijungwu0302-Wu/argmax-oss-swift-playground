@@ -272,7 +272,7 @@ struct TranscriptVersion: Codable, Identifiable, Sendable, Equatable {
     var translations: [TranslatedLine]? {
         get {
             if let active = activeTranslationVersion {
-                return active.lines.isEmpty ? nil : active.lines
+                return active.lines
             }
             return _legacyTranslations
         }
@@ -599,8 +599,14 @@ struct LectureSession: Codable, Identifiable, Sendable {
                 let lastIndex = transcriptVersions[idx].lines.count - 1
                 transcriptVersions[idx].lines[lastIndex].text = joined.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
                 transcriptVersions[idx].lines[lastIndex].end = addition.end
-                transcriptVersions[idx].lines[lastIndex].words = joined
-                transcriptVersions[idx].translations?.removeAll { $0.id == last.id }
+                if let tvCount = transcriptVersions[idx].translationVersions?.count, tvCount > 0 {
+                    for i in 0..<tvCount {
+                        transcriptVersions[idx].translationVersions?[i].lines.removeAll { $0.id == last.id }
+                    }
+                }
+                var cur = transcriptVersions[idx].translations ?? []
+                cur.removeAll { $0.id == last.id }
+                transcriptVersions[idx].translations = cur
             } else {
                 transcriptVersions[idx].lines.append(addition)
             }

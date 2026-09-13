@@ -1,4 +1,4 @@
-﻿import Foundation
+import Foundation
 import SwiftUI
 
 public enum AppLanguage: String, CaseIterable, Identifiable, Codable {
@@ -120,7 +120,11 @@ public final class L10n: ObservableObject {
         }
     }
 
-    public static func tr(_ zh: String, _ en: String) -> String {
-        return shared.isEnglish ? en : zh
+    public nonisolated static func tr(_ zh: String, _ en: String) -> String {
+        let saved = UserDefaults.standard.string(forKey: "appLanguage")
+        if saved == "en" { return en }
+        if saved == "zh-Hant" { return zh }
+        let preferred = Locale.preferredLanguages.first ?? "zh"
+        return preferred.hasPrefix("en") ? en : zh
     }
 }
