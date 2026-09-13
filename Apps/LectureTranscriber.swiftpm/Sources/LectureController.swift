@@ -230,8 +230,56 @@ final class LectureController: ObservableObject {
             }
             if session == nil {
                 let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-                session = LectureSession(title: cleanTitle.isEmpty ? "課堂 \(Date().formatted(date: .abbreviated, time: .shortened))" : cleanTitle,
-                    model: model, language: language, vocabulary: vocabulary, recognitionEngine: recognitionEngine)
+                let eng: TranscriptEngine
+                let liveName: String
+                if usesAppleSpeech {
+                    eng = .apple
+                    liveName = "Apple Speech · Live"
+                } else if usesSenseVoice {
+                    eng = .sensevoice
+                    liveName = "SenseVoice · Live"
+                } else {
+                    eng = .whisper
+                    liveName = "Whisper v3 · Live"
+                }
+                let liveVersion = TranscriptVersion(
+                    name: liveName,
+                    engine: eng,
+                    model: model,
+                    language: language,
+                    vocabulary: vocabulary.isEmpty ? nil : vocabulary,
+                    lines: [],
+                    translations: [],
+                    translationSource: translationSource,
+                    source: .live,
+                    isPreferred: true
+                )
+                session = LectureSession(
+                    title: cleanTitle.isEmpty ? "課堂 \(Date().formatted(date: .abbreviated, time: .shortened))" : cleanTitle,
+                    model: model,
+                    language: language,
+                    vocabulary: vocabulary,
+                    recognitionEngine: recognitionEngine,
+                    parts: [],
+                    transcriptVersions: [liveVersion],
+                    preferredVersionID: liveVersion.id
+                )
+            } else if session?.transcriptVersions.isEmpty == true {
+                let eng: TranscriptEngine = usesAppleSpeech ? .apple : (usesSenseVoice ? .sensevoice : .whisper)
+                let liveVersion = TranscriptVersion(
+                    name: usesAppleSpeech ? "Apple Speech · Live" : "即時逐字稿",
+                    engine: eng,
+                    model: session?.model ?? model,
+                    language: session?.language ?? language,
+                    vocabulary: session?.vocabulary ?? vocabulary,
+                    lines: [],
+                    translations: [],
+                    translationSource: translationSource,
+                    source: .live,
+                    isPreferred: true
+                )
+                session?.transcriptVersions = [liveVersion]
+                session?.preferredVersionID = liveVersion.id
             }
             session?.translationSource = translationSource
             guard var current = session else { return }
@@ -442,20 +490,260 @@ final class LectureController: ObservableObject {
         } catch { fail("補辨識未完成，原始聲音仍保留在本機。", error) }
     }
 
+    func retranscribe(
+        session targetSession: LectureSession,
+        engine transcriptEngine: TranscriptEngine = .whisper,
+        model modelName: String = SpeechModel.turbo.rawValue,
+        language lang: String = "zh",
+        vocabulary vocab: String = "",
+        autoTranslate: Bool = false
+    ) async throws -> TranscriptVersion {
+        guard let store else { throw LectureError.message("儲存空間未就緒。") }
+        guard !targetSession.parts.isEmpty, targetSession.parts.contains(where: { $0.sampleCount > 0 }) else {
+            throw LectureError.message("這堂課沒有可重新轉錄的音訊。")
+        }
+        isBusy = true
+        status = "正在載入辨識模型…"
+        defer {
+            isBusy = false
+            progress = nil
+        }
+
+        var decodedLines: [TranscriptLine] = []
+        let totalSamples = targetSession.parts.reduce(0) { $0 + $1.sampleCount }
+        var processedOverallSamples = 0
+
+        if transcriptEngine == .whisper {
+            await senseVoice.unload()
+            await appleSpeech?.cancel()
+            status = "正在載入 Whisper 模型…"
+            try await engine.load(modelName) { [weak self] msg, frac in
+                Task { @MainActor in
+                    self?.status = msg
+                    self?.progress = frac
+                }
+            }
+            loadedModel = modelName
+
+            for part in targetSession.parts {
+                guard part.sampleCount > 0 else { continue }
+                let file = store.audioURL(targetSession, part)
+                var partCursor = 0
+                var previousHypothesis: [TranscriptLine] = []
+                let hasWordTiming = await engine.supportsWordTiming()
+
+                while partCursor < part.sampleCount {
+                    try Task.checkCancellation()
+                    let overlap = hasWordTiming ? min(4000, partCursor) : 0
+                    let available = part.sampleCount - partCursor
+                    let count = min(26 * 16000, available + overlap)
+                    let offset = part.offset + Double(partCursor - overlap) / 16000.0
+                    let cursorTime = part.offset + Double(partCursor) / 16000.0
+                    let isFinalChunk = (partCursor + count - overlap >= part.sampleCount)
+
+                    status = "正在以 Whisper v3 重新轉錄（\(Int(Double(processedOverallSamples) / Double(max(1, totalSamples)) * 100))%）…"
+                    progress = Double(processedOverallSamples) / Double(max(1, totalSamples))
+
+                    let decoded = try await engine.transcribe(
+                        file: file,
+                        start: partCursor - overlap,
+                        count: count,
+                        offset: offset,
+                        language: lang,
+                        vocabulary: vocab,
+                        final: isFinalChunk
+                    ) { _, _ in }
+
+                    let lines = overlap > 0 ? CaptionText.after(decoded.lines, time: cursorTime) : decoded.lines
+                    let decision = WindowDecision.make(
+                        lines: lines,
+                        samples: count,
+                        offset: offset,
+                        final: isFinalChunk,
+                        previous: previousHypothesis,
+                        utteranceEnded: decoded.endsWithPause
+                    )
+
+                    for confirmed in decision.confirmed {
+                        decodedLines.append(confirmed)
+                    }
+                    previousHypothesis = decision.provisional
+
+                    let advanced = max(16000, decision.consumed > overlap ? (decision.consumed - overlap) : (count - overlap))
+                    partCursor += min(advanced, available)
+                    processedOverallSamples += min(advanced, available)
+                }
+                if !previousHypothesis.isEmpty {
+                    decodedLines.append(contentsOf: previousHypothesis)
+                }
+            }
+        } else if transcriptEngine == .sensevoice {
+            await engine.unload()
+            await appleSpeech?.cancel()
+            status = "正在載入 SenseVoice 模型…"
+            try await senseVoice.load(language: lang) { [weak self] msg, frac in
+                Task { @MainActor in
+                    self?.status = msg
+                    self?.progress = frac
+                }
+            }
+            loadedModel = "sensevoice"
+
+            for part in targetSession.parts {
+                guard part.sampleCount > 0 else { continue }
+                let file = store.audioURL(targetSession, part)
+                var partCursor = 0
+
+                while partCursor < part.sampleCount {
+                    try Task.checkCancellation()
+                    let left = min(ReviewWindow.context, partCursor)
+                    let readStart = partCursor - left
+                    let count = min(ReviewWindow.maximumSamples, part.sampleCount - readStart)
+                    guard count > left else { break }
+
+                    status = "正在以 SenseVoice 重新轉錄（\(Int(Double(processedOverallSamples) / Double(max(1, totalSamples)) * 100))%）…"
+                    progress = Double(processedOverallSamples) / Double(max(1, totalSamples))
+
+                    let samples = try await Task.detached(priority: .userInitiated) {
+                        try PCMRecorder.read(file, from: readStart, count: count)
+                    }.value
+                    let atEnd = (readStart + count >= part.sampleCount)
+                    let window = ReviewWindow.choose(samples, left: left, atEnd: atEnd)
+                    guard !window.owned.isEmpty else { break }
+
+                    let decoded = try await senseVoice.transcribeDetailed(Array(samples.prefix(window.inputCount)), owned: window.owned)
+                    if !decoded.words.isEmpty {
+                        let offset = part.offset + Double(readStart) / 16000.0
+                        let lines = CaptionText.lines(decoded.words.map { .init(text: $0.text, start: offset + $0.start, end: offset + $0.end) })
+                        decodedLines.append(contentsOf: lines)
+                    } else if !decoded.text.isEmpty {
+                        let start = part.offset + Double(partCursor) / 16000.0
+                        let end = start + Double(window.owned.count) / 16000.0
+                        decodedLines.append(TranscriptLine(start: start, end: end, text: decoded.text))
+                    }
+                    partCursor += window.owned.count
+                    processedOverallSamples += window.owned.count
+                }
+            }
+        }
+
+        decodedLines.sort { $0.start < $1.start }
+
+        let modelLabel: String
+        if modelName == SpeechModel.turbo.rawValue { modelLabel = "Turbo" }
+        else if modelName == SpeechModel.base.rawValue { modelLabel = "Base" }
+        else if modelName == SpeechModel.small.rawValue { modelLabel = "Small" }
+        else { modelLabel = modelName }
+
+        let terms = vocab.components(separatedBy: CharacterSet(charactersIn: ", \n\t")).filter { !$0.isEmpty }
+        let vocabSummary = terms.isEmpty ? "" : " · \(terms.count) 專有詞"
+        let versionName: String
+        if transcriptEngine == .whisper {
+            versionName = "Whisper v3 · \(modelLabel)\(vocabSummary)"
+        } else if transcriptEngine == .sensevoice {
+            versionName = "SenseVoice · 課後轉錄"
+        } else {
+            versionName = "課後重新轉錄"
+        }
+
+        let newVersion = TranscriptVersion(
+            id: UUID(),
+            createdAt: Date(),
+            name: versionName,
+            engine: transcriptEngine,
+            model: modelName,
+            language: lang,
+            vocabulary: vocab.isEmpty ? nil : vocab,
+            lines: decodedLines,
+            translations: nil,
+            translationSource: targetSession.translationSource,
+            source: .retranscription,
+            isPreferred: true
+        )
+
+        var updatedSession = targetSession
+        for i in updatedSession.transcriptVersions.indices {
+            updatedSession.transcriptVersions[i].isPreferred = false
+        }
+        updatedSession.transcriptVersions.append(newVersion)
+        updatedSession.preferredVersionID = newVersion.id
+        try store.save(updatedSession)
+
+        if session?.id == updatedSession.id {
+            session = updatedSession
+            if autoTranslate {
+                translationEnabled = true
+                restartTranslation()
+            }
+        }
+        reloadHistory()
+        status = "重新轉錄完成 · 已新增版本「\(versionName)」"
+        return newVersion
+    }
+
     func retranscribeRecording() async {
-        guard canManageSessions, let source = session, let store else { return }
+        guard canManageSessions, let source = session else { return }
         persist()
-        isBusy = true; status = "正在建立重新轉錄副本，請保持 App 開啟…"
         do {
-            let copy = try await Task.detached(priority: .userInitiated) {
-                try store.copyForRetranscription(source)
-            }.value
-            isBusy = false
-            open(copy); reloadHistory()
-            await recover()
+            _ = try await retranscribe(
+                session: source,
+                engine: recognitionEngine == "sensevoice" ? .sensevoice : .whisper,
+                model: model,
+                language: language,
+                vocabulary: vocabulary,
+                autoTranslate: translationEnabled
+            )
         } catch {
-            isBusy = false
-            fail("無法建立重新轉錄副本；原課堂仍保留。", error)
+            fail("重新轉錄未完成；原始錄音保留。", error)
+        }
+    }
+
+    func selectTranscriptVersion(sessionID: UUID, versionID: UUID) {
+        guard var current = (session?.id == sessionID ? session : history.first(where: { $0.id == sessionID })) else { return }
+        guard current.transcriptVersions.contains(where: { $0.id == versionID }) else { return }
+        current.preferredVersionID = versionID
+        do {
+            try store?.save(current)
+            if session?.id == sessionID { session = current }
+            reloadHistory()
+        } catch {
+            fail("切換逐字稿版本失敗。", error)
+        }
+    }
+
+    func setPreferredVersion(sessionID: UUID, versionID: UUID) {
+        guard var current = (session?.id == sessionID ? session : history.first(where: { $0.id == sessionID })) else { return }
+        for i in current.transcriptVersions.indices {
+            current.transcriptVersions[i].isPreferred = (current.transcriptVersions[i].id == versionID)
+        }
+        current.preferredVersionID = versionID
+        do {
+            try store?.save(current)
+            if session?.id == sessionID { session = current }
+            reloadHistory()
+            status = "已設定預設逐字稿版本"
+        } catch {
+            fail("更新預設版本失敗。", error)
+        }
+    }
+
+    func deleteTranscriptVersion(sessionID: UUID, versionID: UUID) {
+        guard canManageSessions, var current = (session?.id == sessionID ? session : history.first(where: { $0.id == sessionID })) else { return }
+        guard current.transcriptVersions.count > 1 else {
+            fail("無法刪除唯一的逐字稿版本。", LectureError.message("每堂課至少保留一個版本。如需清除整堂課，請刪除整堂課。"))
+            return
+        }
+        current.transcriptVersions.removeAll { $0.id == versionID }
+        if current.preferredVersionID == versionID {
+            current.preferredVersionID = current.transcriptVersions.first(where: { $0.isPreferred })?.id ?? current.transcriptVersions.first?.id
+        }
+        do {
+            try store?.save(current)
+            if session?.id == sessionID { session = current }
+            reloadHistory()
+            status = "已刪除逐字稿版本（錄音已保留）"
+        } catch {
+            fail("刪除版本失敗。", error)
         }
     }
 
@@ -679,6 +967,52 @@ final class LectureController: ObservableObject {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         session?.title = text; title = text; persist()
     }
+    func renameLecture(_ id: UUID, title: String) {
+        let value = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        if session?.id == id {
+            rename(value)
+        } else if let store = try? SessionStore(), var s = store.load(id) {
+            s.title = value
+            try? store.save(s)
+            reloadHistory()
+        }
+    }
+    func updateVersionLine(sessionID: UUID, versionID: UUID, lineID: UUID, text: String) {
+        guard canManageSessions else { return }
+        if session?.id == sessionID {
+            if let vIdx = session?.transcriptVersions.firstIndex(where: { $0.id == versionID }),
+               let lIdx = session?.transcriptVersions[vIdx].lines.firstIndex(where: { $0.id == lineID }) {
+                session?.transcriptVersions[vIdx].lines[lIdx].text = text
+                session?.transcriptVersions[vIdx].lines[lIdx].words = nil
+                session?.transcriptVersions[vIdx].lines[lIdx].userEdited = true
+                session?.transcriptVersions[vIdx].translations?.removeAll { $0.id == lineID }
+                persist()
+            }
+        } else if let store = try? SessionStore(), var s = store.load(sessionID) {
+            if let vIdx = s.transcriptVersions.firstIndex(where: { $0.id == versionID }),
+               let lIdx = s.transcriptVersions[vIdx].lines.firstIndex(where: { $0.id == lineID }) {
+                s.transcriptVersions[vIdx].lines[lIdx].text = text
+                s.transcriptVersions[vIdx].lines[lIdx].words = nil
+                s.transcriptVersions[vIdx].lines[lIdx].userEdited = true
+                s.transcriptVersions[vIdx].translations?.removeAll { $0.id == lineID }
+                try? store.save(s)
+                reloadHistory()
+            }
+        }
+    }
+    func bookmark(sessionID: UUID, note: String, at seconds: Double) {
+        let value = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        let b = Bookmark(seconds: max(0, seconds), note: value.isEmpty ? "重點" : value)
+        if session?.id == sessionID {
+            session?.bookmarks.append(b)
+            persist()
+        } else if let store = try? SessionStore(), var s = store.load(sessionID) {
+            s.bookmarks.append(b)
+            try? store.save(s)
+            reloadHistory()
+        }
+    }
     func newLecture() {
         guard canManageSessions else { return }
         senseVoiceInputStatus = ""
@@ -726,9 +1060,9 @@ final class LectureController: ObservableObject {
             fail("無法匯入音訊，請選擇可播放的 WAV、M4A 或 MP3。", error)
         }
     }
-    func export(_ format: TranscriptFormat) -> URL? {
+    func export(_ format: TranscriptFormat, version: TranscriptVersion? = nil) -> URL? {
         guard let session, let store else { return nil }
-        do { return try store.export(session, format: format) }
+        do { return try store.export(session, version: version, format: format) }
         catch { fail("匯出失敗。", error); return nil }
     }
     func deleteLecture(_ id: UUID) {
@@ -828,12 +1162,22 @@ final class LectureController: ObservableObject {
             try await Task.sleep(nanoseconds: 100_000_000)
         }
     }
-    func saveTranslation(sessionID: UUID, line: TranscriptLine, text: String) {
-        guard session?.id == sessionID, session?.lines.contains(line) == true else { return }
-        var values = session?.translations ?? []
+    func saveTranslation(sessionID: UUID, line: TranscriptLine, text: String, versionID: UUID? = nil) {
+        guard session?.id == sessionID else { return }
+        let targetID = versionID ?? session?.preferredVersionID
+        let idx = (targetID != nil ? session?.transcriptVersions.firstIndex(where: { $0.id == targetID }) : nil) ?? session?.preferredVersionIndex ?? -1
+        guard idx >= 0, let currentVersions = session?.transcriptVersions, idx < currentVersions.count else {
+            var values = session?.translations ?? []
+            values.removeAll { $0.id == line.id }
+            values.append(TranslatedLine(id: line.id, source: line.text, text: text))
+            session?.translations = values
+            persist()
+            return
+        }
+        var values = session?.transcriptVersions[idx].translations ?? []
         values.removeAll { $0.id == line.id }
         values.append(TranslatedLine(id: line.id, source: line.text, text: text))
-        session?.translations = values
+        session?.transcriptVersions[idx].translations = values
         persist()
     }
     func generateMinutes() async {
