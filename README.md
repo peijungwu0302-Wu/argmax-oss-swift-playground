@@ -1,5 +1,5 @@
-> **課堂逐字稿 App 1.7.0 (Build 12)**：iPhone／iPad 通用單一 IPA，支援 SideStore 個人簽署側載。全新單一課堂多版本逐字稿（Apple Speech Live 即時辨識、Whisper v3 錄後高精準轉錄、SenseVoice）、整合式 `LectureDetailView` 跨片段連續播放與時間戳跳轉 Seek、逐字稿雙語/僅中文/僅原文檢視、版本切換與比對、專有名詞自訂詞庫提示、自動舊版 `session.json` 無痛升級相容。
-> [GitHub Release v1.7.0 下載 IPA](https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/tag/v1.7.0) · [SideStore 安裝指南](Apps/PRIVATE_INSTALL.zh-Hant.md) · [1.7.0 更新說明](Apps/UPDATE-1.7.0.zh-Hant.md) · [歷史說明](Apps/UPDATE-1.6.0.zh-Hant.md)
+> **課堂逐字稿 App 1.8.1 (Build 14)**：iPhone／iPad 通用單一 IPA，支援 SideStore 個人簽署側載。全面修復 PiP 子母畫面黑畫面（32BGRA、IOSurface、DisplayImmediately）、支援 3:1 / 5:1 (預設) / 6:1 字幕比例與雙語對照、切換至 GoodNotes / Safari / PDF 等其他 App 背景錄音即時辨識持續運作（≥60s）、新增鎖定畫面 Live Activity（即時動態）與 iPhone Dynamic Island（動態島）、純本機 ActivityKit 零額外 App ID 負擔。
+> [GitHub Release v1.8.1 下載 IPA](https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/tag/v1.8.1) · [SideStore 安裝指南](Apps/PRIVATE_INSTALL.zh-Hant.md)
 
 <div align="center">
 
@@ -713,6 +713,17 @@ The script performs the following steps in strict order:
 8. **Commit and push** manifest changes to GitHub
 
 SideStore manifest will not be updated if the IPA asset is unavailable or invalid.
+
+### SideStore + Live Activity
+
+LectureTranscriber v1.8.1 contains one Widget Extension used for:
+- Lock Screen Live Activity
+- Dynamic Island
+
+When installing with SideStore:
+keep the app extension enabled ("Keep All Extensions" or "Keep All Extensions (Use Main Profile)").
+
+Do not remove the Widget Extension if Live Activity is desired.
 
 ## Citation
 

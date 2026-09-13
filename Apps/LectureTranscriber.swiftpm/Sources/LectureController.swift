@@ -20,7 +20,11 @@ final class LectureController: ObservableObject {
     @Published var isDecoding = false
     @Published var level: Float = 0
     @Published var provisional: [TranscriptLine] = []
-    @Published var liveDraft = ""
+    @Published var liveDraft = "" {
+        didSet {
+            CaptionFeed.shared.update(original: caption, translation: validTranslatedDraft)
+        }
+    }
     @Published var lastDecodeSeconds: Double?
     @Published var draftAudioEnd: Double = 0
     @Published var errorMessage: String?
@@ -28,7 +32,11 @@ final class LectureController: ObservableObject {
     @Published var search = ""
     @Published var translationEnabled = false
     @Published var translationStatus = "開啟後，英語內容會分段翻成繁體中文"
-    @Published var translatedDraft = ""
+    @Published var translatedDraft = "" {
+        didSet {
+            CaptionFeed.shared.update(original: caption, translation: validTranslatedDraft)
+        }
+    }
     @Published var translationDraftSource = ""
     @Published var translationGeneration = UUID()
     @Published var translationDraftKey: DraftTranslationKey?
@@ -43,10 +51,7 @@ final class LectureController: ObservableObject {
             UserDefaults.standard.set(translationSpeedPreset.rawValue, forKey: "translationSpeedPreset")
         }
     }
-    @Published var translationCustomInterval: Double = {
-        let val = UserDefaults.standard.double(forKey: "translationCustomInterval")
-        return val >= 0.20 && val <= 2.00 ? val : 0.40
-    }() {
+    @Published var translationCustomInterval: TimeInterval = UserDefaults.standard.double(forKey: "translationCustomInterval") == 0 ? 0.4 : UserDefaults.standard.double(forKey: "translationCustomInterval") {
         didSet {
             UserDefaults.standard.set(translationCustomInterval, forKey: "translationCustomInterval")
         }
@@ -65,12 +70,12 @@ final class LectureController: ObservableObject {
     @Published private(set) var senseVoiceInputStatus = ""
     @Published var pipActive = false
     @Published var pipEnabled = false
-    var canProcessLiveAudio: Bool { isInForeground || pipActive }
+    var canProcessLiveAudio: Bool { isInForeground || pipActive || (supportsBackgroundAudio && isRecording) }
 
     @Published var notesPrompt = UserDefaults.standard.string(forKey: "notesPrompt") ?? "以繁體中文整理重點、決議、待辦；保留英文術語和來源時間戳。"
     @Published var translationSource = "en"
     var supportsBackgroundAudio: Bool { (Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String])?.contains("audio") == true }
-    var backgroundDescription: String { supportsBackgroundAudio ? "私人安裝版在背景保存錄音，回到字幕視窗後繼續辨識；系統中斷仍可能暫停。" : "Playground 版請保持字幕視窗可見；測試背景錄音請使用 IPA。" }
+    var backgroundDescription: String { supportsBackgroundAudio ? "私人安裝版在背景保存錄音並持續即時辨識；切換 App 時 PiP 字幕與即時動態仍持續更新。" : "Playground 版請保持字幕視窗可見；測試背景錄音請使用 IPA。" }
     func audioSize(_ lecture: LectureSession) -> String {
         ByteCountFormatter.string(fromByteCount: store?.audioBytes(lecture) ?? 0, countStyle: .file)
     }
@@ -338,6 +343,17 @@ final class LectureController: ObservableObject {
             lastPreviewSample = 0
             previousHypothesis = []; liveDraft = ""; draftAudioEnd = part.offset
             isRecording = true; status = "正在錄音 · 聲音只保存在本機"
+            CaptionFeed.shared.update(
+                original: caption,
+                translation: validTranslatedDraft,
+                isRecording: true,
+                isPaused: false
+            )
+            LiveActivityCoordinator.shared.start(
+                lectureID: current.id,
+                title: current.title,
+                engineName: usesAppleSpeech ? "Apple Live" : (usesSenseVoice ? "SenseVoice" : "Whisper")
+            )
             UIApplication.shared.isIdleTimerDisabled = true
             meter = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
                 Task { @MainActor in self?.tick() }
@@ -494,11 +510,14 @@ final class LectureController: ObservableObject {
         meter?.invalidate(); meter = nil
         UIApplication.shared.isIdleTimerDisabled = false
         persist()
+        CaptionFeed.shared.update(isRecording: false, isPaused: false)
+        LiveActivityCoordinator.shared.stop()
     }
 
     func pause() async {
         guard isRecording, !isBusy else { return }
         isBusy = true
+        LiveActivityCoordinator.shared.updatePause(isPaused: true, elapsed: duration)
         stopCapture()
         status = "正在補完最後一段…"
         await worker?.value
@@ -979,8 +998,12 @@ final class LectureController: ObservableObject {
         isInForeground = false
         if supportsBackgroundAudio && isRecording {
             updateAudioCount(); persist()
-            status = "背景錄音中；返回 App 後檢查字幕進度"
-        } else { interrupt("App 已進入背景，錄音已暫停") }
+            status = "背景錄音與即時字幕運作中"
+        } else if !isRecording {
+            // App backgrounded while not recording
+        } else {
+            interrupt("App 已進入背景，錄音已暫停")
+        }
     }
     func foregrounded() {
         isInForeground = true
@@ -1163,7 +1186,10 @@ final class LectureController: ObservableObject {
             if result.isFinal {
                 if let confirmed {
                     self.session?.previousLines = nil
-                    self.session?.lines.append(TranscriptLine(start: offset + confirmed.start, end: offset + confirmed.end, text: confirmed.text))
+                    let newLine = TranscriptLine(start: offset + confirmed.start, end: offset + confirmed.end, text: confirmed.text)
+                    self.session?.lines.append(newLine)
+                    LiveActivityCoordinator.shared.updateTranscript(original: confirmed.text, translation: self.validTranslatedDraft)
+                    CaptionFeed.shared.update(original: self.caption, translation: self.validTranslatedDraft)
                 }
                 let through = result.finalizedThrough.isFinite ? result.finalizedThrough : result.end
                 let durable = from + Int(max(0, through) * 16000)
@@ -1236,6 +1262,8 @@ final class LectureController: ObservableObject {
         values.append(TranslatedLine(id: line.id, source: line.text, text: text))
         session?.transcriptVersions[idx].translations = values
         persist()
+        LiveActivityCoordinator.shared.updateTranscript(original: line.text, translation: text)
+        CaptionFeed.shared.update(original: caption, translation: text)
     }
     func generateMinutes() async {
         guard canManageSessions, let current = session, !current.lines.isEmpty, !current.hasPendingAudio else { return }

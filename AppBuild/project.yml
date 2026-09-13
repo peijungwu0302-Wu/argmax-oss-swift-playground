@@ -14,6 +14,7 @@ targets:
     sources:
       - ../Apps/LectureTranscriber.swiftpm/Sources
     dependencies:
+      - target: LectureTranscriberWidget
       - package: WhisperLibrary
         product: WhisperKit
       - package: WhisperLibrary
@@ -22,9 +23,10 @@ targets:
       path: LectureInfo.plist
       properties:
         CFBundleDisplayName: 課堂逐字稿
-        CFBundleShortVersionString: "1.8.0"
-        CFBundleVersion: "13"
+        CFBundleShortVersionString: "1.8.1"
+        CFBundleVersion: "14"
         NSMicrophoneUsageDescription: 錄製課堂聲音，在這台裝置上產生逐字稿。
+        NSSupportsLiveActivities: YES
         UIBackgroundModes: [audio]
         UIRequiresFullScreen: false
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight, UIInterfaceOrientationPortraitUpsideDown]
@@ -40,10 +42,34 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.peijungwu0302.lecturetranscriber
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: LectureInfo.plist
-        MARKETING_VERSION: "1.8.0"
-        CURRENT_PROJECT_VERSION: "13"
+        MARKETING_VERSION: "1.8.1"
+        CURRENT_PROJECT_VERSION: "14"
         INFOPLIST_KEY_NSMicrophoneUsageDescription: 錄製課堂聲音，在這台裝置上產生逐字稿。
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        CODE_SIGNING_ALLOWED: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+  LectureTranscriberWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - ../Apps/LectureTranscriberWidget/Sources
+      - ../Apps/LectureTranscriber.swiftpm/Sources/LectureActivityAttributes.swift
+    info:
+      path: LectureTranscriberWidgetInfo.plist
+      properties:
+        CFBundleDisplayName: 課堂逐字稿動態島
+        CFBundleShortVersionString: "1.8.1"
+        CFBundleVersion: "14"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        SWIFT_VERSION: "5.0"
+        PRODUCT_BUNDLE_IDENTIFIER: com.peijungwu0302.lecturetranscriber.widget
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: LectureTranscriberWidgetInfo.plist
+        MARKETING_VERSION: "1.8.1"
+        CURRENT_PROJECT_VERSION: "14"
         CODE_SIGNING_ALLOWED: NO
         TARGETED_DEVICE_FAMILY: "1,2"
   LogicTests:
@@ -75,6 +101,7 @@ schemes:
     build:
       targets:
         LectureTranscriber: all
+        LectureTranscriberWidget: [build]
     test:
       targets:
         - LogicTests

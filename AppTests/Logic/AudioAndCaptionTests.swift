@@ -48,8 +48,8 @@ final class AudioAndCaptionTests: XCTestCase {
     @MainActor
     func testUniversalInstallConfiguration() {
         XCTAssertEqual(Bundle.main.bundleIdentifier, "com.peijungwu0302.lecturetranscriber")
-        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String, "1.8.0")
-        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "13")
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String, "1.8.1")
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "14")
         XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "UIDeviceFamily") as? [Int], [1, 2])
         XCTAssertTrue(LectureController().supportsBackgroundAudio)
         XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "UIRequiresFullScreen") as? Bool, false)
@@ -326,5 +326,64 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertEqual(TranslationSpeedPreset.fast.defaultInterval, 0.40)
         XCTAssertEqual(TranslationSpeedPreset.balanced.defaultInterval, 0.70)
         XCTAssertEqual(TranslationSpeedPreset.stable.defaultInterval, 1.00)
+    }
+
+    func testPiPAspectRatios() {
+        XCTAssertEqual(PiPAspectRatio.standard.dimensions.width, 960)
+        XCTAssertEqual(PiPAspectRatio.standard.dimensions.height, 320)
+        XCTAssertEqual(Double(PiPAspectRatio.standard.dimensions.width) / Double(PiPAspectRatio.standard.dimensions.height), 3.0, accuracy: 0.01)
+
+        XCTAssertEqual(PiPAspectRatio.bar.dimensions.width, 1200)
+        XCTAssertEqual(PiPAspectRatio.bar.dimensions.height, 240)
+        XCTAssertEqual(Double(PiPAspectRatio.bar.dimensions.width) / Double(PiPAspectRatio.bar.dimensions.height), 5.0, accuracy: 0.01)
+
+        XCTAssertEqual(PiPAspectRatio.ultraWide.dimensions.width, 1200)
+        XCTAssertEqual(PiPAspectRatio.ultraWide.dimensions.height, 200)
+        XCTAssertEqual(Double(PiPAspectRatio.ultraWide.dimensions.width) / Double(PiPAspectRatio.ultraWide.dimensions.height), 6.0, accuracy: 0.01)
+    }
+
+    @MainActor
+    func testCaptionFeedPublishing() {
+        let feed = CaptionFeed()
+        feed.update(original: "Hello World", translation: "你好世界", isRecording: true, isPaused: false)
+        XCTAssertEqual(feed.latestOriginal, "Hello World")
+        XCTAssertEqual(feed.latestTranslation, "你好世界")
+        XCTAssertTrue(feed.isRecording)
+        XCTAssertFalse(feed.isPaused)
+
+        feed.update(captionMode: .chineseOnly)
+        XCTAssertEqual(feed.captionMode, .chineseOnly)
+
+        feed.update(aspectRatio: .ultraWide)
+        XCTAssertEqual(feed.aspectRatio, .ultraWide)
+
+        feed.clear()
+        XCTAssertEqual(feed.latestOriginal, "")
+        XCTAssertEqual(feed.latestTranslation, "")
+    }
+
+    func testLectureActivityAttributesContentState() throws {
+        #if canImport(ActivityKit)
+        let refDate = Date(timeIntervalSince1970: 1789310000)
+        let state = LectureActivityAttributes.ContentState(
+            isRecording: true,
+            isPaused: false,
+            timerReferenceDate: refDate,
+            elapsedWhenPaused: 45.5,
+            latestOriginal: "Asymptotic stability",
+            latestTranslation: "漸近穩定性",
+            captionMode: "bilingual",
+            recognitionEngineName: "Apple Live"
+        )
+        let data = try JSONEncoder().encode(state)
+        let decoded = try JSONDecoder().decode(LectureActivityAttributes.ContentState.self, from: data)
+        XCTAssertEqual(decoded.isRecording, true)
+        XCTAssertEqual(decoded.isPaused, false)
+        XCTAssertEqual(decoded.latestOriginal, "Asymptotic stability")
+        XCTAssertEqual(decoded.latestTranslation, "漸近穩定性")
+        XCTAssertEqual(decoded.captionMode, "bilingual")
+        XCTAssertEqual(decoded.recognitionEngineName, "Apple Live")
+        XCTAssertEqual(decoded.elapsedWhenPaused, 45.5)
+        #endif
     }
 }

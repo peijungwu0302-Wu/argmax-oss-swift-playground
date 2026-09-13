@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 # LectureTranscriber SideStore Release Pipeline
@@ -60,6 +60,13 @@ fi
 if ! unzip -l "${IPA}" | grep -q "Payload/.*\.app/"; then
   echo "❌ Invalid IPA: missing Payload/*.app/ bundle structure"
   exit 1
+fi
+
+if [ "$VERSION" != "1.7.0" ] && [ "$VERSION" != "1.8.0" ]; then
+  if ! unzip -l "${IPA}" | grep -q "Payload/.*\.app/PlugIns/.*\.appex"; then
+    echo "❌ Invalid IPA: missing Payload/*.app/PlugIns/*.appex widget extension"
+    exit 1
+  fi
 fi
 
 IPA_SIZE=$(wc -c < "${IPA}" | tr -d ' ')
@@ -137,6 +144,15 @@ if ! unzip -l "${TMP_IPA}" | grep -q "Payload/.*\.app/"; then
   rm -f "${TMP_IPA}"
   echo "❌ Manifest update aborted"
   exit 1
+fi
+
+if [ "$VERSION" != "1.7.0" ] && [ "$VERSION" != "1.8.0" ]; then
+  if ! unzip -l "${TMP_IPA}" | grep -q "Payload/.*\.app/PlugIns/.*\.appex"; then
+    echo "❌ Downloaded asset invalid: missing Payload/*.app/PlugIns/*.appex in downloaded archive"
+    rm -f "${TMP_IPA}"
+    echo "❌ Manifest update aborted"
+    exit 1
+  fi
 fi
 rm -f "${TMP_IPA}"
 echo "✓ Downloaded IPA verified"

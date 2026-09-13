@@ -163,14 +163,22 @@ struct ContentView: View {
     }
 
     private var pipWorkspace: some View {
-        VStack(spacing: 6) {
+        let ratioValue: CGFloat = pip.aspectRatio == .standard ? 3.0 : (pip.aspectRatio == .bar ? 5.0 : 6.0)
+        return VStack(spacing: 6) {
             CaptionPiPPreview(pip: pip, original: controller.caption, translated: controller.translationEnabled ? controller.translationCaption : "",
                               sourceSize: captionFontSize, translationSize: translationFontSize)
-                .aspectRatio(3, contentMode: .fit)
+                .aspectRatio(ratioValue, contentMode: .fit)
             HStack(spacing: 12) {
                 Button(pip.active ? "結束子母畫面" : "啟動子母畫面") {
                     if pip.active { pip.stop() } else { pip.start(recording: controller.isRecording) }
                 }
+                Picker("比例", selection: $pip.aspectRatio) {
+                    ForEach(PiPAspectRatio.allCases) { ratio in
+                        Text(ratio.rawValue).tag(ratio)
+                    }
+                }
+                .pickerStyle(.menu)
+
                 Picker("模式", selection: $pip.displayMode) {
                     ForEach(PiPDisplayMode.allCases) { mode in
                         Text(mode.title).tag(mode)
@@ -181,6 +189,7 @@ struct ContentView: View {
                 Menu("控制") {
                     Button("完整畫面") { pip.detach(); pipPreview = false; controller.pipEnabled = false; compactMode = false }
                     Button("改用可縮小視窗字幕") { pip.detach(); pipPreview = false; controller.pipEnabled = false; compactMode = true }
+                    Toggle("靜態測試畫面 (PIP TEST)", isOn: $pip.isStaticTest)
                     Button("字級與設定") { showSettings = true }
                     if controller.isRecording { Button("停止並儲存") { Task { await controller.pause() } }.disabled(controller.isBusy) }
                     else { Button(recordLabel) { Task { if controller.session?.hasPendingAudio == true { await controller.recover() } else { await controller.start() } } }.disabled(!controller.canStart && controller.session?.hasPendingAudio != true) }
@@ -562,7 +571,14 @@ struct ContentView: View {
                             Text(mode.title).tag(mode)
                         }
                     }
-                    Button(L10n.tr("開啟子母畫面字幕條 (1200×240)", "Start PiP Subtitle Bar (1200×240)")) {
+                    Picker(L10n.tr("字幕比例", "Aspect Ratio"), selection: $pip.aspectRatio) {
+                        ForEach(PiPAspectRatio.allCases) { ratio in
+                            Text(ratio.title).tag(ratio)
+                        }
+                    }
+                    Toggle(L10n.tr("靜態測試畫面 (PIP TEST)", "Static Test Frame (PIP TEST)"), isOn: $pip.isStaticTest)
+
+                    Button(L10n.tr("開啟子母畫面字幕條", "Start PiP Subtitle Bar")) {
                         showSettings = false; pipPreview = true; controller.pipEnabled = true
                     }
                     Button(L10n.tr("精簡小視窗字幕", "Compact Window Subtitles")) {
@@ -584,8 +600,24 @@ struct ContentView: View {
                     }
                 }
 
-                // SECTION 5: 模型與資源管理
-                Section(L10n.tr("5. 模型與資源管理", "5. Model & Resource Management")) {
+                // SECTION 5: 即時動態與系統整合
+                Section(L10n.tr("5. 即時動態與系統整合", "5. Live Activity & System Integration")) {
+                    Toggle(L10n.tr("啟用鎖定畫面即時動態", "Enable Lock Screen Live Activity"), isOn: Binding(
+                        get: { LiveActivityCoordinator.shared.liveActivityEnabled },
+                        set: { LiveActivityCoordinator.shared.liveActivityEnabled = $0 }
+                    ))
+
+                    if !LiveActivityCoordinator.shared.isSupported {
+                        Text(L10n.tr("此裝置或系統版本未啟用即時動態支援。", "Live Activities not available or disabled on this device."))
+                            .font(.caption).foregroundStyle(.orange)
+                    }
+
+                    Text(L10n.tr("錄音時在鎖定畫面與 iPhone 動態島顯示錄音時間、最新原文與繁中翻譯。100% 本機 ActivityKit 更新，不使用 APNs 或 Push。", "Shows recording timer, latest original, and translation on Lock Screen and Dynamic Island. 100% local ActivityKit."))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+
+                // SECTION 6: 模型與資源管理
+                Section(L10n.tr("6. 模型與資源管理", "6. Model & Resource Management")) {
                     HStack {
                         Text(L10n.tr("目前進度", "Current Progress"))
                         Spacer()
@@ -609,8 +641,8 @@ struct ContentView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
-                // SECTION 6: 錄音品質與儲存
-                Section(L10n.tr("6. 錄音品質與儲存", "6. Audio Quality & Storage")) {
+                // SECTION 7: 錄音品質與儲存
+                Section(L10n.tr("7. 錄音品質與儲存", "7. Audio Quality & Storage")) {
                     Picker(L10n.tr("儲存品質", "Audio Quality"), selection: Binding(get: { controller.recordingQuality }, set: { controller.setRecordingQuality($0) })) {
                         ForEach(RecordingQuality.allCases) { Text($0.title).tag($0) }
                     }
@@ -621,8 +653,8 @@ struct ContentView: View {
                         .font(.caption)
                 }
 
-                // SECTION 7: 專有名詞提示
-                Section(L10n.tr("7. 專有名詞自訂詞庫", "7. Vocabulary & Prompt")) {
+                // SECTION 8: 專有名詞提示
+                Section(L10n.tr("8. 專有名詞自訂詞庫", "8. Vocabulary & Prompt")) {
                     TextField(L10n.tr("例如：CRISPR、Cas9、gene editing", "e.g. CRISPR, Cas9, gene editing"), text: $controller.vocabulary, axis: .vertical)
                         .lineLimit(3...5).disabled(controller.settingsLocked || !controller.usesWhisper)
                         .onChange(of: controller.vocabulary) { value in
@@ -632,8 +664,8 @@ struct ContentView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
-                // SECTION 8: 智慧筆記
-                Section(L10n.tr("8. 智慧筆記與 AI 整理", "8. Smart Notes & Summary")) {
+                // SECTION 9: 智慧筆記
+                Section(L10n.tr("9. 智慧筆記與 AI 整理", "9. Smart Notes & Summary")) {
                     Text(L10n.tr("AI 整理使用 iPadOS 26 的 Apple Intelligence。若未啟用將產生具時間戳之原文整理。", "AI notes use on-device Apple Intelligence or structured timeline outline."))
                         .font(.caption).foregroundStyle(.secondary)
                     Button(L10n.tr("SenseVoice 重新轉錄（另存新課堂）", "Retranscribe with SenseVoice (Save As New)")) {
@@ -642,13 +674,13 @@ struct ContentView: View {
                     }.disabled(!controller.canManageSessions || controller.session?.parts.contains { $0.sampleCount > 0 } != true)
                 }
 
-                // SECTION 9: 側載簽名維護
-                Section(L10n.tr("9. 側載簽名維護", "9. SideStore Self-Refresh")) {
+                // SECTION 10: 側載簽名維護
+                Section(L10n.tr("10. 側載簽名維護", "10. SideStore Self-Refresh")) {
                     SigningExpirationSection()
                 }
 
-                // SECTION 10: 關於與版本
-                Section(L10n.tr("10. 關於與版本更新", "10. About & Version")) {
+                // SECTION 11: 關於與版本
+                Section(L10n.tr("11. 關於與版本更新", "11. About & Version")) {
                     Text(L10n.tr("目前版本：", "Current Version: ") + updates.current)
                     Toggle(L10n.tr("開啟 App 時檢查更新", "Check updates on launch"), isOn: $automaticallyCheckUpdates)
                     Button(L10n.tr("檢查更新", "Check for Updates")) { Task { await updates.check() } }

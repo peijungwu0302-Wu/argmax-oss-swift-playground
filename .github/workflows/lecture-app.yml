@@ -93,35 +93,33 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild -project AppBuild/LectureTranscriber.xcodeproj -scheme LectureTranscriber -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/UniversalBuild" CODE_SIGNING_ALLOWED=NO build 2>&1 | tee "$RUNNER_TEMP/lecture-device.log"
-          python3 AppBuild/package_ipa.py "$RUNNER_TEMP/UniversalBuild/Build/Products/Debug-iphoneos/LectureTranscriber.app" "$RUNNER_TEMP/LectureTranscriber-v1.8.0.ipa"
-          cp "$RUNNER_TEMP/LectureTranscriber-v1.8.0.ipa" "$RUNNER_TEMP/LectureTranscriber-1.8.0-unsigned.ipa"
+          python3 AppBuild/package_ipa.py "$RUNNER_TEMP/UniversalBuild/Build/Products/Debug-iphoneos/LectureTranscriber.app" "$RUNNER_TEMP/LectureTranscriber-v1.8.1.ipa"
+          cp "$RUNNER_TEMP/LectureTranscriber-v1.8.1.ipa" "$RUNNER_TEMP/LectureTranscriber-1.8.1-unsigned.ipa"
       - uses: actions/upload-artifact@v4
         with:
-          name: LectureTranscriber-v1.8.0-IPA
+          name: LectureTranscriber-v1.8.1-IPA
           path: |
-            ${{ runner.temp }}/LectureTranscriber-v1.8.0.ipa
-            ${{ runner.temp }}/LectureTranscriber-1.8.0-unsigned.ipa
+            ${{ runner.temp }}/LectureTranscriber-v1.8.1.ipa
+            ${{ runner.temp }}/LectureTranscriber-1.8.1-unsigned.ipa
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/release/v1.8.0'
+        if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/release/v1.8.1'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.8.0
+          tag_name: v1.8.1
           files: |
-            ${{ runner.temp }}/LectureTranscriber-v1.8.0.ipa
+            ${{ runner.temp }}/LectureTranscriber-v1.8.1.ipa
             Deliverables/update.json
             Deliverables/sidestore.json
-          name: LectureTranscriber v1.8.0
+          name: LectureTranscriber v1.8.1
           body: |
-            ## LectureTranscriber v1.8.0 ("Live + Study")
-            - 實時繁中翻譯速度與穩定性提升，徹底修復切換辨識引擎導致翻譯凍結之 root cause
-            - LIVE 優先即時佇列與 BACKLOG 補齊雙軌架構，支援可調更新頻率預設檔（極快 0.25s / 快速 0.40s / 平衡 0.70s / 穩定 1.00s / 自訂）
-            - 統一 ResourceState 語音模型資源狀態，全面基於真實傳輸位元組計算進度，嚴禁偽造進度條
-            - PiP 長條形字幕條比例全新設計（1200×240，5:1），支援雙語對照、僅翻譯、僅原文三種模式切換
-            - 日期分組智慧課堂庫（今天 / 昨天 / 更早之前），豐富資訊卡片與快速管理
-            - 整合式 LectureDetailView：跨片段連續播放器（Seek / ±15s / 變速）、點擊時間戳跳轉播放、播放句子即時高亮與跟隨捲動
-            - TranslationVersion 多版本翻譯資料模型，與 TranscriptVersion 解耦且 100% 向下相容
-            - zh-Hant & en 雙語在地化 UI 與 App 語言設定
-            - 通用單一 iPhone & iPad IPA，支援 SideStore 側載個人自簽安裝
+            ## LectureTranscriber v1.8.1 ("PiP Stability + Live Activity")
+            - 修正 PiP 只顯示黑畫面的問題（修復 CVPixelBuffer 格式為 32BGRA、IOSurface 支援與 DisplayImmediately 立即顯示）
+            - PiP 即時顯示原文與繁中翻譯，透過獨立 CaptionFeed 提供不中斷字幕流
+            - 切換至其他 App（GoodNotes、Safari、PDF 等）背景錄音與即時辨識翻譯持續運作（≥60s）
+            - 新增 3:1 / 5:1 / 6:1 字幕比例，預設使用 5:1 字幕條，支援雙語、僅翻譯、僅原文模式
+            - 新增鎖定畫面 Live Activity（即時動態），系統原生計時器自動跳秒，顯示最新原文與翻譯
+            - 新增 iPhone Dynamic Island（動態島）整合（Compact / Expanded）
+            - 嚴格遵守 SideStore / Personal Team 側載架構：單一 Widget Extension，無 App Groups，無 APNs / Push，無 Home Screen Widget
           draft: false
           prerelease: false
       - name: Report validation errors
