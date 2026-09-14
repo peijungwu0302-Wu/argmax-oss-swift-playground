@@ -11,10 +11,21 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["即時逐字稿"].exists)
         XCTAssertTrue(app.switches["translationToggle"].exists)
         let primary = app.segmentedControls["liveAppleLanguage"]
-        XCTAssertTrue(primary.waitForExistence(timeout: 5))
-        primary.buttons["English"].tap()
+        XCTAssertTrue(primary.waitForExistence(timeout: 10))
+        if !primary.buttons["English"].isSelected {
+            primary.buttons["English"].tap()
+        }
+        let enPredicate = NSPredicate(format: "isSelected == true")
+        let enExpectation = XCTNSPredicateExpectation(predicate: enPredicate, object: primary.buttons["English"])
+        _ = XCTWaiter.wait(for: [enExpectation], timeout: 5)
         XCTAssertTrue(primary.buttons["English"].isSelected)
-        primary.buttons["中文"].tap()
+
+        if !primary.buttons["中文"].isSelected {
+            primary.buttons["中文"].tap()
+        }
+        let zhPredicate = NSPredicate(format: "isSelected == true")
+        let zhExpectation = XCTNSPredicateExpectation(predicate: zhPredicate, object: primary.buttons["中文"])
+        _ = XCTWaiter.wait(for: [zhExpectation], timeout: 5)
         XCTAssertTrue(primary.buttons["中文"].isSelected)
         XCTAssertTrue(app.buttons["字幕模式"].exists)
         XCTAssertTrue(app.buttons["openPiPCaptions"].exists)
