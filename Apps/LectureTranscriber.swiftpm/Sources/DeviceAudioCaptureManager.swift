@@ -605,7 +605,7 @@ private final class SCStreamAudioReceiver: NSObject {
             bufferListSize: MemoryLayout<AudioBufferList>.size,
             blockBufferAllocator: nil,
             blockBufferMemoryAllocator: nil,
-            flags: kCMSampleBufferFlag_AudioBufferList_AssureOwnership,
+            flags: 0,
             blockBufferOut: &blockBuffer
         )
         guard status == noErr else { return nil }

@@ -88,7 +88,7 @@ final class AppleSpeechEngine: LiveSpeechEngine {
         attachedContextualStrings = terms
         if !terms.isEmpty {
             var context = AnalysisContext()
-            context.contextualStrings = terms
+            context.contextualStrings = [.general: terms]
             try? await processor.setContext(context)
         }
         resultsTask = Task { [weak self] in

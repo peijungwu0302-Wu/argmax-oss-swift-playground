@@ -108,7 +108,7 @@ public final class CourseVocabulary: ObservableObject {
     /// Core conservative replacement algorithm.
     /// Replaces known aliases and wrong casings with canonical terms using boundary matching.
     /// Targets are matched in descending order of length to avoid prefix-collision.
-    public static func applyVocabulary(to text: String, entries: [VocabularyEntry]) -> String {
+    public nonisolated static func applyVocabulary(to text: String, entries: [VocabularyEntry]) -> String {
         guard !text.isEmpty, !entries.isEmpty else { return text }
 
         // Collect pairs: (targetPhrase, canonicalTerm)
