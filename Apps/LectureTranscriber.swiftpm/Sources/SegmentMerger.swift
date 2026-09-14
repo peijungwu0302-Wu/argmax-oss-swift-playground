@@ -48,13 +48,32 @@ public struct SegmentMerger: Sendable {
         return false
     }
 
+    /// Checks if previous line should merge into next line, considering pause duration (< 3.0s).
+    public static func shouldMerge(previous: TranscriptLine, next: TranscriptLine) -> Bool {
+        guard next.start - previous.end < 3.0 else { return false }
+        return shouldMerge(previous: previous.text, next: next.text)
+    }
+
     /// Merges two segments into a single coherent text string.
     public static func mergeText(previous: String, next: String) -> String {
         let prev = previous.trimmingCharacters(in: .whitespacesAndNewlines)
         let nxt = next.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prev.isEmpty else { return nxt }
         guard !nxt.isEmpty else { return prev }
+
+        // If either previous ends with CJK or next starts with CJK, merge without space
+        if let last = prev.last, let first = nxt.first,
+           (isCJK(last) || isCJK(first)) {
+            return prev + nxt
+        }
         return prev + " " + nxt
+    }
+
+    private static func isCJK(_ character: Character) -> Bool {
+        guard let scalar = character.unicodeScalars.first else { return false }
+        return (0x4E00...0x9FFF).contains(scalar.value) ||
+               (0x3400...0x4DBF).contains(scalar.value) ||
+               (0x3000...0x303F).contains(scalar.value)
     }
 
     /// Checks if an ASR draft partial has reached a stable meaningful threshold (>=2 words or >=4 characters).

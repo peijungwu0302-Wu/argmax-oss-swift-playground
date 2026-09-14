@@ -536,11 +536,11 @@ final class AudioAndCaptionTests: XCTestCase {
     @MainActor
     func testLocalizationGlobalLanguageSwitching() {
         let l10n = L10n.shared
-        l10n.appLanguage = .traditionalChinese
+        l10n.appLanguage = .zhHant
         XCTAssertEqual(l10n.effectiveLocale.identifier, "zh_TW")
         XCTAssertEqual(L10n.tr("開始錄音", "Start Recording"), "開始錄音")
 
-        l10n.appLanguage = .english
+        l10n.appLanguage = .en
         XCTAssertEqual(l10n.effectiveLocale.identifier, "en_US")
         XCTAssertEqual(L10n.tr("開始錄音", "Start Recording"), "Start Recording")
 
