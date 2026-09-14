@@ -4,6 +4,7 @@ final class LaunchTests: XCTestCase {
     @MainActor
     func testInitialScreenAndHistory() {
         let app = XCUIApplication()
+        app.launchArguments += ["-appLanguage", "zh-Hant", "-AppleLanguages", "(zh-Hant)", "-AppleLocale", "zh_TW"]
         app.launch()
         XCTAssertTrue(app.buttons["開始錄音"].waitForExistence(timeout: 30), "App must show its controls without loading a model")
         XCTAssertTrue(app.textFields["課堂名稱"].exists)
