@@ -29,9 +29,9 @@ struct TranscriptReviewView: View {
                     if line.userEdited == true { Text(L10n.tr("此段已有手動修改，已鎖定；可比較新稿，不會自動覆寫。", "This line was manually edited and locked.")) }
                 }
                 Section(L10n.tr("音訊時間軸（秒）", "Audio Timeline (seconds)")) {
-                    Stepper(L10n.tr("開始：\(start, specifier: "%.2f")", "Start: \(start, specifier: "%.2f")"), value: $start, in: 0...max(0, end - 0.05), step: 0.1)
+                    Stepper(L10n.tr(String(format: "開始：%.2f", start), String(format: "Start: %.2f", start)), value: $start, in: 0...max(0, end - 0.05), step: 0.1)
                     Slider(value: $start, in: 0...max(0.05, end - 0.05)).accessibilityLabel(L10n.tr("片段開始時間", "Segment start time"))
-                    Stepper(L10n.tr("結束：\(end, specifier: "%.2f")", "End: \(end, specifier: "%.2f")"), value: $end, in: min(controller.duration, start + 0.05)...max(controller.duration, start + 0.05), step: 0.1)
+                    Stepper(L10n.tr(String(format: "結束：%.2f", end), String(format: "End: %.2f", end)), value: $end, in: min(controller.duration, start + 0.05)...max(controller.duration, start + 0.05), step: 0.1)
                     Button(L10n.tr("前後多聽半秒", "Listen +/- 0.5s")) { start = max(0, start - 0.5); end = min(controller.duration, end + 0.5) }
                     Button(playing ? L10n.tr("停止播放", "Stop") : L10n.tr("播放選定時間（段尾停止）", "Play Selected Range")) {
                         if playing { player?.stop(); playing = false }
