@@ -432,9 +432,4 @@ public struct SigningDiagnosticsSheet: View {
             }
         }
     }
-}
-                }
-            }
-        }
-    }
-}
+}
