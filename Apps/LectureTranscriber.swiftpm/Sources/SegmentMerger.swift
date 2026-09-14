@@ -49,7 +49,7 @@ public struct SegmentMerger: Sendable {
     }
 
     /// Checks if previous line should merge into next line, considering pause duration (< 3.0s).
-    public static func shouldMerge(previous: TranscriptLine, next: TranscriptLine) -> Bool {
+    static func shouldMerge(previous: TranscriptLine, next: TranscriptLine) -> Bool {
         guard next.start - previous.end < 3.0 else { return false }
         return shouldMerge(previous: previous.text, next: next.text)
     }
