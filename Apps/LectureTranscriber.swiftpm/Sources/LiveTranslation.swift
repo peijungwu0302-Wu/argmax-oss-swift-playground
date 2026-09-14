@@ -1,4 +1,4 @@
-﻿import SwiftUI
+import SwiftUI
 import Translation
 
 // MARK: - Translation Provider Protocol & Placeholders
@@ -113,6 +113,8 @@ private struct TranslationWorker: ViewModifier {
                     try await translator.prepareTranslation()
                     var previousDraft: DraftTranslationKey?
                     var lastDraftAt = Date.distantPast
+                    var lastDraftSource = ""
+                    var lastDraftSourceChangeAt = Date.distantPast
                     var draftWasLast = false
                     var retryAfter: [UUID: Date] = [:]
 
@@ -122,14 +124,25 @@ private struct TranslationWorker: ViewModifier {
                             continue
                         }
 
+                        let now = Date()
                         let interval = controller.translationInterval
                         let key = controller.draftTranslationKey
+                        if let key, key.source != lastDraftSource {
+                            lastDraftSource = key.source
+                            lastDraftSourceChangeAt = now
+                        }
+
+                        let isMeaningful = key.map { SegmentMerger.isMeaningfulDraft($0.source) } ?? false
+                        let pauseThresholdReached = now.timeIntervalSince(lastDraftSourceChangeAt) >= 0.5
+                        let isDraftStableEnough = isMeaningful || pauseThresholdReached
+
                         let translateDraft = key != nil && key != previousDraft
-                            && Date().timeIntervalSince(lastDraftAt) >= interval
+                            && isDraftStableEnough
+                            && now.timeIntervalSince(lastDraftAt) >= interval
                             && (!draftWasLast || lecture.lines.first { lecture.translation(for: $0) == nil } == nil)
 
                         let pending = lecture.lines.first {
-                            lecture.translation(for: $0) == nil && (retryAfter[$0.id] ?? .distantPast) <= Date()
+                            lecture.translation(for: $0) == nil && (retryAfter[$0.id] ?? .distantPast) <= now
                         }
 
                         do {
@@ -149,11 +162,35 @@ private struct TranslationWorker: ViewModifier {
                             // BACKLOG LANE
                             else if let line = pending {
                                 draftWasLast = false
+                                // If this line is the last confirmed line, ends with a dangling clause, and recording is ongoing,
+                                // give a short grace period (1.0s) for the next segment to arrive so we can merge them before translating.
+                                let isLastLine = lecture.lines.last?.id == line.id
+                                if isLastLine, controller.isRecording, SegmentMerger.isDangling(line.text), retryAfter[line.id] == nil {
+                                    retryAfter[line.id] = now.addingTimeInterval(1.0)
+                                    try await Task.sleep(nanoseconds: 150_000_000)
+                                    continue
+                                }
+
+                                var textToTranslate = line.text
+                                var mergedNextLine: TranscriptLine? = nil
+                                if let lineIdx = lecture.lines.firstIndex(where: { $0.id == line.id }),
+                                   lineIdx + 1 < lecture.lines.count {
+                                    let nextLine = lecture.lines[lineIdx + 1]
+                                    if SegmentMerger.shouldMerge(previous: line.text, next: nextLine.text) {
+                                        textToTranslate = SegmentMerger.mergeText(previous: line.text, next: nextLine.text)
+                                        mergedNextLine = nextLine
+                                    }
+                                }
+
                                 controller.translationStatus = L10n.tr("正在翻譯 \(TranscriptExport.clock(line.start)) 的段落…", "Translating segment at \(TranscriptExport.clock(line.start))…")
-                                let text = try await translate(line.text, with: translator)
+                                let text = try await translate(textToTranslate, with: translator)
                                 try Task.checkCancellation()
                                 guard controller.translationEnabled else { return }
                                 controller.saveTranslation(sessionID: lecture.id, line: line, text: text)
+                                if let merged = mergedNextLine {
+                                    controller.saveTranslation(sessionID: lecture.id, line: merged, text: text)
+                                    retryAfter.removeValue(forKey: merged.id)
+                                }
                                 retryAfter.removeValue(forKey: line.id)
                             }
                             // IDLE LANE

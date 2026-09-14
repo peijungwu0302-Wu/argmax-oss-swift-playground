@@ -216,34 +216,34 @@ struct LectureDetailView: View {
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Menu {
-                    Button("重新轉錄這堂課") { showRetranscribe = true }
+                    Button(L10n.tr("重新轉錄這堂課", "Retranscribe Lecture")) { showRetranscribe = true }
                     if currentSession.transcriptVersions.count >= 2 {
-                        Button("比較逐字稿版本") { showCompare = true }
+                        Button(L10n.tr("比較逐字稿版本", "Compare Versions")) { showCompare = true }
                     }
                     Divider()
-                    Menu("匯出逐字稿") {
+                    Menu(L10n.tr("匯出逐字稿", "Export Transcript")) {
                         ForEach(TranscriptFormat.allCases) { format in
-                            Button("匯出 \(format.rawValue)") {
+                            Button(L10n.tr("匯出 \(format.rawValue)", "Export \(format.rawValue)")) {
                                 if let url = controller.export(format, version: currentVersion) {
                                     sharedFile = SharedFile(url: url)
                                 }
                             }
                         }
                     }
-                    Button("分享原始錄音") {
+                    Button(L10n.tr("分享原始錄音", "Share Original Audio")) {
                         Task { await shareAudio() }
                     }
                     Divider()
-                    Button("重新命名") {
+                    Button(L10n.tr("重新命名", "Rename")) {
                         newTitle = currentSession.title
                         showRename = true
                     }
-                    Button("載入此課堂繼續錄音") {
+                    Button(L10n.tr("載入此課堂繼續錄音", "Load Lecture & Continue")) {
                         controller.open(currentSession)
                         dismiss()
                     }
                     Divider()
-                    Button("刪除這堂課", role: .destructive) {
+                    Button(L10n.tr("刪除這堂課", "Delete Lecture"), role: .destructive) {
                         showDeleteLectureAlert = true
                     }
                 } label: {
@@ -281,46 +281,46 @@ struct LectureDetailView: View {
                 }
             }
         }
-        .alert("加入重點標記", isPresented: Binding(get: { bookmarkingTime != nil }, set: { if !$0 { bookmarkingTime = nil } })) {
-            TextField("簡短註記（可留白）", text: $bookmarkNote)
-            Button("加入") {
+        .alert(L10n.tr("加入重點標記", "Add Bookmark"), isPresented: Binding(get: { bookmarkingTime != nil }, set: { if !$0 { bookmarkingTime = nil } })) {
+            TextField(L10n.tr("簡短註記（可留白）", "Short note (optional)"), text: $bookmarkNote)
+            Button(L10n.tr("加入", "Add")) {
                 if let t = bookmarkingTime {
                     controller.bookmark(sessionID: currentSession.id, note: bookmarkNote, at: t)
                     bookmarkNote = ""
                     bookmarkingTime = nil
                 }
             }
-            Button("取消", role: .cancel) { bookmarkingTime = nil }
+            Button(L10n.tr("取消", "Cancel"), role: .cancel) { bookmarkingTime = nil }
         } message: {
-            Text("時間點：\(TranscriptExport.clock(bookmarkingTime ?? 0))")
+            Text(L10n.tr("時間點：", "Time: ") + TranscriptExport.clock(bookmarkingTime ?? 0))
         }
-        .alert("重新命名課堂", isPresented: $showRename) {
-            TextField("課堂名稱", text: $newTitle)
-            Button("儲存") {
+        .alert(L10n.tr("重新命名課堂", "Rename Lecture"), isPresented: $showRename) {
+            TextField(L10n.tr("課堂名稱", "Lecture Name"), text: $newTitle)
+            Button(L10n.tr("儲存", "Save")) {
                 controller.renameLecture(currentSession.id, title: newTitle)
             }
-            Button("取消", role: .cancel) {}
+            Button(L10n.tr("取消", "Cancel"), role: .cancel) {}
         }
-        .confirmationDialog("刪除整堂課？", isPresented: $showDeleteLectureAlert, titleVisibility: .visible) {
-            Button("刪除錄音與所有逐字稿", role: .destructive) {
+        .confirmationDialog(L10n.tr("刪除整堂課？", "Delete entire lecture?"), isPresented: $showDeleteLectureAlert, titleVisibility: .visible) {
+            Button(L10n.tr("刪除錄音與所有逐字稿", "Delete audio and all transcripts"), role: .destructive) {
                 player.stop()
                 controller.deleteLecture(currentSession.id)
                 dismiss()
             }
-            Button("取消", role: .cancel) {}
+            Button(L10n.tr("取消", "Cancel"), role: .cancel) {}
         } message: {
-            Text("將永久刪除「\(currentSession.title)」的原始錄音與所有逐字稿版本，無法復原。")
+            Text(L10n.tr("將永久刪除「\(currentSession.title)」的原始錄音與所有逐字稿版本，無法復原。", "Will permanently delete audio and all transcripts for \"\(currentSession.title)\"."))
         }
-        .confirmationDialog("刪除逐字稿版本？", isPresented: $showDeleteVersionAlert, titleVisibility: .visible) {
-            Button("刪除此版本（保留錄音）", role: .destructive) {
+        .confirmationDialog(L10n.tr("刪除逐字稿版本？", "Delete transcript version?"), isPresented: $showDeleteVersionAlert, titleVisibility: .visible) {
+            Button(L10n.tr("刪除此版本（保留錄音）", "Delete this version (keep audio)"), role: .destructive) {
                 if let id = currentVersion?.id {
                     controller.deleteTranscriptVersion(sessionID: currentSession.id, versionID: id)
                     selectedVersionID = currentSession.preferredVersionID ?? currentSession.transcriptVersions.first?.id
                 }
             }
-            Button("取消", role: .cancel) {}
+            Button(L10n.tr("取消", "Cancel"), role: .cancel) {}
         } message: {
-            Text("將刪除「\(currentVersion?.name ?? "")」，原始錄音與其他版本均不受影響。")
+            Text(L10n.tr("將刪除「\(currentVersion?.name ?? "")」，原始錄音與其他版本均不受影響。", "Will delete \"\(currentVersion?.name ?? "")\"; original audio remains unaffected."))
         }
     }
 
@@ -343,7 +343,7 @@ struct LectureDetailView: View {
                 .buttonStyle(.plain)
 
                 Spacer()
-                Text("\(currentSession.transcriptVersions.count) 個逐字稿版本")
+                Text(L10n.tr("\(currentSession.transcriptVersions.count) 個逐字稿版本", "\(currentSession.transcriptVersions.count) Versions"))
                     .font(.caption.bold())
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
@@ -546,8 +546,8 @@ struct LectureDetailView: View {
         VStack(spacing: 0) {
             HStack {
                 Image(systemName: "magnifyingglass")
-                TextField("搜尋此版本逐字稿", text: $search)
-                Toggle("跟隨播放", isOn: $followAudio).font(.caption).fixedSize()
+                TextField(L10n.tr("搜尋此版本逐字稿", "Search transcript"), text: $search)
+                Toggle(L10n.tr("跟隨播放", "Follow Playback"), isOn: $followAudio).font(.caption).fixedSize()
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -634,24 +634,24 @@ struct LectureDetailView: View {
                                 Button {
                                     UIPasteboard.general.string = line.text
                                 } label: {
-                                    Label("複製原文", systemImage: "doc.on.doc")
+                                    Label(L10n.tr("複製原文", "Copy Original"), systemImage: "doc.on.doc")
                                 }
                                 if let tr = translated {
                                     Button {
                                         UIPasteboard.general.string = tr.text
                                     } label: {
-                                        Label("複製翻譯", systemImage: "doc.on.doc.fill")
+                                        Label(L10n.tr("複製翻譯", "Copy Translation"), systemImage: "doc.on.doc.fill")
                                     }
                                 }
                                 Button {
                                     editingLine = line
                                 } label: {
-                                    Label("編輯逐字稿", systemImage: "pencil")
+                                    Label(L10n.tr("編輯逐字稿", "Edit Transcript"), systemImage: "pencil")
                                 }
                                 Button {
                                     bookmarkingTime = line.start
                                 } label: {
-                                    Label("加入重點標記", systemImage: "bookmark")
+                                    Label(L10n.tr("加入重點標記", "Add Bookmark"), systemImage: "bookmark")
                                 }
                             }
                         }
@@ -676,13 +676,13 @@ struct LectureDetailView: View {
             Image(systemName: "waveform.badge.mic")
                 .font(.system(size: 44))
                 .foregroundStyle(gold)
-            Text("這堂課尚未建立逐字稿")
+            Text(L10n.tr("這堂課尚未建立逐字稿", "No transcript created for this lecture"))
                 .font(.headline)
-            Text("原始錄音已安全保存。點擊下方按鈕使用 Whisper v3 產生逐字稿。")
+            Text(L10n.tr("原始錄音已安全保存。點擊下方按鈕使用 Whisper v3 產生逐字稿。", "Original audio is safely saved. Tap below to generate a transcript with Whisper v3."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Button("開始重新轉錄") {
+            Button(L10n.tr("開始重新轉錄", "Start Retranscription")) {
                 showRetranscribe = true
             }
             .buttonStyle(.borderedProminent)
@@ -724,59 +724,59 @@ struct RetranscribeSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    Text("會為「\(session.title)」新增一個全新的逐字稿版本。原逐字稿與唯一原始錄音不會被刪除或複製。")
+                    Text(L10n.tr("會為「\(session.title)」新增一個全新的逐字稿版本。原逐字稿與唯一原始錄音不會被刪除或複製。", "Will create a new transcript version for \"\(session.title)\". Original recording and existing transcripts will not be deleted or duplicated."))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
-                Section("辨識引擎") {
-                    Picker("引擎", selection: $engine) {
-                        Text("Whisper v3（建議）").tag(TranscriptEngine.whisper)
+                Section(L10n.tr("辨識引擎", "Recognition Engine")) {
+                    Picker(L10n.tr("引擎", "Engine"), selection: $engine) {
+                        Text(L10n.tr("Whisper v3（建議）", "Whisper v3 (Recommended)")).tag(TranscriptEngine.whisper)
                         Text("SenseVoice Core ML").tag(TranscriptEngine.sensevoice)
                     }
                     .pickerStyle(.segmented)
                 }
 
                 if engine == .whisper {
-                    Section("Whisper 模型") {
-                        Picker("模型大小", selection: $model) {
+                    Section(L10n.tr("Whisper 模型", "Whisper Model")) {
+                        Picker(L10n.tr("模型大小", "Model Size"), selection: $model) {
                             ForEach(SpeechModel.allCases) { m in
                                 Text(m.title).tag(m.rawValue)
                             }
                         }
                     }
 
-                    Section("課堂語言") {
-                        Picker("語言模式", selection: $language) {
-                            Text("中英夾雜").tag("mixed")
-                            Text("中文").tag("zh")
-                            Text("英文").tag("en")
-                            Text("自動偵測").tag("auto")
+                    Section(L10n.tr("課堂語言", "Lecture Language")) {
+                        Picker(L10n.tr("語言模式", "Language Mode"), selection: $language) {
+                            Text(L10n.tr("中英夾雜", "Mixed Chinese / English")).tag("mixed")
+                            Text(L10n.tr("中文", "Chinese")).tag("zh")
+                            Text(L10n.tr("英文", "English")).tag("en")
+                            Text(L10n.tr("自動偵測", "Auto Detect")).tag("auto")
                         }
                     }
 
-                    Section("課堂專有名詞提示") {
-                        TextField("例如：CRISPR, Cas9, gene editing", text: $vocabulary, axis: .vertical)
+                    Section(L10n.tr("課堂專有名詞提示", "Vocabulary / Terminology Hints")) {
+                        TextField(L10n.tr("例如：CRISPR, Cas9, gene editing", "e.g. CRISPR, Cas9, gene editing"), text: $vocabulary, axis: .vertical)
                             .lineLimit(3...5)
-                        Text("輸入這堂課常用的英文專業術語或人名，有助提升 WhisperKit 辨識準確率。")
+                        Text(L10n.tr("輸入這堂課常用的英文專業術語或人名，有助提升 WhisperKit 辨識準確率。", "Enter key terminology or names to improve accuracy."))
                             .font(.caption)
                     }
                 } else {
-                    Section("SenseVoice 語言") {
-                        Picker("語言", selection: $language) {
-                            Text("自動").tag("auto")
-                            Text("中文為主").tag("mixed")
-                            Text("英文為主").tag("mixed-en")
+                    Section(L10n.tr("SenseVoice 語言", "SenseVoice Language")) {
+                        Picker(L10n.tr("語言", "Language"), selection: $language) {
+                            Text(L10n.tr("自動", "Auto")).tag("auto")
+                            Text(L10n.tr("中文為主", "Chinese Primary")).tag("mixed")
+                            Text(L10n.tr("英文為主", "English Primary")).tag("mixed-en")
                         }
                     }
                 }
 
-                Section("翻譯選項") {
-                    Toggle("完成後自動翻譯成繁體中文", isOn: $autoTranslate)
+                Section(L10n.tr("翻譯選項", "Translation Options")) {
+                    Toggle(L10n.tr("完成後自動翻譯成繁體中文", "Automatically translate to Traditional Chinese"), isOn: $autoTranslate)
                 }
 
                 if isRunning {
-                    Section("轉錄進度") {
+                    Section(L10n.tr("轉錄進度", "Transcription Progress")) {
                         VStack(spacing: 8) {
                             ProgressView(value: controller.progress ?? 0.0)
                             Text(controller.status).font(.caption).foregroundStyle(.secondary)
@@ -784,17 +784,17 @@ struct RetranscribeSheet: View {
                     }
                 }
             }
-            .navigationTitle("重新轉錄這堂課")
+            .navigationTitle(L10n.tr("重新轉錄這堂課", "Retranscribe Lecture"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(isRunning ? "取消" : "關閉") {
+                    Button(isRunning ? L10n.tr("取消", "Cancel") : L10n.tr("關閉", "Close")) {
                         task?.cancel()
                         dismiss()
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("開始轉錄") {
+                    Button(L10n.tr("開始轉錄", "Start Transcription")) {
                         startRetranscribe()
                     }
                     .disabled(isRunning)
@@ -883,11 +883,11 @@ struct TranscriptCompareSheet: View {
                     }
                 }
             }
-            .navigationTitle("比較逐字稿版本")
+            .navigationTitle(L10n.tr("比較逐字稿版本", "Compare Transcript Versions"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { dismiss() }
+                    Button(L10n.tr("完成", "Done")) { dismiss() }
                 }
             }
             .onAppear {
@@ -904,8 +904,8 @@ struct TranscriptCompareSheet: View {
     private var pickerHeader: some View {
         HStack {
             VStack(alignment: .leading) {
-                Text("版本 A").font(.caption).foregroundStyle(.secondary)
-                Picker("版本 A", selection: Binding(
+                Text(L10n.tr("版本 A", "Version A")).font(.caption).foregroundStyle(.secondary)
+                Picker(L10n.tr("版本 A", "Version A"), selection: Binding(
                     get: { versionAID ?? session.transcriptVersions.first?.id ?? UUID() },
                     set: { versionAID = $0 }
                 )) {
@@ -916,8 +916,8 @@ struct TranscriptCompareSheet: View {
             }
             Spacer()
             VStack(alignment: .trailing) {
-                Text("版本 B").font(.caption).foregroundStyle(.secondary)
-                Picker("版本 B", selection: Binding(
+                Text(L10n.tr("版本 B", "Version B")).font(.caption).foregroundStyle(.secondary)
+                Picker(L10n.tr("版本 B", "Version B"), selection: Binding(
                     get: { versionBID ?? (session.transcriptVersions.count > 1 ? session.transcriptVersions[1].id : session.transcriptVersions.first?.id ?? UUID()) },
                     set: { versionBID = $0 }
                 )) {

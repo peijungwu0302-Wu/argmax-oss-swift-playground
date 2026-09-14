@@ -1,5 +1,38 @@
-> **課堂逐字稿 App 1.8.1 (Build 14)**：iPhone／iPad 通用單一 IPA，支援 SideStore 個人簽署側載。全面修復 PiP 子母畫面黑畫面（32BGRA、IOSurface、DisplayImmediately）、支援 3:1 / 5:1 (預設) / 6:1 字幕比例與雙語對照、切換至 GoodNotes / Safari / PDF 等其他 App 背景錄音即時辨識持續運作（≥60s）、新增鎖定畫面 Live Activity（即時動態）與 iPhone Dynamic Island（動態島）、純本機 ActivityKit 零額外 App ID 負擔。
-> [GitHub Release v1.8.1 下載 IPA](https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/tag/v1.8.1) · [SideStore 安裝指南](Apps/PRIVATE_INSTALL.zh-Hant.md)
+[English](README.md) | [繁體中文](README.zh-TW.md)
+
+> **LectureTranscriber v1.8.3 (Build 16) — Device Audio Live Captions + Global Localization**: Single universal unsigned IPA for iPhone & iPad, optimized for SideStore personal team sideloading (exactly 1 App + 1 Widget Extension, 0 extra App IDs, 0 App Groups, 0 APNs). Features iOS/iPadOS 27+ system audio live captioning via ScreenCaptureKit, strict zero disk audio persistence for internal audio, Live Only vs Save Transcript storage modes, translation stability with SegmentMerger clause coalescing, Picture-in-Picture (PiP) subtitles across apps, Dynamic Island & Lock Screen Live Activities, and full runtime global UI localization (System / Traditional Chinese / English).
+> [GitHub Release v1.8.3 IPA Download](https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/tag/v1.8.3) · [SideStore Install Guide](Apps/PRIVATE_INSTALL.zh-Hant.md)
+
+---
+
+## 🎙️ LectureTranscriber v1.8.3 Overview
+
+**LectureTranscriber** is an on-device live transcription and translation app for iOS and iPadOS.
+
+### What's New in v1.8.3
+- **Device / System Audio Live Captions (ScreenCaptureKit)**:
+  - Supports capturing device system audio directly on iOS/iPadOS 27+ using ScreenCaptureKit (`SCStream` with audio capture).
+  - Strict privacy protection: Device audio samples are kept strictly in a bounded ephemeral in-memory ring buffer (up to 30 seconds max) for real-time speech recognition. **Device audio is NEVER recorded or written to disk in any format (.wav, .m4a, .pcm16).**
+  - Two distinct session storage modes for device audio:
+    - **Live Only (Default)**: Completely ephemeral. Zero lecture history, zero transcripts, and zero audio files are created or saved upon stopping.
+    - **Save Transcript**: Finalized transcript text and translations are saved locally to session history for future reference and export, while audio recording remains completely disabled on disk.
+  - Strict clean separation: Microphone and Device Audio operate independently with dedicated controls; no audio mixing.
+- **Translation Stability & Quality (SegmentMerger)**:
+  - Low-latency original captions with stabilized Traditional Chinese translations.
+  - Translations are triggered only when a meaningful segment is established (>=2 words or >=4 Chinese characters, or after a pause >=0.5s).
+  - `SegmentMerger` automatically coalesces dangling dependent clauses (prepositions, conjunctions, articles) across consecutive chunks to eliminate translation stutter and incomplete fragments.
+- **Global Runtime Localization**:
+  - Full application localization supporting **System Default**, **Traditional Chinese (繁體中文)**, and **English**.
+  - Switching app language in Settings takes effect across the entire application interface instantly without restarting the app.
+- **Floating PiP Subtitles & Live Activities**:
+  - Continuous floating Picture-in-Picture subtitles across apps (GoodNotes, Safari, PDF Reader, etc.) with 3:1, 5:1 (default), and 6:1 aspect ratios.
+  - Native ActivityKit Lock Screen Live Activities and Dynamic Island support with real-time timers and synchronized caption updates.
+- **SideStore / Personal Sideload Architecture**:
+  - Distributed as a single unsigned universal IPA (`Payload/課堂逐字稿.app`).
+  - Contains exactly 1 Widget Extension (`com.peijungwu0302.lecturetranscriber.widget`), strictly adhering to free Apple Developer Personal Team limits (2 App IDs total).
+  - No App Groups, no CloudKit/iCloud, no APNs push notifications required.
+
+---
 
 <div align="center">
 

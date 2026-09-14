@@ -108,6 +108,17 @@ public final class L10n: ObservableObject {
         }
     }
 
+    public var effectiveLocale: Locale {
+        switch appLanguage {
+        case .system:
+            return Locale.autoupdatingCurrent
+        case .zhHant:
+            return Locale(identifier: "zh-Hant")
+        case .en:
+            return Locale(identifier: "en")
+        }
+    }
+
     public var isEnglish: Bool {
         switch appLanguage {
         case .system:

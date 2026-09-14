@@ -85,6 +85,36 @@ final class LectureController: ObservableObject {
     @Published var pipEnabled = false
     var canProcessLiveAudio: Bool { isInForeground || pipActive || (supportsBackgroundAudio && isRecording) }
 
+    @Published var audioSource: AudioInputSource = {
+        if let raw = UserDefaults.standard.string(forKey: "audioInputSource"),
+           let source = AudioInputSource(rawValue: raw) {
+            return source
+        }
+        return .microphone
+    }() {
+        didSet {
+            UserDefaults.standard.set(audioSource.rawValue, forKey: "audioInputSource")
+        }
+    }
+
+    @Published var sessionStorageMode: SessionStorageMode = {
+        if let raw = UserDefaults.standard.string(forKey: "sessionStorageMode"),
+           let mode = SessionStorageMode(rawValue: raw) {
+            return mode
+        }
+        return .liveOnly
+    }() {
+        didSet {
+            UserDefaults.standard.set(sessionStorageMode.rawValue, forKey: "sessionStorageMode")
+        }
+    }
+
+    @Published var deviceAudioDuration: Double = 0
+    private var deviceAudioBuffer: [Float] = []
+    private var deviceAudioBufferLock = NSLock()
+    private var deviceAudioBufferStartOffset = 0
+    private var deviceAudioProcessedSamples = 0
+
     @Published var notesPrompt = UserDefaults.standard.string(forKey: "notesPrompt") ?? "以繁體中文整理重點、決議、待辦；保留英文術語和來源時間戳。"
     @Published var translationSource = UserDefaults.standard.string(forKey: "translationSource") ?? "en"
     var supportsBackgroundAudio: Bool { (Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String])?.contains("audio") == true }
@@ -135,7 +165,12 @@ final class LectureController: ObservableObject {
         })
     }
 
-    var duration: Double { session?.duration ?? 0 }
+    var duration: Double {
+        if audioSource == .deviceAudio {
+            return max(deviceAudioDuration, session?.lines.last?.end ?? 0)
+        }
+        return session?.duration ?? 0
+    }
     var pendingSeconds: Double {
         session?.parts.reduce(0) { $0 + Double(max(0, $1.sampleCount - $1.processedSamples)) / 16000 } ?? 0
     }
@@ -281,15 +316,23 @@ final class LectureController: ObservableObject {
         isBusy = true
         defer { isBusy = false }
         do {
-            let granted = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-                AVAudioSession.sharedInstance().requestRecordPermission { continuation.resume(returning: $0) }
-            }
-            guard granted else {
-                throw LectureError.message("麥克風未獲授權。請到 iPad 設定允許此 App 使用麥克風，再返回重試。")
+            if audioSource == .microphone {
+                let granted = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+                    AVAudioSession.sharedInstance().requestRecordPermission { continuation.resume(returning: $0) }
+                }
+                guard granted else {
+                    throw LectureError.message(L10n.tr("麥克風未獲授權。請到 iPad 設定允許此 App 使用麥克風，再返回重試。", "Microphone not authorized."))
+                }
+            } else {
+                guard DeviceAudioAvailability.isSupported else {
+                    throw LectureError.message(DeviceAudioAvailability.unavailableReason)
+                }
             }
             try await loadModel(session?.model ?? model)
             guard UIApplication.shared.applicationState == .active else {
-                throw LectureError.message("模型已就緒。請回到 App，再按開始錄音。")
+                throw LectureError.message(audioSource == .deviceAudio
+                    ? L10n.tr("模型已就緒。請回到 App，再按開始即時字幕。", "Model ready. Return to app to start live captions.")
+                    : L10n.tr("模型已就緒。請回到 App，再按開始錄音。", "Model ready. Return to app to start recording."))
             }
             if session == nil {
                 let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -317,8 +360,11 @@ final class LectureController: ObservableObject {
                     source: .live,
                     isPreferred: true
                 )
+                let defaultTitle = audioSource == .deviceAudio
+                    ? L10n.tr("裝置聲音 \(Date().formatted(date: .abbreviated, time: .shortened))", "Device Audio \(Date().formatted(date: .abbreviated, time: .shortened))")
+                    : L10n.tr("課堂 \(Date().formatted(date: .abbreviated, time: .shortened))", "Lecture \(Date().formatted(date: .abbreviated, time: .shortened))")
                 session = LectureSession(
-                    title: cleanTitle.isEmpty ? "課堂 \(Date().formatted(date: .abbreviated, time: .shortened))" : cleanTitle,
+                    title: cleanTitle.isEmpty ? defaultTitle : cleanTitle,
                     model: model,
                     language: language,
                     vocabulary: vocabulary,
@@ -346,29 +392,52 @@ final class LectureController: ObservableObject {
             }
             session?.translationSource = translationSource
             guard var current = session else { return }
-            let part = AudioPart(fileName: UUID().uuidString + ".pcm16", offset: current.duration,
-                languageChanges: usesAppleSpeech ? [AudioLanguageChange(sample: 0, language: current.language)] : nil,
-                recordingQuality: recordingQuality)
-            current.parts.append(part)
-            try store.save(current)
-            session = current
-            if usesAppleSpeech { try await startApple(part, current: current) }
-            do {
-                try recorder.start(
-                    at: store.audioURL(current, part),
-                    allowsPlayback: pipEnabled || PiPPresentationSettings.shared.autoStart
-                )
+
+            if audioSource == .microphone {
+                let part = AudioPart(fileName: UUID().uuidString + ".pcm16", offset: current.duration,
+                    languageChanges: usesAppleSpeech ? [AudioLanguageChange(sample: 0, language: current.language)] : nil,
+                    recordingQuality: recordingQuality)
+                current.parts.append(part)
+                try store.save(current)
+                session = current
+                if usesAppleSpeech { try await startApple(part, current: current) }
+                do {
+                    try recorder.start(
+                        at: store.audioURL(current, part),
+                        allowsPlayback: pipEnabled || PiPPresentationSettings.shared.autoStart
+                    )
+                }
+                catch {
+                    // A failed start may still have created a recoverable empty PCM file.
+                    session?.parts.removeLast()
+                    if let remaining = session { try? store.save(remaining) }
+                    throw error
+                }
+                activePartID = part.id
+                draftAudioEnd = part.offset
+            } else {
+                // Device Audio
+                session = current
+                deviceAudioDuration = 0
+                deviceAudioBufferLock.lock()
+                deviceAudioBuffer.removeAll()
+                deviceAudioBufferStartOffset = 0
+                deviceAudioProcessedSamples = 0
+                deviceAudioBufferLock.unlock()
+                DeviceAudioCaptureManager.shared.delegate = self
+                try await DeviceAudioCaptureManager.shared.start()
+                if usesAppleSpeech {
+                    try await startAppleDeviceAudio(current: current)
+                }
+                draftAudioEnd = 0
             }
-            catch {
-                // A failed start may still have created a recoverable empty PCM file.
-                session?.parts.removeLast()
-                if let remaining = session { try? store.save(remaining) }
-                throw error
-            }
-            activePartID = part.id
+
             lastPreviewSample = 0
-            previousHypothesis = []; liveDraft = ""; draftAudioEnd = part.offset
-            isRecording = true; status = "正在錄音 · 聲音只保存在本機"
+            previousHypothesis = []; liveDraft = ""
+            isRecording = true
+            status = audioSource == .deviceAudio
+                ? L10n.tr("正在擷取裝置聲音 · 無錄音檔", "Capturing Device Audio · No audio saved")
+                : L10n.tr("正在錄音 · 聲音只保存在本機", "Recording · Audio saved on device")
             CaptionFeed.shared.update(
                 original: caption,
                 translation: validTranslatedDraft,
@@ -385,15 +454,31 @@ final class LectureController: ObservableObject {
                 Task { @MainActor in self?.tick() }
             }
             worker = Task { [weak self] in await self?.streamLoop() }
-        } catch { await appleSpeech?.cancel(); fail("無法開始錄音。", error) }
+        } catch {
+            await appleSpeech?.cancel()
+            if audioSource == .deviceAudio {
+                await DeviceAudioCaptureManager.shared.stop()
+            }
+            fail(audioSource == .deviceAudio
+                ? L10n.tr("無法開始裝置聲音擷取。", "Unable to start Device Audio.")
+                : L10n.tr("無法開始錄音。", "Unable to start recording."), error)
+        }
     }
 
     private func tick() {
         guard isRecording else { return }
-        updateAudioCount()
-        saveCounter += 1
-        if saveCounter >= 20 { saveCounter = 0; persist() }
-        if let problem = recorder.snapshot().error { interrupt(problem) }
+        if audioSource == .microphone {
+            updateAudioCount()
+            saveCounter += 1
+            if saveCounter >= 20 { saveCounter = 0; persist() }
+            if let problem = recorder.snapshot().error { interrupt(problem) }
+        } else {
+            saveCounter += 1
+            if saveCounter >= 20 {
+                saveCounter = 0
+                if sessionStorageMode == .saveTranscript { persist() }
+            }
+        }
     }
     private func updateAudioCount() {
         guard let id = activePartID, let index = session?.parts.firstIndex(where: { $0.id == id }) else { return }
@@ -405,22 +490,36 @@ final class LectureController: ObservableObject {
     private func streamLoop() async {
         defer { pendingAppleLanguage = nil }
         do {
-            if usesAppleSpeech {
-                try await streamApple()
-            } else {
-            while isRecording {
-                if !canProcessLiveAudio { try await Task.sleep(nanoseconds: 300_000_000); continue }
-                updateAudioCount()
-                guard let current = session, let part = current.parts.last else { break }
-                let available = part.sampleCount - part.processedSamples
-                let enoughNewAudio = part.sampleCount - lastPreviewSample >= 16000
-                if available >= (usesSenseVoice ? 32000 : 16000) && (enoughNewAudio || available >= 26 * 16000) {
-                    lastPreviewSample = part.sampleCount
-                    try await decodePart(part.id, final: false)
-                } else {
-                    try await Task.sleep(nanoseconds: 250_000_000)
+            if audioSource == .deviceAudio {
+                if usesAppleSpeech {
+                    while isRecording {
+                        try await Task.sleep(nanoseconds: 250_000_000)
+                    }
+                } else if usesSenseVoice {
+                    while isRecording {
+                        if !canProcessLiveAudio { try await Task.sleep(nanoseconds: 300_000_000); continue }
+                        try await decodeDeviceAudioSenseVoice()
+                        try await Task.sleep(nanoseconds: 250_000_000)
+                    }
                 }
-            }
+            } else {
+                if usesAppleSpeech {
+                    try await streamApple()
+                } else {
+                    while isRecording {
+                        if !canProcessLiveAudio { try await Task.sleep(nanoseconds: 300_000_000); continue }
+                        updateAudioCount()
+                        guard let current = session, let part = current.parts.last else { break }
+                        let available = part.sampleCount - part.processedSamples
+                        let enoughNewAudio = part.sampleCount - lastPreviewSample >= 16000
+                        if available >= (usesSenseVoice ? 32000 : 16000) && (enoughNewAudio || available >= 26 * 16000) {
+                            lastPreviewSample = part.sampleCount
+                            try await decodePart(part.id, final: false)
+                        } else {
+                            try await Task.sleep(nanoseconds: 250_000_000)
+                        }
+                    }
+                }
             }
         } catch is CancellationError {
             // Cancellation never marks unfinished audio as confirmed.
@@ -530,35 +629,76 @@ final class LectureController: ObservableObject {
 
     private func stopCapture(endLiveActivity: Bool = true) {
         guard isRecording else { return }
-        recorder.stop()
-        updateAudioCount()
+        if audioSource == .deviceAudio {
+            Task { @MainActor in
+                await DeviceAudioCaptureManager.shared.stop()
+            }
+        } else {
+            recorder.stop()
+            updateAudioCount()
+        }
         isRecording = false; level = 0
         meter?.invalidate(); meter = nil
         UIApplication.shared.isIdleTimerDisabled = false
-        persist()
+
+        if audioSource == .deviceAudio {
+            if sessionStorageMode == .liveOnly {
+                session = nil
+                liveDraft = ""
+                provisional = []
+                translatedDraft = ""
+                translationDraftSource = ""
+                translationDraftKey = nil
+                reloadHistory()
+            } else if sessionStorageMode == .saveTranscript {
+                persist()
+                reloadHistory()
+            }
+        } else {
+            persist()
+        }
+
         CaptionFeed.shared.update(isRecording: false, isPaused: !endLiveActivity)
         if endLiveActivity { LiveActivityCoordinator.shared.stop() }
     }
 
     func pause() async {
         guard isRecording, !isBusy else { return }
+        if audioSource == .deviceAudio {
+            await endLecture()
+            return
+        }
         isBusy = true
         LiveActivityCoordinator.shared.updatePause(isPaused: true, elapsed: duration)
         stopCapture(endLiveActivity: false)
-        status = "正在補完最後一段…"
+        status = L10n.tr("正在補完最後一段…", "Finishing pending audio…")
         await worker?.value
         worker = nil
         do {
             try await finishPending()
             await archiveCompletedAudio()
-            status = "已暫停並儲存，可繼續同一堂課"
-        } catch { fail("最後一段尚未完成；音訊已保留，請按「補辨識」。", error) }
+            status = L10n.tr("已暫停並儲存，可繼續同一堂課", "Paused and saved; can resume this lecture")
+        } catch { fail(L10n.tr("最後一段尚未完成；音訊已保留，請按「補辨識」。", "Last segment pending; audio saved, tap Catch Up."), error) }
         isBusy = false
         reloadHistory()
     }
 
     func endLecture() async {
-        if isRecording { await pause() }
+        if isRecording {
+            if audioSource == .deviceAudio {
+                isBusy = true
+                stopCapture(endLiveActivity: true)
+                await worker?.value
+                worker = nil
+                isBusy = false
+                status = sessionStorageMode == .liveOnly
+                    ? L10n.tr("即時字幕已結束", "Live Captions ended")
+                    : L10n.tr("即時字幕已結束並儲存逐字稿", "Live Captions ended and transcript saved")
+                return
+            } else {
+                await pause()
+            }
+        }
         LiveActivityCoordinator.shared.stop()
         CaptionFeed.shared.update(isRecording: false, isPaused: false)
         status = L10n.tr("課堂已結束並儲存", "Lecture ended and saved")
@@ -1194,6 +1334,9 @@ final class LectureController: ObservableObject {
         } catch { fail("刪除失敗，請重試。", error) }
     }
     private func persist() {
+        if audioSource == .deviceAudio && sessionStorageMode == .liveOnly {
+            return
+        }
         guard let session, let store else { return }
         do { try store.save(session); lastSaved = Date() }
         catch { errorMessage = "自動儲存失敗：\(error.localizedDescription)。請先暫停並檢查剩餘空間。" }
@@ -1343,8 +1486,121 @@ final class LectureController: ObservableObject {
         do { if let store { history = try store.loadAll() } }
         catch { errorMessage = "讀取歷史紀錄失敗：\(error.localizedDescription)" }
     }
+    private func startAppleDeviceAudio(current: LectureSession) async throws {
+        guard let appleSpeech else { throw LectureError.message(L10n.tr("請先載入 Apple 語音模型。", "Please load Apple speech model first.")) }
+        let generation = UUID(); activeDecodeID = generation
+        appleCaptions = AppleCaptionState()
+        liveDraft = ""; provisional = []; restartTranslation()
+        let selectedLanguage = current.language
+        let offset = duration
+        try await appleSpeech.start(language: selectedLanguage) { [weak self] result in
+            guard let self, self.activeDecodeID == generation, self.session?.id == current.id,
+                  result.start.isFinite, result.end.isFinite else { return }
+            let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.draftAudioEnd = max(self.draftAudioEnd, offset + result.end)
+            let line = TranscriptLine(start: result.start, end: result.end, text: text)
+            let confirmed = self.appleCaptions.receive(line, final: result.isFinal)
+            if result.isFinal {
+                if let confirmed {
+                    self.session?.previousLines = nil
+                    let newLine = TranscriptLine(start: offset + confirmed.start, end: offset + confirmed.end, text: confirmed.text)
+                    self.session?.lines.append(newLine)
+                    print("CaptionLatency final_transcript=\(Date().timeIntervalSince1970)")
+                    LiveActivityCoordinator.shared.updateTranscript(original: confirmed.text, translation: self.validTranslatedDraft)
+                    CaptionFeed.shared.update(original: self.caption, translation: self.validTranslatedDraft)
+                }
+                if self.sessionStorageMode == .saveTranscript {
+                    self.persist()
+                }
+            }
+            self.liveDraftStart = offset + (self.appleCaptions.draft?.start ?? result.end)
+            self.liveDraft = self.appleCaptions.draft?.text ?? ""
+            self.provisional = []
+        }
+        language = selectedLanguage
+    }
+
+    private func decodeDeviceAudioSenseVoice() async throws {
+        deviceAudioBufferLock.lock()
+        let currentSamples = deviceAudioBuffer
+        let startSampleIndex = deviceAudioBufferStartOffset
+        deviceAudioBufferLock.unlock()
+
+        let available = (startSampleIndex + currentSamples.count) - deviceAudioProcessedSamples
+        guard available >= 32000 else { return }
+
+        let localReadStart = max(0, deviceAudioProcessedSamples - startSampleIndex)
+        let localSamples = Array(currentSamples.suffix(from: localReadStart))
+        let left = min(16000, localReadStart)
+
+        let window = SenseVoiceContext.choose(localSamples, left: left, atEnd: false)
+        guard !window.owned.isEmpty else { return }
+
+        let started = Date()
+        let decoded = try await senseVoice.transcribeDetailed(Array(localSamples.prefix(window.inputCount)), owned: window.owned)
+        let text = decoded.text
+        try Task.checkCancellation()
+        guard isRecording, let _ = session else { return }
+        lastDecodeSeconds = Date().timeIntervalSince(started)
+
+        let start = Double(deviceAudioProcessedSamples) / 16000
+        let end = start + Double(window.owned.count) / 16000
+        draftAudioEnd = end; liveDraft = ""
+        senseVoiceInputStatus = L10n.tr("裝置聲音輸入 \(window.inputCount) 個樣本；本段 \(window.owned.count)（16 kHz）", "Device audio input \(window.inputCount) samples; segment \(window.owned.count) (16 kHz)")
+        let lines = text.isEmpty ? [] : [TranscriptLine(start: start, end: end, text: text)]
+        if window.commit {
+            session?.appendConfirmed(lines)
+            deviceAudioProcessedSamples += window.owned.count
+            if sessionStorageMode == .saveTranscript {
+                persist()
+            }
+            provisional = []; previousHypothesis = []
+            if let line = lines.first {
+                CaptionFeed.shared.update(original: caption, translation: validTranslatedDraft)
+                LiveActivityCoordinator.shared.updateTranscript(original: line.text, translation: validTranslatedDraft)
+            }
+        } else {
+            provisional = lines
+        }
+    }
+
     private func fail(_ context: String, _ error: Error) {
         status = context
         errorMessage = context + "\n\n" + error.localizedDescription
     }
 }
+
+extension LectureController: DeviceAudioCaptureDelegate {
+    func deviceAudioDidOutput(samples: [Float], level: Float) {
+        guard isRecording, audioSource == .deviceAudio else { return }
+        self.level = level
+        self.deviceAudioDuration += Double(samples.count) / 16000
+
+        if usesAppleSpeech {
+            Task { [weak self] in
+                try? await self?.appleSpeech?.append(samples)
+            }
+        } else if usesSenseVoice {
+            deviceAudioBufferLock.lock()
+            deviceAudioBuffer.append(contentsOf: samples)
+            let maxBufferSize = 30 * 16000
+            if deviceAudioBuffer.count > maxBufferSize {
+                let overflow = deviceAudioBuffer.count - maxBufferSize
+                deviceAudioBuffer.removeFirst(overflow)
+                deviceAudioBufferStartOffset += overflow
+            }
+            deviceAudioBufferLock.unlock()
+        }
+    }
+
+    func deviceAudioDidEncounterError(_ error: Error) {
+        stopCapture()
+        fail(L10n.tr("裝置聲音擷取失敗。", "Device audio capture failed."), error)
+    }
+
+    func deviceAudioDidStopBySystem() {
+        stopCapture()
+        status = L10n.tr("裝置聲音擷取已被系統中斷。", "Device audio capture was stopped by the system.")
+    }
+}
+

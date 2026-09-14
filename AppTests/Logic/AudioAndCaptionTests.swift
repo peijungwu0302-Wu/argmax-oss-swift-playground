@@ -48,8 +48,8 @@ final class AudioAndCaptionTests: XCTestCase {
     @MainActor
     func testUniversalInstallConfiguration() {
         XCTAssertEqual(Bundle.main.bundleIdentifier, "com.peijungwu0302.lecturetranscriber")
-        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String, "1.8.2")
-        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "15")
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String, "1.8.3")
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "16")
         XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "UIDeviceFamily") as? [Int], [1, 2])
         XCTAssertTrue(LectureController().supportsBackgroundAudio)
         XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "UIRequiresFullScreen") as? Bool, false)
@@ -485,5 +485,66 @@ final class AudioAndCaptionTests: XCTestCase {
         let missing = UUID()
         XCTAssertFalse(navigation.handle(URL(string: "lecturetranscriber://lecture/\(missing.uuidString)/transcript")!, knownLectureIDs: [known]))
         XCTAssertEqual(navigation.route, .home)
+    }
+
+    func testAudioInputSourceAndSessionStorageMode() {
+        XCTAssertEqual(AudioInputSource.microphone.rawValue, "microphone")
+        XCTAssertEqual(AudioInputSource.deviceAudio.rawValue, "deviceAudio")
+        XCTAssertEqual(SessionStorageMode.liveOnly.rawValue, "liveOnly")
+        XCTAssertEqual(SessionStorageMode.saveTranscript.rawValue, "saveTranscript")
+
+        // Ensure display names exist
+        XCTAssertFalse(AudioInputSource.microphone.displayName.isEmpty)
+        XCTAssertFalse(AudioInputSource.deviceAudio.displayName.isEmpty)
+        XCTAssertFalse(SessionStorageMode.liveOnly.displayName.isEmpty)
+        XCTAssertFalse(SessionStorageMode.saveTranscript.displayName.isEmpty)
+    }
+
+    func testSegmentMergerDanglingAndMerge() {
+        // Dangling words
+        XCTAssertTrue(SegmentMerger.isDangling("we need to find the"))
+        XCTAssertTrue(SegmentMerger.isDangling("because of"))
+        XCTAssertTrue(SegmentMerger.isDangling("and"))
+        XCTAssertFalse(SegmentMerger.isDangling("the eigenvalues are positive."))
+
+        // Should merge
+        let line1 = TranscriptLine(start: 0.0, end: 1.5, text: "we need to find the")
+        let line2 = TranscriptLine(start: 1.8, end: 3.0, text: "eigenvalues of this matrix.")
+        XCTAssertTrue(SegmentMerger.shouldMerge(previous: line1, next: line2))
+
+        let merged = SegmentMerger.mergeText(previous: line1.text, next: line2.text)
+        XCTAssertEqual(merged, "we need to find the eigenvalues of this matrix.")
+
+        // Chinese text merging without extra space
+        let zh1 = "我們需要計算"
+        let zh2 = "特徵值"
+        XCTAssertEqual(SegmentMerger.mergeText(previous: zh1, next: zh2), "我們需要計算特徵值")
+
+        // Long pause should not merge
+        let lineLongPause = TranscriptLine(start: 5.0, end: 7.0, text: "eigenvalues of this matrix.")
+        XCTAssertFalse(SegmentMerger.shouldMerge(previous: line1, next: lineLongPause))
+    }
+
+    func testSegmentMergerMeaningfulDraft() {
+        XCTAssertFalse(SegmentMerger.isMeaningfulDraft(""))
+        XCTAssertFalse(SegmentMerger.isMeaningfulDraft("a"))
+        XCTAssertFalse(SegmentMerger.isMeaningfulDraft("the"))
+        XCTAssertTrue(SegmentMerger.isMeaningfulDraft("the system"))
+        XCTAssertTrue(SegmentMerger.isMeaningfulDraft("機器學習"))
+    }
+
+    @MainActor
+    func testLocalizationGlobalLanguageSwitching() {
+        let l10n = L10n.shared
+        l10n.appLanguage = .traditionalChinese
+        XCTAssertEqual(l10n.effectiveLocale.identifier, "zh_TW")
+        XCTAssertEqual(L10n.tr("開始錄音", "Start Recording"), "開始錄音")
+
+        l10n.appLanguage = .english
+        XCTAssertEqual(l10n.effectiveLocale.identifier, "en_US")
+        XCTAssertEqual(L10n.tr("開始錄音", "Start Recording"), "Start Recording")
+
+        // Reset to system
+        l10n.appLanguage = .system
     }
 }

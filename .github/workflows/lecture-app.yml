@@ -96,33 +96,32 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild -project AppBuild/LectureTranscriber.xcodeproj -scheme LectureTranscriber -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/UniversalBuild" CODE_SIGNING_ALLOWED=NO build 2>&1 | tee "$RUNNER_TEMP/lecture-device.log"
-          python3 AppBuild/package_ipa.py "$RUNNER_TEMP/UniversalBuild/Build/Products/Debug-iphoneos/LectureTranscriber.app" "$RUNNER_TEMP/LectureTranscriber-v1.8.2.ipa"
-          cp "$RUNNER_TEMP/LectureTranscriber-v1.8.2.ipa" "$RUNNER_TEMP/LectureTranscriber-1.8.2-unsigned.ipa"
+          python3 AppBuild/package_ipa.py "$RUNNER_TEMP/UniversalBuild/Build/Products/Debug-iphoneos/LectureTranscriber.app" "$RUNNER_TEMP/LectureTranscriber-v1.8.3.ipa"
+          cp "$RUNNER_TEMP/LectureTranscriber-v1.8.3.ipa" "$RUNNER_TEMP/LectureTranscriber-1.8.3-unsigned.ipa"
       - uses: actions/upload-artifact@v4
         with:
-          name: LectureTranscriber-v1.8.2-IPA
+          name: LectureTranscriber-v1.8.3-IPA
           path: |
-            ${{ runner.temp }}/LectureTranscriber-v1.8.2.ipa
-            ${{ runner.temp }}/LectureTranscriber-1.8.2-unsigned.ipa
+            ${{ runner.temp }}/LectureTranscriber-v1.8.3.ipa
+            ${{ runner.temp }}/LectureTranscriber-1.8.3-unsigned.ipa
       - name: Create GitHub Release
-        if: github.ref == 'refs/tags/v1.8.2'
+        if: github.ref == 'refs/tags/v1.8.3'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.8.2
+          tag_name: v1.8.3
           files: |
-            ${{ runner.temp }}/LectureTranscriber-v1.8.2.ipa
+            ${{ runner.temp }}/LectureTranscriber-v1.8.3.ipa
             Deliverables/update.json
             Deliverables/sidestore.json
-          name: LectureTranscriber v1.8.2
+          name: LectureTranscriber v1.8.3
           body: |
-            ## LectureTranscriber v1.8.2
-            - 開始錄音後可自動開啟 PiP，並提供 3:1 / 5:1 / 6:1、75%～150% 字幕、對齊、位置及原文／翻譯間距調整
-            - 新增真正 PiP 預覽與 active PiP 即時 presentation 更新
-            - 完整逐字稿保留 finalized 歷史與對應翻譯，Current Draft 獨立顯示，支援 Follow Live
-            - PiP Restore 與 Live Activity deep link 可返回目前課堂完整逐字稿
-            - 修正 Live Activity 巨大計時器，加入 stable partial 節流、final 即時更新與 caption revision 配對
-            - Apple Speech 與 Apple Translation 採系統資源預設流程；SenseVoice 保留中英混合／多語快速定位
-            - 維持單一 Widget Extension、既有 Bundle ID，以及所有錄音、模型與逐字稿資料位置
+            ## LectureTranscriber v1.8.3
+            - 支援 iOS/iPadOS 27+ 系統裝置聲音擷取（ScreenCaptureKit），提供即時字幕與即時翻譯
+            - 裝置聲音零磁碟錄音保存：記憶體緩衝區上限 30 秒，不寫入任何音訊檔 (.wav/.m4a/.pcm16)
+            - 支援「僅即時顯示（不留紀錄）」與「僅保留文字稿（不存音檔）」兩種儲存模式
+            - 翻譯穩定性升級：SegmentMerger 懸空子句智慧整併與草稿穩定門檻，大幅降低閃爍與殘留
+            - 全域在地化支援：即時切換系統預設、繁體中文與 English，立即套用於全 App 所有畫面
+            - 維持 SideStore 單一 universal IPA、單一 Widget Extension、零額外 App ID
           draft: false
           prerelease: false
       - name: Report validation errors
