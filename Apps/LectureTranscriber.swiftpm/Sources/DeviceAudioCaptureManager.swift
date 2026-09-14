@@ -2,6 +2,7 @@ import Foundation
 import CoreMedia
 import AVFoundation
 import UIKit
+import Combine
 #if canImport(ScreenCaptureKit)
 import ScreenCaptureKit
 #endif
@@ -162,7 +163,7 @@ public protocol DeviceAudioCaptureDelegate: AnyObject {
 // MARK: - Device Audio Capture Manager
 
 @MainActor
-public final class DeviceAudioCaptureManager: NSObject, @unchecked Sendable {
+public final class DeviceAudioCaptureManager: NSObject, ObservableObject, @unchecked Sendable {
     public static let shared = DeviceAudioCaptureManager()
 
     public weak var delegate: DeviceAudioCaptureDelegate?
