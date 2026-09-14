@@ -17,7 +17,7 @@
           "date": "2026-09-15T03:00:00Z",
           "localizedDescription": "修復實體 iOS 27 裝置聲音可用性檢測、新增裝置聲音即時觀測與診斷面板、新增課程詞彙 (Course Vocabulary Beta) 支援標準名詞與識別別名替換、整合 Apple Speech 脈絡詞提示與 SenseVoice 穩定後置詞彙修正、全域語系即時切換。",
           "downloadURL": "https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/download/v1.8.4/LectureTranscriber-v1.8.4.ipa",
-          "size": 3950000,
+          "size": 4081623,
           "minOSVersion": "16.1"
         },
         {
