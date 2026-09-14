@@ -17,7 +17,7 @@
           "date": "2026-09-14T18:00:00Z",
           "localizedDescription": "支援 iOS/iPadOS 27+ 系統裝置聲音擷取（ScreenCaptureKit）即時字幕與翻譯、零磁碟錄音保存、僅即時顯示與僅保留文字稿模式、SegmentMerger 懸空子句整併提升翻譯穩定度、全域在地化語言即時切換。",
           "downloadURL": "https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/download/v1.8.3/LectureTranscriber-v1.8.3.ipa",
-          "size": 3900000,
+          "size": 3943964,
           "minOSVersion": "16.1"
         },
         {
