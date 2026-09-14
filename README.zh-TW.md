@@ -1,35 +1,38 @@
 [English](README.md) | [繁體中文](README.zh-TW.md)
 
-> **課堂逐字稿 App 1.8.3 (Build 16) — 裝置聲音即時字幕 + 全域在地化**：iPhone／iPad 通用單一 IPA，支援 SideStore 個人免費憑證簽署側載（剛好 1 App + 1 Widget Extension，無額外 App ID 負擔）。支援 iOS/iPadOS 27+ 透過 ScreenCaptureKit 擷取系統裝置聲音即時字幕、裝置聲音零磁碟錄音保存（絕對不寫入任何 .wav/.m4a/.pcm16 音訊檔）、支援「僅即時顯示（不留紀錄）」與「僅保留文字稿（不存音檔）」兩種儲存模式、升級低延遲且穩定的原文與繁體中文翻譯（SegmentMerger 懸空子句智慧整併）、支援跨 App（GoodNotes／Safari／PDF 等）PiP 子母畫面即時字幕、鎖定畫面 Live Activity 與 iPhone 動態島、以及即時切換的全域在地化語系支援（系統預設／繁體中文／English）。
-> [GitHub Release v1.8.3 下載 IPA](https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/tag/v1.8.3) · [SideStore 安裝指南](Apps/PRIVATE_INSTALL.zh-Hant.md)
+> **課堂逐字稿 App 1.8.4 (Build 17) — 裝置聲音實機啟用 + 課程詞彙 (Beta)**：iPhone／iPad 通用單一 IPA，支援 SideStore 個人免費憑證簽署側載（剛好 1 App + 1 Widget Extension，無額外 App ID 負擔）。修復實體 iOS 27 裝置聲音可用性檢測、新增 ScreenCaptureKit 音訊觀測與診斷面板（一鍵複製診斷報告）、保證裝置聲音零磁碟錄音寫入（絕對不寫入任何 .wav/.m4a/.pcm16 音訊檔）、支援「僅即時顯示（不留紀錄）」與「僅保留文字稿（不存音檔）」兩種儲存模式、新增「課程詞彙 (Course Vocabulary Beta)」支援專業術語標準化與識別別名替換（Apple Speech 脈絡詞提示 + SenseVoice 穩定詞彙修正）、升級 SegmentMerger 懸空子句整併翻譯、支援跨 App（GoodNotes／Safari／PDF 等）PiP 子母畫面即時字幕、鎖定畫面 Live Activity 與 iPhone 動態島、以及反應式全域在地化語系支援（系統預設／繁體中文／English）。
+> [GitHub Release v1.8.4 下載 IPA](https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/tag/v1.8.4) · [SideStore 安裝指南](Apps/PRIVATE_INSTALL.zh-Hant.md)
 
 ---
 
-## 🎙️ 課堂逐字稿 (LectureTranscriber) v1.8.3 功能說明
+## 🎙️ 課堂逐字稿 (LectureTranscriber) v1.8.4 功能說明
 
 **課堂逐字稿 (LectureTranscriber)** 是一款專為 iOS 與 iPadOS 設計的本機即時語音轉文字與即時翻譯工具。
 
-### v1.8.3 重點更新
+### v1.8.4 重點更新
 
-#### 1. 裝置聲音即時字幕（ScreenCaptureKit）
-- **iOS/iPadOS 27+ 系統音訊擷取**：透過 ScreenCaptureKit 框架直接捕捉本機系統播放的聲音（如線上課程、影片、Podcast 等），無需外接麥克風或外放收音。
+#### 1. 裝置聲音實機啟用與觀測（ScreenCaptureKit）
+- **修復實體 iOS 27 誤報問題**：修復 v1.8.3 因 SDK 條件編譯導致實體 iOS 27 誤報「需要 iOS/iPadOS 27 或更新版本」的底層原因，導入動態執行階段橋接，實機無痛啟用。
+- **ScreenCaptureKit 音訊串流抽取**：接收系統音訊 `CMSampleBuffer`，即時轉碼為 16 kHz Float32 單聲道 PCM，並精準計算 RMS 聲音能量音量。
+- **全新「裝置聲音診斷與觀測」面板**：設定頁新增獨立診斷區塊，即時顯示封包接收狀態、首包延遲、取樣率、格式、遺失封包數與錯誤原因，並提供一鍵「複製診斷資訊」方便問題排查。
 - **絕對零磁碟錄音寫入（隱私保證）**：裝置聲音音訊樣本僅在記憶體有限循環緩衝區（最多 30 秒）內供語音辨識模型處理，**絕對不會將任何音訊檔案（.wav、.m4a、.pcm16）寫入裝置磁碟儲存空間**。
 - **兩種儲存模式可選**：
   - **僅即時顯示（預設）**：按下停止後，不儲存任何課堂紀錄、不保留文字稿、不產生任何音檔，完全零痕跡。
   - **僅保留文字稿**：辨識完成的即時逐字稿與中文翻譯會儲存至歷史紀錄中，方便日後查閱與匯出；音訊檔案依然完全不寫入磁碟。
-- **純淨分離不混音**：麥克風錄音與裝置聲音辨識彼此獨立，介面與狀態明確區隔，不進行任何音訊混音。
 
-#### 2. 翻譯穩定度升級（SegmentMerger 智慧整併）
-- **低延遲原文 + 穩定中文翻譯**：原文即時字幕維持極低延遲反饋，翻譯則在收到有實質語義的語音片段（≥2 個英文單字或 ≥4 個中文字元，或停頓 ≥0.5 秒）後觸發。
-- **懸空子句智慧整併**：透過 `SegmentMerger` 自動判斷結尾為介系詞（of, in, to 等）、連詞（and, but, because 等）或冠詞的未完結句子，在定稿時與後續句子平滑整併，徹底解決翻譯斷句破裂、語義破碎與頻繁閃爍的問題。
+#### 2. 課程詞彙 (Course Vocabulary Beta)
+- **單一在地詞彙清單（上限 100 筆）**：針對課堂與技術領域專有名詞（如 `nuScenes`、`Q-Former`、`TrajQFormer`、`UniAD`、`BEVFormer`）建立專屬詞庫。
+- **標準詞與識別別名**：支援為標準專有名詞設定多組常見語音識別別名（例如 `nuScenes` -> `new scenes`, `nu scenes`；`Q-Former` -> `cue former`）。
+- **Apple Speech 整合**：將標準詞自動掛載至 Speech 框架的脈絡詞提示機制（`contextualStrings`），引導解碼器優先辨識正確術語。
+- **SenseVoice 整合**：在穩定/定稿文字輸出時進行保守的單字與片語邊界替換，精準修正大小寫並防範前後綴污染，修正後之標準名詞直通翻譯模組。
 
 #### 3. 全域在地化支援（Global Localization）
 - **三種介面語系**：支援「系統預設」、「繁體中文」與「English」。
-- **即時全域套用**：在設定頁切換語系後，立即動態更新主畫面、歷史紀錄、課堂詳情、音訊庫、PiP 與所有對話視窗，無需重新啟動 App。
+- **即時反應式全域套用**：在設定頁切換語系後，主畫面、歷史紀錄、課堂詳情、音訊庫、PiP 與所有對話視窗即時更新，無須重啟 App。
 
-#### 4. 浮動 PiP 子母畫面字幕與 Live Activity
-- **跨 App 即時字幕**：支援切換至 GoodNotes、Safari、Notability、PDF Reader 等其他 App 時，透過浮動子母畫面（Picture-in-Picture）持續顯示最新原文與繁體中文翻譯字幕。
-- **多種寬高比例**：支援 3:1、5:1（預設長條比例）與 6:1 超寬比例，並支援自訂字級縮放與排版。
+#### 4. 麥克風零退化與浮動 PiP 子母畫面
+- **麥克風完整保存**：原麥克風錄音、AAC 高音質壓縮儲存、事後回放與重辨識 100% 保持穩定，完全不受裝置聲音改動影響。
+- **跨 App 即時字幕**：支援切換至 GoodNotes、Safari、Notability、PDF Reader 等其他 App 時，透過浮動子母畫面（Picture-in-Picture）持續顯示最新原文與繁體中文翻譯字幕（支援 3:1、5:1、6:1 比例）。
 - **鎖定畫面與動態島**：利用 ActivityKit 即時顯示錄音狀態、時鐘計時器、最新原文與最新翻譯，支援點擊直接深度連結（Deep Link）返回目前課堂。
 
 #### 5. SideStore 免費個人開發者簽署最佳化

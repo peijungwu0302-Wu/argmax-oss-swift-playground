@@ -48,8 +48,8 @@ final class AudioAndCaptionTests: XCTestCase {
     @MainActor
     func testUniversalInstallConfiguration() {
         XCTAssertEqual(Bundle.main.bundleIdentifier, "com.peijungwu0302.lecturetranscriber")
-        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String, "1.8.3")
-        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "16")
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String, "1.8.4")
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "17")
         XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "UIDeviceFamily") as? [Int], [1, 2])
         XCTAssertTrue(LectureController().supportsBackgroundAudio)
         XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "UIRequiresFullScreen") as? Bool, false)
@@ -547,4 +547,129 @@ final class AudioAndCaptionTests: XCTestCase {
         // Reset to system
         l10n.appLanguage = .system
     }
+
+    @MainActor
+    func testCourseVocabularyDataModelAndLimits() {
+        let vocab = CourseVocabulary.shared
+        // Clear for clean test
+        vocab.setEntriesForTesting([])
+        XCTAssertEqual(vocab.entries.count, 0)
+        XCTAssertEqual(vocab.canonicalTerms.count, 0)
+
+        // Add valid entry
+        XCTAssertTrue(vocab.addEntry(canonical: "nuScenes", aliases: ["new scenes", "nu scenes"]))
+        XCTAssertEqual(vocab.entries.count, 1)
+        XCTAssertEqual(vocab.canonicalTerms, ["nuScenes"])
+        XCTAssertEqual(vocab.entries.first?.aliasesDisplayString, "new scenes, nu scenes")
+
+        // Reject empty canonical
+        XCTAssertFalse(vocab.addEntry(canonical: "   ", aliases: ["test"]))
+        XCTAssertEqual(vocab.entries.count, 1)
+
+        // Update entry
+        if let id = vocab.entries.first?.id {
+            vocab.updateEntry(id: id, canonical: "nuScenes-v2", aliases: ["new scenes v2"])
+            XCTAssertEqual(vocab.entries.first?.canonical, "nuScenes-v2")
+            XCTAssertEqual(vocab.entries.first?.aliases, ["new scenes v2"])
+
+            // Delete entry
+            vocab.deleteEntry(id: id)
+            XCTAssertEqual(vocab.entries.count, 0)
+        }
+
+        // Test max entries limit (100)
+        var sampleList: [VocabularyEntry] = []
+        for i in 1...100 {
+            sampleList.append(VocabularyEntry(canonical: "Term\(i)", aliases: ["alias\(i)"]))
+        }
+        vocab.setEntriesForTesting(sampleList)
+        XCTAssertEqual(vocab.entries.count, 100)
+        // 101st entry should be rejected
+        XCTAssertFalse(vocab.addEntry(canonical: "OverflowTerm", aliases: ["overflow"]))
+        XCTAssertEqual(vocab.entries.count, 100)
+
+        // Reset
+        vocab.setEntriesForTesting([])
+    }
+
+    func testCourseVocabularyConservativeReplacement() {
+        let entries = [
+            VocabularyEntry(canonical: "nuScenes", aliases: ["new scenes", "nu scenes", "news scenes"]),
+            VocabularyEntry(canonical: "Q-Former", aliases: ["cue former", "q former", "q-former"]),
+            VocabularyEntry(canonical: "TrajQFormer", aliases: ["traj q former", "traj-q-former"]),
+            VocabularyEntry(canonical: "UniAD", aliases: ["uni ad", "uni-ad"]),
+            VocabularyEntry(canonical: "BEVFormer", aliases: ["bev former", "bev-former"])
+        ]
+
+        // Acceptance Test Requirement 1: Input "We evaluate on new scenes." -> "We evaluate on nuScenes."
+        let input1 = "We evaluate on new scenes."
+        let output1 = CourseVocabulary.applyVocabulary(to: input1, entries: entries)
+        XCTAssertEqual(output1, "We evaluate on nuScenes.")
+
+        // Acceptance Test Requirement 2: Input "The weather shows new clouds." -> MUST NOT change to "The weather shows nuScenes clouds."
+        let input2 = "The weather shows new clouds."
+        let output2 = CourseVocabulary.applyVocabulary(to: input2, entries: entries)
+        XCTAssertEqual(output2, "The weather shows new clouds.")
+
+        // Acceptance Test Requirement 3: Input "The cue former architecture works well." -> "The Q-Former architecture works well."
+        let input3 = "The cue former architecture works well."
+        let output3 = CourseVocabulary.applyVocabulary(to: input3, entries: entries)
+        XCTAssertEqual(output3, "The Q-Former architecture works well.")
+
+        // Multi-term and longest-prefix priority test
+        let input4 = "Testing traj q former and bev former on nuscenes benchmark."
+        let output4 = CourseVocabulary.applyVocabulary(to: input4, entries: entries)
+        XCTAssertEqual(output4, "Testing TrajQFormer and BEVFormer on nuScenes benchmark.")
+
+        // Hyphen boundary test
+        let input5 = "The uni-ad and q-former models are compared."
+        let output5 = CourseVocabulary.applyVocabulary(to: input5, entries: entries)
+        XCTAssertEqual(output5, "The UniAD and Q-Former models are compared.")
+
+        // Empty text test
+        XCTAssertEqual(CourseVocabulary.applyVocabulary(to: "", entries: entries), "")
+    }
+
+    @MainActor
+    func testDeviceAudioAvailabilityAndDiagnostics() {
+        // Test availability logic does not throw unexpected runtime exception
+        let isSupported = DeviceAudioAvailability.isSupported
+        let reason = DeviceAudioAvailability.unavailableReason
+        XCTAssertFalse(reason.isEmpty)
+
+        let major = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+        if major >= 27 {
+            XCTAssertTrue(isSupported, "Device Audio must report supported on iOS/iPadOS 27+")
+        }
+
+        // Test diagnostics model formatting
+        var diag = DeviceAudioDiagnostics(
+            appVersion: "1.8.4 (17)",
+            osVersion: "iOS 27.0",
+            isSupported: true,
+            isCapturing: true,
+            totalBuffersReceived: 42,
+            firstBufferLatency: 0.125,
+            sampleRate: 16000,
+            channelCount: 1,
+            targetPCMFormat: "PCM Float32, 16000 Hz, 1 channel",
+            lastBufferTimestamp: Date(),
+            droppedBuffers: 0,
+            lastError: nil,
+            currentASREngine: "Apple Speech"
+        )
+
+        XCTAssertTrue(diag.audioBuffersReceiving)
+        XCTAssertEqual(diag.firstBufferLatencyText, "0.125 s")
+        let summary = diag.formattedSummary()
+        XCTAssertTrue(summary.contains("App Version: 1.8.4 (17)"))
+        XCTAssertTrue(summary.contains("Total Buffers Received: 42"))
+        XCTAssertTrue(summary.contains("Sample Rate: 16000 Hz"))
+        XCTAssertTrue(summary.contains("Current ASR Engine: Apple Speech"))
+
+        // Test copyDiagnostics
+        let copied = DeviceAudioCaptureManager.shared.copyDiagnostics()
+        XCTAssertFalse(copied.isEmpty)
+    }
 }
+

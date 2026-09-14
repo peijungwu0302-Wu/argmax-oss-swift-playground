@@ -1,30 +1,33 @@
 [English](README.md) | [繁體中文](README.zh-TW.md)
 
-> **LectureTranscriber v1.8.3 (Build 16) — Device Audio Live Captions + Global Localization**: Single universal unsigned IPA for iPhone & iPad, optimized for SideStore personal team sideloading (exactly 1 App + 1 Widget Extension, 0 extra App IDs, 0 App Groups, 0 APNs). Features iOS/iPadOS 27+ system audio live captioning via ScreenCaptureKit, strict zero disk audio persistence for internal audio, Live Only vs Save Transcript storage modes, translation stability with SegmentMerger clause coalescing, Picture-in-Picture (PiP) subtitles across apps, Dynamic Island & Lock Screen Live Activities, and full runtime global UI localization (System / Traditional Chinese / English).
-> [GitHub Release v1.8.3 IPA Download](https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/tag/v1.8.3) · [SideStore Install Guide](Apps/PRIVATE_INSTALL.zh-Hant.md)
+> **LectureTranscriber v1.8.4 (Build 17) — Device Audio Bring-up + Course Vocabulary Beta**: Single universal unsigned IPA for iPhone & iPad, optimized for SideStore personal team sideloading (exactly 1 App + 1 Widget Extension, 0 extra App IDs, 0 App Groups, 0 APNs). Features verified iOS/iPadOS 27+ system audio live captioning via ScreenCaptureKit, real-time audio buffer observability & diagnostics panel ("Copy Diagnostics"), strict zero disk audio persistence for internal audio, Live Only vs Save Transcript storage modes, Course Vocabulary (Beta) with canonical terms and alias replacement for Apple Speech & SenseVoice, translation stability with SegmentMerger, Picture-in-Picture (PiP) subtitles across apps, Dynamic Island & Lock Screen Live Activities, and full reactive global UI localization (System / Traditional Chinese / English).
+> [GitHub Release v1.8.4 IPA Download](https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/tag/v1.8.4) · [SideStore Install Guide](Apps/PRIVATE_INSTALL.zh-Hant.md)
 
 ---
 
-## 🎙️ LectureTranscriber v1.8.3 Overview
+## 🎙️ LectureTranscriber v1.8.4 Overview
 
 **LectureTranscriber** is an on-device live transcription and translation app for iOS and iPadOS.
 
-### What's New in v1.8.3
-- **Device / System Audio Live Captions (ScreenCaptureKit)**:
-  - Supports capturing device system audio directly on iOS/iPadOS 27+ using ScreenCaptureKit (`SCStream` with audio capture).
-  - Strict privacy protection: Device audio samples are kept strictly in a bounded ephemeral in-memory ring buffer (up to 30 seconds max) for real-time speech recognition. **Device audio is NEVER recorded or written to disk in any format (.wav, .m4a, .pcm16).**
-  - Two distinct session storage modes for device audio:
+### What's New in v1.8.4
+- **Device Audio Bring-up & Real iOS 27 Fix (ScreenCaptureKit)**:
+  - Fixed availability check to properly detect real iOS 27 devices, eliminating false "requires iOS 27" errors when built with forward-compatible toolchains.
+  - ScreenCaptureKit stream capture receives system audio `CMSampleBuffer`, converts to standard 16 kHz Float32 mono PCM, and computes RMS audio level in real time.
+  - Dedicated **Device Audio Diagnostics** section under Settings with real-time buffer metrics, latency tracking, format verification, and one-tap **Copy Diagnostics** for debugging.
+  - Strict privacy protection: Device audio samples are held exclusively in a bounded ephemeral in-memory buffer (up to 30s RAM). **Device audio is NEVER recorded or written to disk in any format (.wav, .m4a, .pcm16).**
+  - Two distinct session storage modes:
     - **Live Only (Default)**: Completely ephemeral. Zero lecture history, zero transcripts, and zero audio files are created or saved upon stopping.
     - **Save Transcript**: Finalized transcript text and translations are saved locally to session history for future reference and export, while audio recording remains completely disabled on disk.
-  - Strict clean separation: Microphone and Device Audio operate independently with dedicated controls; no audio mixing.
-- **Translation Stability & Quality (SegmentMerger)**:
-  - Low-latency original captions with stabilized Traditional Chinese translations.
-  - Translations are triggered only when a meaningful segment is established (>=2 words or >=4 Chinese characters, or after a pause >=0.5s).
-  - `SegmentMerger` automatically coalesces dangling dependent clauses (prepositions, conjunctions, articles) across consecutive chunks to eliminate translation stutter and incomplete fragments.
+- **Course Vocabulary (Beta)**:
+  - Single active local vocabulary list (up to 100 items) for domain-specific terminology.
+  - Supports canonical terms with optional recognition aliases (e.g., Canonical: `nuScenes`, Aliases: `new scenes`, `nu scenes`; Canonical: `Q-Former`, Aliases: `cue former`).
+  - **Apple Speech Integration**: Feeds canonical terms into Apple's native contextual vocabulary bias mechanism (`contextualStrings`).
+  - **SenseVoice Integration**: Conservative word-boundary post-ASR replacement on stable/final text before translation and caption feeds, preserving capitalization and preventing prefix collisions.
 - **Global Runtime Localization**:
   - Full application localization supporting **System Default**, **Traditional Chinese (繁體中文)**, and **English**.
   - Switching app language in Settings takes effect across the entire application interface instantly without restarting the app.
-- **Floating PiP Subtitles & Live Activities**:
+- **Microphone & PiP Regression Protection**:
+  - Preserves full microphone recording, AAC compression, playback, and offline model re-transcription.
   - Continuous floating Picture-in-Picture subtitles across apps (GoodNotes, Safari, PDF Reader, etc.) with 3:1, 5:1 (default), and 6:1 aspect ratios.
   - Native ActivityKit Lock Screen Live Activities and Dynamic Island support with real-time timers and synchronized caption updates.
 - **SideStore / Personal Sideload Architecture**:

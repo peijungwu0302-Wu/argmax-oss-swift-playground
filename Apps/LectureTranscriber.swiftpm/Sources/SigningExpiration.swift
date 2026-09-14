@@ -315,16 +315,16 @@ public struct SigningExpirationSection: View {
     public init() {}
 
     public var body: some View {
-        Section("側載簽署有效期限") {
+        Section(L10n.tr("側載簽署有效期限", "Sideload Signing Expiration")) {
             HStack {
-                Text("剩餘有效時間")
+                Text(L10n.tr("剩餘有效時間", "Remaining Time"))
                 Spacer()
                 Text(manager.remainingString)
                     .font(.system(.body, design: .monospaced))
                     .foregroundColor(manager.isExpired ? .red : .primary)
             }
             HStack {
-                Text("到期時間")
+                Text(L10n.tr("到期時間", "Expiration Date"))
                 Spacer()
                 Text(manager.expirationString)
                     .font(.system(.subheadline, design: .monospaced))
@@ -333,24 +333,24 @@ public struct SigningExpirationSection: View {
             if let profile = manager.profile {
                 if let name = profile.name {
                     HStack {
-                        Text("簽署描述檔")
+                        Text(L10n.tr("簽署描述檔", "Provisioning Profile"))
                         Spacer()
                         Text(name).font(.caption).foregroundColor(.secondary)
                     }
                 }
                 if let team = profile.teamName {
                     HStack {
-                        Text("開發者團隊")
+                        Text(L10n.tr("開發者團隊", "Developer Team"))
                         Spacer()
                         Text(team).font(.caption).foregroundColor(.secondary)
                     }
                 }
-                Button("記錄刷新前基準（Self Refresh 驗證）") {
+                Button(L10n.tr("記錄刷新前基準（Self Refresh 驗證）", "Record Baseline (Self Refresh Verification)")) {
                     manager.recordBeforeRefresh()
                 }
             }
             if manager.diagnostics != nil || manager.selfRefreshStatus != .none {
-                Button("查看 Self Refresh 診斷報告") {
+                Button(L10n.tr("查看 Self Refresh 診斷報告", "View Self Refresh Diagnostics")) {
                     showDiagnostics = true
                 }
             }
@@ -373,7 +373,7 @@ public struct SigningDiagnosticsSheet: View {
         NavigationStack {
             List {
                 if let diag = diagnostics {
-                    Section("Self Refresh 診斷結果") {
+                    Section(L10n.tr("Self Refresh 診斷結果", "Self Refresh Diagnostic Results")) {
                         HStack {
                             Text("Self Refresh")
                             Spacer()
@@ -383,7 +383,7 @@ public struct SigningDiagnosticsSheet: View {
                         }
                         if let delta = diag.expirationDeltaSeconds {
                             HStack {
-                                Text("Expiration Delta")
+                                Text(L10n.tr("到期時間增量", "Expiration Delta"))
                                 Spacer()
                                 Text(SigningTimeFormatter.formatDelta(seconds: delta))
                                     .font(.system(.body, design: .monospaced))
@@ -391,23 +391,23 @@ public struct SigningDiagnosticsSheet: View {
                             }
                         }
                     }
-                    Section("到期時間比對（精確至秒）") {
+                    Section(L10n.tr("到期時間比對（精確至秒）", "Expiration Date Comparison")) {
                         if let before = diag.beforeExpirationDate {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("Before Expiration:").font(.caption).foregroundColor(.secondary)
+                                Text(L10n.tr("刷新前到期時間：", "Before Expiration:")).font(.caption).foregroundColor(.secondary)
                                 Text(SigningTimeFormatter.formatDateTime(before))
                                     .font(.system(.body, design: .monospaced))
                             }
                         }
                         if let after = diag.afterExpirationDate {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("After Expiration:").font(.caption).foregroundColor(.secondary)
+                                Text(L10n.tr("刷新後到期時間：", "After Expiration:")).font(.caption).foregroundColor(.secondary)
                                 Text(SigningTimeFormatter.formatDateTime(after))
                                     .font(.system(.body, design: .monospaced))
                             }
                         }
                     }
-                    Section("描述檔異動指標") {
+                    Section(L10n.tr("描述檔異動指標", "Profile Modification Indicators")) {
                         HStack {
                             Text("Profile UUID Changed:")
                             Spacer()
@@ -420,14 +420,19 @@ public struct SigningDiagnosticsSheet: View {
                         }
                     }
                 } else {
-                    Text("尚未記錄 Self Refresh 前後數據。在刷新前點擊「記錄刷新前基準」即可在刷新後自動核對。")
+                    Text(L10n.tr("尚未記錄 Self Refresh 前後數據。在刷新前點擊「記錄刷新前基準」即可在刷新後自動核對。", "No baseline recorded yet. Tap Record Baseline before refreshing to verify automatically."))
                         .foregroundColor(.secondary)
                 }
             }
-            .navigationTitle("Developer Diagnostics")
+            .navigationTitle(L10n.tr("開發者簽名診斷", "Developer Diagnostics"))
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { dismiss() }
+                    Button(L10n.tr("完成", "Done")) { dismiss() }
+                }
+            }
+        }
+    }
+}
                 }
             }
         }

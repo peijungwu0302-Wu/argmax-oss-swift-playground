@@ -8,12 +8,16 @@ struct ContentView: View {
     @ObservedObject var controller: LectureController
     @EnvironmentObject private var navigation: AppNavigationState
     @EnvironmentObject private var pipSettings: PiPPresentationSettings
+    @ObservedObject private var l10n = L10n.shared
+    @ObservedObject private var courseVocabulary = CourseVocabulary.shared
+    @ObservedObject private var deviceAudioCapture = DeviceAudioCaptureManager.shared
     @State private var showHistory = false
     @State private var showImport = false
     @State private var importAfterHistory = false
     @State private var showAudio = false
     @State private var showBookmark = false
     @State private var showSettings = false
+    @State private var showCourseVocabulary = false
     @State private var showMinutes = false
     @State private var bookmarkNote = ""
     @State private var sharedFile: SharedFile?
@@ -162,6 +166,7 @@ struct ContentView: View {
                 }
             }
             .sheet(isPresented: $showSettings) { settingsSheet }
+            .sheet(isPresented: $showCourseVocabulary) { CourseVocabularySheet() }
             .sheet(isPresented: $showMinutes) { minutesSheet }
             .sheet(isPresented: $showSpeakers) { SpeakerSettingsView(controller: controller) }
             .sheet(item: $reviewedLine) { line in
@@ -747,10 +752,31 @@ struct ContentView: View {
                         .font(.caption)
                 }
 
-                // SECTION 8: 專有名詞提示
-                Section(L10n.tr("8. 專有名詞自訂詞庫", "8. Vocabulary & Prompt")) {
+                // SECTION 8: 課程詞彙 (Beta) 與專有名詞提示
+                Section(L10n.tr("8. 課程詞彙 (Beta) 與專有名詞提示", "8. Course Vocabulary (Beta) & Prompt")) {
+                    Button {
+                        showCourseVocabulary = true
+                    } label: {
+                        HStack {
+                            Label(L10n.tr("課程詞彙 (Beta)", "Course Vocabulary (Beta)"), systemImage: "text.book.closed")
+                            Spacer()
+                            Text("\(courseVocabulary.entries.count)/100")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Text(L10n.tr("協助辨識保留技術詞與課程專有名詞（支援 Apple Speech 與 SenseVoice）。", "Helps recognition preserve technical and course-specific terms (supports Apple Speech & SenseVoice)."))
+                        .font(.caption).foregroundStyle(.secondary)
+
+                    Divider()
+
+                    Text(L10n.tr("WhisperKit 提示詞：", "WhisperKit Prompt Words:"))
+                        .font(.caption).foregroundStyle(.secondary)
                     TextField(L10n.tr("例如：CRISPR、Cas9、gene editing", "e.g. CRISPR, Cas9, gene editing"), text: $controller.vocabulary, axis: .vertical)
-                        .lineLimit(3...5).disabled(controller.settingsLocked || !controller.usesWhisper)
+                        .lineLimit(2...4).disabled(controller.settingsLocked || !controller.usesWhisper)
                         .onChange(of: controller.vocabulary) { value in
                             if value.count > 500 { controller.vocabulary = String(value.prefix(500)) }
                         }
@@ -792,6 +818,9 @@ struct ContentView: View {
                     Text(L10n.tr("由 SideStore 下載、簽署與安裝；錄音／處理期間不啟動更新。", "Downloaded, signed, and installed via SideStore."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
+
+                // SECTION 12: 裝置聲音診斷與觀測
+                DeviceAudioDiagnosticsView(controller: controller)
             }
             .navigationTitle(L10n.tr("錄音設定", "Settings"))
             .toolbar {
@@ -1058,3 +1087,222 @@ struct ShareSheet: UIViewControllerRepresentable {
     }
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
+
+// MARK: - Course Vocabulary Sheet
+
+struct CourseVocabularySheet: View {
+    @ObservedObject var vocabulary = CourseVocabulary.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var showAddDialog = false
+    @State private var newCanonical = ""
+    @State private var newAliases = ""
+    @State private var editingEntry: VocabularyEntry? = nil
+    @State private var editCanonical = ""
+    @State private var editAliases = ""
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text(L10n.tr("協助辨識保留技術詞與課程專有名詞。", "Helps recognition preserve technical and course-specific terms."))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section(L10n.tr("詞彙清單（上限 100 筆，目前 \(vocabulary.entries.count) 筆）", "Vocabulary List (Max 100, Current: \(vocabulary.entries.count))")) {
+                    if vocabulary.entries.isEmpty {
+                        Text(L10n.tr("尚未加入課程詞彙。點擊右上角「+」即可新增專門術語。", "No course vocabulary yet. Tap '+' to add technical terms."))
+                            .foregroundStyle(.secondary)
+                            .font(.subheadline)
+                    } else {
+                        ForEach(vocabulary.entries) { entry in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(entry.canonical)
+                                    .font(.headline)
+                                if !entry.aliases.isEmpty {
+                                    Text(L10n.tr("別名：", "Aliases: ") + entry.aliasesDisplayString)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                editingEntry = entry
+                                editCanonical = entry.canonical
+                                editAliases = entry.aliasesDisplayString
+                            }
+                        }
+                        .onDelete { offsets in
+                            vocabulary.deleteEntries(at: offsets)
+                        }
+                    }
+                }
+            }
+            .navigationTitle(L10n.tr("課程詞彙 (Beta)", "Course Vocabulary (Beta)"))
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(L10n.tr("關閉", "Close")) { dismiss() }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        newCanonical = ""
+                        newAliases = ""
+                        showAddDialog = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .disabled(vocabulary.entries.count >= CourseVocabulary.maxEntriesCount)
+                }
+            }
+            .sheet(isPresented: $showAddDialog) {
+                NavigationStack {
+                    Form {
+                        Section(L10n.tr("標準專有名詞 (Canonical)", "Canonical Term")) {
+                            TextField(L10n.tr("例如：nuScenes、Q-Former", "e.g. nuScenes, Q-Former"), text: $newCanonical)
+                        }
+                        Section(L10n.tr("識別別名（以逗號分隔）", "Aliases (Comma separated)")) {
+                            TextField(L10n.tr("例如：new scenes, nu scenes", "e.g. new scenes, nu scenes"), text: $newAliases)
+                        }
+                    }
+                    .navigationTitle(L10n.tr("新增課程詞彙", "Add Vocabulary"))
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button(L10n.tr("取消", "Cancel")) { showAddDialog = false }
+                        }
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button(L10n.tr("儲存", "Save")) {
+                                let aliases = newAliases.split(separator: ",").map { String($0) }
+                                vocabulary.addEntry(canonical: newCanonical, aliases: aliases)
+                                showAddDialog = false
+                            }
+                            .disabled(newCanonical.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                    }
+                }
+            }
+            .sheet(item: $editingEntry) { entry in
+                NavigationStack {
+                    Form {
+                        Section(L10n.tr("標準專有名詞 (Canonical)", "Canonical Term")) {
+                            TextField(L10n.tr("例如：nuScenes", "e.g. nuScenes"), text: $editCanonical)
+                        }
+                        Section(L10n.tr("識別別名（以逗號分隔）", "Aliases (Comma separated)")) {
+                            TextField(L10n.tr("例如：new scenes, nu scenes", "e.g. new scenes, nu scenes"), text: $editAliases)
+                        }
+                    }
+                    .navigationTitle(L10n.tr("編輯課程詞彙", "Edit Vocabulary"))
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button(L10n.tr("取消", "Cancel")) { editingEntry = nil }
+                        }
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button(L10n.tr("儲存", "Save")) {
+                                let aliases = editAliases.split(separator: ",").map { String($0) }
+                                vocabulary.updateEntry(id: entry.id, canonical: editCanonical, aliases: aliases)
+                                editingEntry = nil
+                            }
+                            .disabled(editCanonical.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Device Audio Diagnostics View
+
+struct DeviceAudioDiagnosticsView: View {
+    @ObservedObject var manager = DeviceAudioCaptureManager.shared
+    @ObservedObject var controller: LectureController
+    @State private var copied = false
+
+    var body: some View {
+        Section(L10n.tr("12. 裝置聲音診斷與觀測", "12. Device Audio Diagnostics")) {
+            let diag = manager.diagnostics
+            HStack {
+                Text(L10n.tr("版本編號", "App Version"))
+                Spacer()
+                Text(diag.appVersion).font(.caption).foregroundStyle(.secondary)
+            }
+            HStack {
+                Text(L10n.tr("系統版本", "OS Version"))
+                Spacer()
+                Text(diag.osVersion).font(.caption).foregroundStyle(.secondary)
+            }
+            HStack {
+                Text(L10n.tr("裝置聲音支援", "Device Audio Support"))
+                Spacer()
+                Text(DeviceAudioAvailability.isSupported ? L10n.tr("支援", "Supported") : L10n.tr("不支援 (需 iOS 27+)", "Unsupported (Requires iOS 27+)"))
+                    .bold()
+                    .foregroundStyle(DeviceAudioAvailability.isSupported ? .green : .orange)
+            }
+            HStack {
+                Text(L10n.tr("擷取狀態", "Capture Status"))
+                Spacer()
+                Text(manager.isCapturing ? L10n.tr("擷取中", "Capturing") : L10n.tr("閒置", "Idle"))
+                    .foregroundStyle(manager.isCapturing ? .green : .secondary)
+            }
+            HStack {
+                Text(L10n.tr("音訊緩衝流接收", "Audio Buffers Receiving"))
+                Spacer()
+                Text(diag.audioBuffersReceiving ? L10n.tr("接收中", "Receiving") : L10n.tr("無", "None"))
+                    .foregroundStyle(diag.audioBuffersReceiving ? .green : .secondary)
+            }
+            HStack {
+                Text(L10n.tr("累計接收緩衝區", "Total Buffers Received"))
+                Spacer()
+                Text("\(diag.totalBuffersReceived)")
+                    .font(.system(.body, design: .monospaced))
+            }
+            HStack {
+                Text(L10n.tr("首個音訊封包延遲", "First Buffer Latency"))
+                Spacer()
+                Text(diag.firstBufferLatencyText)
+                    .font(.system(.body, design: .monospaced))
+            }
+            HStack {
+                Text(L10n.tr("取樣率與聲道", "Sample Rate & Channels"))
+                Spacer()
+                Text("\(Int(diag.sampleRate)) Hz · \(diag.channelCount)ch")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            HStack {
+                Text(L10n.tr("轉換格式", "Target PCM Format"))
+                Spacer()
+                Text("16kHz Mono Float32")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            HStack {
+                Text(L10n.tr("最近緩衝區間隔", "Last Buffer Age"))
+                Spacer()
+                Text(diag.lastBufferAgeText)
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if let error = diag.lastError {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L10n.tr("最近錯誤：", "Last Error:"))
+                        .font(.caption).foregroundStyle(.red)
+                    Text(error)
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+
+            Button {
+                manager.updateEnvironmentDiagnostics(engine: controller.usesAppleSpeech ? "Apple Speech" : (controller.usesSenseVoice ? "SenseVoice" : "WhisperKit"))
+                _ = manager.copyDiagnostics()
+                copied = true
+                Task {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    copied = false
+                }
+            } label: {
+                HStack {
+                    Image(systemName: copied ? "checkmark.circle.fill" : "doc.on.doc")
+                    Text(copied ? L10n.tr("已複製診斷資訊", "Copied Diagnostics") : L10n.tr("複製診斷資訊", "Copy Diagnostics"))
+                }
+            }
+        }
+    }
+}
+

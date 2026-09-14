@@ -619,7 +619,8 @@ final class LectureController: ObservableObject {
         }
         if window.commit {
             guard var updated = session else { return }
-            updated.appendConfirmed(lines)
+            let corrected = lines.map { TranscriptLine(start: $0.start, end: $0.end, text: CourseVocabulary.shared.correctFinalText($0.text)) }
+            updated.appendConfirmed(corrected)
             updated.parts[index].processedSamples += window.owned.count
             try store.save(updated)
             session = updated; lastSaved = Date()
@@ -1362,10 +1363,11 @@ final class LectureController: ObservableObject {
             if result.isFinal {
                 if let confirmed {
                     self.session?.previousLines = nil
-                    let newLine = TranscriptLine(start: offset + confirmed.start, end: offset + confirmed.end, text: confirmed.text)
+                    let corrected = CourseVocabulary.shared.correctFinalText(confirmed.text)
+                    let newLine = TranscriptLine(start: offset + confirmed.start, end: offset + confirmed.end, text: corrected)
                     self.session?.lines.append(newLine)
                     print("CaptionLatency final_transcript=\(Date().timeIntervalSince1970)")
-                    LiveActivityCoordinator.shared.updateTranscript(original: confirmed.text, translation: self.validTranslatedDraft)
+                    LiveActivityCoordinator.shared.updateTranscript(original: corrected, translation: self.validTranslatedDraft)
                     CaptionFeed.shared.update(original: self.caption, translation: self.validTranslatedDraft)
                 }
                 let through = result.finalizedThrough.isFinite ? result.finalizedThrough : result.end
@@ -1503,10 +1505,11 @@ final class LectureController: ObservableObject {
             if result.isFinal {
                 if let confirmed {
                     self.session?.previousLines = nil
-                    let newLine = TranscriptLine(start: offset + confirmed.start, end: offset + confirmed.end, text: confirmed.text)
+                    let corrected = CourseVocabulary.shared.correctFinalText(confirmed.text)
+                    let newLine = TranscriptLine(start: offset + confirmed.start, end: offset + confirmed.end, text: corrected)
                     self.session?.lines.append(newLine)
                     print("CaptionLatency final_transcript=\(Date().timeIntervalSince1970)")
-                    LiveActivityCoordinator.shared.updateTranscript(original: confirmed.text, translation: self.validTranslatedDraft)
+                    LiveActivityCoordinator.shared.updateTranscript(original: corrected, translation: self.validTranslatedDraft)
                     CaptionFeed.shared.update(original: self.caption, translation: self.validTranslatedDraft)
                 }
                 if self.sessionStorageMode == .saveTranscript {
@@ -1549,13 +1552,14 @@ final class LectureController: ObservableObject {
         senseVoiceInputStatus = L10n.tr("裝置聲音輸入 \(window.inputCount) 個樣本；本段 \(window.owned.count)（16 kHz）", "Device audio input \(window.inputCount) samples; segment \(window.owned.count) (16 kHz)")
         let lines = text.isEmpty ? [] : [TranscriptLine(start: start, end: end, text: text)]
         if window.commit {
-            session?.appendConfirmed(lines)
+            let correctedLines = lines.map { TranscriptLine(start: $0.start, end: $0.end, text: CourseVocabulary.shared.correctFinalText($0.text)) }
+            session?.appendConfirmed(correctedLines)
             deviceAudioProcessedSamples += window.owned.count
             if sessionStorageMode == .saveTranscript {
                 persist()
             }
             provisional = []; previousHypothesis = []
-            if let line = lines.first {
+            if let line = correctedLines.first {
                 CaptionFeed.shared.update(original: caption, translation: validTranslatedDraft)
                 LiveActivityCoordinator.shared.updateTranscript(original: line.text, translation: validTranslatedDraft)
             }

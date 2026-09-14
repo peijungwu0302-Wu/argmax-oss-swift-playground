@@ -69,6 +69,8 @@ final class AppleSpeechEngine: LiveSpeechEngine {
         transcriber = speechModule; outputFormat = format; preparedLanguage = language
     }
 
+    public private(set) var attachedContextualStrings: [String] = []
+
     func start(language: String, onResult: @escaping @MainActor (SpeechUpdate) -> Void) async throws {
         await cancel()
         try await prepare(language: language)
@@ -81,6 +83,14 @@ final class AppleSpeechEngine: LiveSpeechEngine {
         continuation = builder
         let processor = SpeechAnalyzer(modules: [transcriber])
         analyzer = processor
+
+        let terms = CourseVocabulary.shared.canonicalTerms
+        attachedContextualStrings = terms
+        if !terms.isEmpty {
+            var context = AnalysisContext()
+            context.contextualStrings = terms
+            try? await processor.setContext(context)
+        }
         resultsTask = Task { [weak self] in
             do {
                 for try await result in transcriber.results {
