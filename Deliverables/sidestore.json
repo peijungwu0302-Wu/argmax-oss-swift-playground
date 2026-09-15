@@ -9,9 +9,17 @@
       "name": "課堂逐字稿 LectureTranscriber",
       "bundleIdentifier": "com.peijungwu0302.lecturetranscriber",
       "developerName": "Peijung Wu",
-      "localizedDescription": "修復實體 iOS 27 裝置聲音可用性檢測、新增裝置聲音即時觀測與診斷面板、新增課程詞彙 (Course Vocabulary Beta) 支援標準名詞與識別別名替換、整合 Apple Speech 脈絡詞提示與 SenseVoice 穩定後置詞彙修正、全域語系即時切換。",
+      "localizedDescription": "使用 Xcode 27 + iOS 27 SDK 原生編譯 ScreenCaptureKit 裝置聲音擷取、支援 SCContentSharingPicker 系統選取器與原生音訊緩衝流、零磁碟錄音保存、僅即時顯示與保留文字稿模式、完善裝置聲音即時觀測與診斷面板。",
       "iconURL": "https://raw.githubusercontent.com/peijungwu0302-Wu/argmax-oss-swift-playground/playground-compatible/Apps/LectureTranscriber.swiftpm/Sources/Assets.xcassets/AppIcon.appiconset/AppIcon.png",
       "versions": [
+        {
+          "version": "1.8.5",
+          "date": "2026-09-15T04:00:00Z",
+          "localizedDescription": "使用 Xcode 27 + iOS 27 SDK 原生編譯 ScreenCaptureKit 裝置聲音擷取、支援 SCContentSharingPicker 系統選取器與原生音訊緩衝流、零磁碟錄音保存、僅即時顯示與保留文字稿模式、完善裝置聲音即時觀測與診斷面板。",
+          "downloadURL": "https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/download/v1.8.5/LectureTranscriber-v1.8.5.ipa",
+          "size": 4081623,
+          "minOSVersion": "16.1"
+        },
         {
           "version": "1.8.4",
           "date": "2026-09-15T03:00:00Z",
@@ -72,7 +80,8 @@
       "appPermissions": {
         "entitlements": [],
         "privacy": {
-          "NSMicrophoneUsageDescription": "錄製課堂聲音，在這台裝置上產生逐字稿。"
+          "NSMicrophoneUsageDescription": "錄製課堂聲音，在這台裝置上產生逐字稿。",
+          "NSScreenCaptureUsageDescription": "擷取本機聲音以在裝置上產生即時逐字稿與翻譯。"
         }
       }
     }

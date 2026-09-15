@@ -1,15 +1,15 @@
 [English](README.md) | [繁體中文](README.zh-TW.md)
 
-> **LectureTranscriber v1.8.4 (Build 17) — Device Audio Bring-up + Course Vocabulary Beta**: Single universal unsigned IPA for iPhone & iPad, optimized for SideStore personal team sideloading (exactly 1 App + 1 Widget Extension, 0 extra App IDs, 0 App Groups, 0 APNs). Features verified iOS/iPadOS 27+ system audio live captioning via ScreenCaptureKit, real-time audio buffer observability & diagnostics panel ("Copy Diagnostics"), strict zero disk audio persistence for internal audio, Live Only vs Save Transcript storage modes, Course Vocabulary (Beta) with canonical terms and alias replacement for Apple Speech & SenseVoice, translation stability with SegmentMerger, Picture-in-Picture (PiP) subtitles across apps, Dynamic Island & Lock Screen Live Activities, and full reactive global UI localization (System / Traditional Chinese / English).
-> [GitHub Release v1.8.4 IPA Download](https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/tag/v1.8.4) · [SideStore Install Guide](Apps/PRIVATE_INSTALL.zh-Hant.md)
+> **LectureTranscriber v1.8.5 (Build 18) — Xcode 27 + iOS 27 Native ScreenCaptureKit Device Audio + Course Vocabulary Beta**: Single universal unsigned IPA for iPhone & iPad, optimized for SideStore personal team sideloading (exactly 1 App + 1 Widget Extension, 0 extra App IDs, 0 App Groups, 0 APNs). Features Xcode 27 + iOS 27 SDK native ScreenCaptureKit audio capture path, SCContentSharingPicker integration, real-time audio buffer observability & diagnostics panel ("Copy Diagnostics"), strict zero disk audio persistence for internal audio, Live Only vs Save Transcript storage modes, Course Vocabulary (Beta) with canonical terms and alias replacement for Apple Speech & SenseVoice, translation stability with SegmentMerger, Picture-in-Picture (PiP) subtitles across apps, Dynamic Island & Lock Screen Live Activities, and full reactive global UI localization (System / Traditional Chinese / English).
+> [GitHub Release v1.8.5 IPA Download](https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/tag/v1.8.5) · [SideStore Install Guide](Apps/PRIVATE_INSTALL.zh-Hant.md)
 
 ---
 
-## 🎙️ LectureTranscriber v1.8.4 Overview
+## 🎙️ LectureTranscriber v1.8.5 Overview
 
 **LectureTranscriber** is an on-device live transcription and translation app for iOS and iPadOS.
 
-### What's New in v1.8.4
+### What's New in v1.8.5
 - **Device Audio Bring-up & Real iOS 27 Fix (ScreenCaptureKit)**:
   - Fixed availability check to properly detect real iOS 27 devices, eliminating false "requires iOS 27" errors when built with forward-compatible toolchains.
   - ScreenCaptureKit stream capture receives system audio `CMSampleBuffer`, converts to standard 16 kHz Float32 mono PCM, and computes RMS audio level in real time.

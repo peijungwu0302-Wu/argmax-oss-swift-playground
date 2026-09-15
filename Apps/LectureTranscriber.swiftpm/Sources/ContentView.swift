@@ -1231,17 +1231,29 @@ struct DeviceAudioDiagnosticsView: View {
                 Text(diag.osVersion).font(.caption).foregroundStyle(.secondary)
             }
             HStack {
+                Text(L10n.tr("建置 SDK", "Build SDK"))
+                Spacer()
+                Text(diag.buildSDK).font(.caption).foregroundStyle(.secondary)
+            }
+            HStack {
                 Text(L10n.tr("裝置聲音支援", "Device Audio Support"))
                 Spacer()
-                Text(DeviceAudioAvailability.isSupported ? L10n.tr("支援", "Supported") : L10n.tr("不支援 (需 iOS 27+)", "Unsupported (Requires iOS 27+)"))
+                Text(diag.isSupported ? L10n.tr("支援", "Supported") : L10n.tr("不支援", "Unsupported"))
                     .bold()
-                    .foregroundStyle(DeviceAudioAvailability.isSupported ? .green : .orange)
+                    .foregroundStyle(diag.isSupported ? .green : .orange)
+            }
+            HStack {
+                Text(L10n.tr("ScreenCaptureKit 原生連結", "ScreenCaptureKit Native Linked"))
+                Spacer()
+                Text(diag.isScreenCaptureKitNativeLinked ? L10n.tr("已連結", "Linked") : L10n.tr("未連結 (SDK 過舊)", "Not Linked (Legacy SDK)"))
+                    .font(.caption)
+                    .foregroundStyle(diag.isScreenCaptureKitNativeLinked ? .green : .red)
             }
             HStack {
                 Text(L10n.tr("擷取狀態", "Capture Status"))
                 Spacer()
-                Text(manager.isCapturing ? L10n.tr("擷取中", "Capturing") : L10n.tr("閒置", "Idle"))
-                    .foregroundStyle(manager.isCapturing ? .green : .secondary)
+                Text(diag.captureStatus)
+                    .foregroundStyle(diag.isCapturing ? .green : .secondary)
             }
             HStack {
                 Text(L10n.tr("音訊緩衝流接收", "Audio Buffers Receiving"))
@@ -1254,6 +1266,13 @@ struct DeviceAudioDiagnosticsView: View {
                 Spacer()
                 Text("\(diag.totalBuffersReceived)")
                     .font(.system(.body, design: .monospaced))
+            }
+            HStack {
+                Text(L10n.tr("丟失緩衝區", "Dropped Buffers"))
+                Spacer()
+                Text("\(diag.droppedBuffers)")
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(diag.droppedBuffers > 0 ? .orange : .secondary)
             }
             HStack {
                 Text(L10n.tr("首個音訊封包延遲", "First Buffer Latency"))
@@ -1270,13 +1289,19 @@ struct DeviceAudioDiagnosticsView: View {
             HStack {
                 Text(L10n.tr("轉換格式", "Target PCM Format"))
                 Spacer()
-                Text("16kHz Mono Float32")
+                Text(diag.targetPCMFormat)
                     .font(.caption).foregroundStyle(.secondary)
             }
             HStack {
                 Text(L10n.tr("最近緩衝區間隔", "Last Buffer Age"))
                 Spacer()
                 Text(diag.lastBufferAgeText)
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            HStack {
+                Text(L10n.tr("目前語音引擎", "Current ASR Engine"))
+                Spacer()
+                Text(diag.currentASREngine)
                     .font(.caption).foregroundStyle(.secondary)
             }
             if let error = diag.lastError {

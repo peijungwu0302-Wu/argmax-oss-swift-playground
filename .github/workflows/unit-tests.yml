@@ -46,13 +46,13 @@ jobs:
             }
           - {
               name: "watchOS",
-              condition: "${{ inputs.macos-runner == 'macos-26' }}",
+              condition: "${{ inputs.macos-runner == 'macos-26' || inputs.macos-runner == 'xcode-27' }}",
               clean-destination: "generic/platform=watchOS",
               test-destination: "platform=watchOS Simulator,OS=${{ inputs.watchos-version }},name=Apple Watch Ultra 3 (49mm)",
             }
           - {
               name: "visionOS",
-              condition: "${{ inputs.macos-runner == 'macos-26' }}",
+              condition: "${{ inputs.macos-runner == 'macos-26' || inputs.macos-runner == 'xcode-27' }}",
               clean-destination: "generic/platform=visionOS",
               test-destination: "platform=visionOS Simulator,OS=${{ inputs.visionos-version }},name=Apple Vision Pro",
             }
@@ -86,7 +86,7 @@ jobs:
           echo "Destinations for testing:"
           xcodebuild test-without-building -testPlan UnitTestsPlan -scheme argmax-oss-swift-Package -showdestinations
       - name: Boot Simulator and Wait
-        if: ${{ matrix.run-config['condition'] == true && matrix.run-config['name'] != 'macOS' && inputs.macos-runner == 'macos-26' }}
+        if: ${{ matrix.run-config['condition'] == true && matrix.run-config['name'] != 'macOS' && (inputs.macos-runner == 'macos-26' || inputs.macos-runner == 'xcode-27') }}
         # Slower runners require some time to fully boot the simulator
         # Parse the simulator name from the destination string, boot it, and wait
         run: |
@@ -99,7 +99,7 @@ jobs:
         run: |
           set -o pipefail
           # Annotate warnings from a single job only; duplicate check runs each re-post identical annotations on the PR diff
-          xcodebuild clean build-for-testing -scheme argmax-oss-swift-Package -destination '${{ matrix.run-config['clean-destination'] }}' | xcbeautify --renderer ${{ (matrix.run-config['name'] == 'macOS' && inputs.macos-runner == 'macos-26') && 'github-actions' || 'terminal' }}
+          xcodebuild clean build-for-testing -scheme argmax-oss-swift-Package -destination '${{ matrix.run-config['clean-destination'] }}' | xcbeautify --renderer ${{ (matrix.run-config['name'] == 'macOS' && (inputs.macos-runner == 'macos-26' || inputs.macos-runner == 'xcode-27')) && 'github-actions' || 'terminal' }}
       - name: Test - ${{ matrix.run-config['name'] }}
         if: ${{ matrix.run-config['condition'] == true }}
         env:

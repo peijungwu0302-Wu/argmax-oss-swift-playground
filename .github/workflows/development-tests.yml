@@ -15,12 +15,12 @@ jobs:
     uses: ./.github/workflows/unit-tests.yml
     secrets: inherit
     with:
-      ios-version: "26.4.1"
+      ios-version: "27.0"
       ios-device: "iPhone 17"
-      watchos-version: "26.4"
+      watchos-version: "27.0"
       visionos-version: "latest"
-      macos-runner: "macos-26"
-      xcode-version: "26.4.1"
+      macos-runner: "xcode-27"
+      xcode-version: "27.0"
 
   check-approvals:
     runs-on: ubuntu-latest

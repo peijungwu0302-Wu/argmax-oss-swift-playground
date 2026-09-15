@@ -1,15 +1,15 @@
 [English](README.md) | [繁體中文](README.zh-TW.md)
 
-> **課堂逐字稿 App 1.8.4 (Build 17) — 裝置聲音實機啟用 + 課程詞彙 (Beta)**：iPhone／iPad 通用單一 IPA，支援 SideStore 個人免費憑證簽署側載（剛好 1 App + 1 Widget Extension，無額外 App ID 負擔）。修復實體 iOS 27 裝置聲音可用性檢測、新增 ScreenCaptureKit 音訊觀測與診斷面板（一鍵複製診斷報告）、保證裝置聲音零磁碟錄音寫入（絕對不寫入任何 .wav/.m4a/.pcm16 音訊檔）、支援「僅即時顯示（不留紀錄）」與「僅保留文字稿（不存音檔）」兩種儲存模式、新增「課程詞彙 (Course Vocabulary Beta)」支援專業術語標準化與識別別名替換（Apple Speech 脈絡詞提示 + SenseVoice 穩定詞彙修正）、升級 SegmentMerger 懸空子句整併翻譯、支援跨 App（GoodNotes／Safari／PDF 等）PiP 子母畫面即時字幕、鎖定畫面 Live Activity 與 iPhone 動態島、以及反應式全域在地化語系支援（系統預設／繁體中文／English）。
-> [GitHub Release v1.8.4 下載 IPA](https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/tag/v1.8.4) · [SideStore 安裝指南](Apps/PRIVATE_INSTALL.zh-Hant.md)
+> **課堂逐字稿 App 1.8.5 (Build 18) — Xcode 27 + iOS 27 原生 ScreenCaptureKit 裝置聲音 + 課程詞彙 (Beta)**：iPhone／iPad 通用單一 IPA，支援 SideStore 個人免費憑證簽署側載（剛好 1 App + 1 Widget Extension，無額外 App ID 負擔）。使用 Xcode 27 + iOS 27 SDK 原生編譯 ScreenCaptureKit 裝置聲音擷取路徑、支援 SCContentSharingPicker 系統選取器與原生音訊緩衝流、新增 ScreenCaptureKit 音訊觀測與診斷面板（一鍵複製診斷報告）、保證裝置聲音零磁碟錄音寫入（絕對不寫入任何 .wav/.m4a/.pcm16 音訊檔）、支援「僅即時顯示（不留紀錄）」與「僅保留文字稿（不存音檔）」兩種儲存模式、新增「課程詞彙 (Course Vocabulary Beta)」支援專業術語標準化與識別別名替換（Apple Speech 脈絡詞提示 + SenseVoice 穩定詞彙修正）、升級 SegmentMerger 懸空子句整併翻譯、支援跨 App（GoodNotes／Safari／PDF 等）PiP 子母畫面即時字幕、鎖定畫面 Live Activity 與 iPhone 動態島、以及反應式全域在地化語系支援（系統預設／繁體中文／English）。
+> [GitHub Release v1.8.5 下載 IPA](https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/tag/v1.8.5) · [SideStore 安裝指南](Apps/PRIVATE_INSTALL.zh-Hant.md)
 
 ---
 
-## 🎙️ 課堂逐字稿 (LectureTranscriber) v1.8.4 功能說明
+## 🎙️ 課堂逐字稿 (LectureTranscriber) v1.8.5 功能說明
 
 **課堂逐字稿 (LectureTranscriber)** 是一款專為 iOS 與 iPadOS 設計的本機即時語音轉文字與即時翻譯工具。
 
-### v1.8.4 重點更新
+### v1.8.5 重點更新
 
 #### 1. 裝置聲音實機啟用與觀測（ScreenCaptureKit）
 - **修復實體 iOS 27 誤報問題**：修復 v1.8.3 因 SDK 條件編譯導致實體 iOS 27 誤報「需要 iOS/iPadOS 27 或更新版本」的底層原因，導入動態執行階段橋接，實機無痛啟用。
