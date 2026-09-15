@@ -9,9 +9,17 @@
       "name": "課堂逐字稿 LectureTranscriber",
       "bundleIdentifier": "com.peijungwu0302.lecturetranscriber",
       "developerName": "Peijung Wu",
-      "localizedDescription": "原生 Xcode 27 / iOS 27 SDK 編譯支援 ScreenCaptureKit 裝置音訊擷取、修正實體 iOS 27 裝置聲音可用性、移除動態 runtime 橋接、新增 ScreenCaptureKit 弱鏈結與 screen-capture 背景模式。",
+      "localizedDescription": "裝置音訊與麥克風即時字幕、PiP、Live Activity、離線辨識、翻譯與完整逐字稿。",
       "iconURL": "https://raw.githubusercontent.com/peijungwu0302-Wu/argmax-oss-swift-playground/playground-compatible/Apps/LectureTranscriber.swiftpm/Sources/Assets.xcassets/AppIcon.appiconset/AppIcon.png",
       "versions": [
+        {
+          "version": "1.9.0",
+          "date": "2026-09-16T00:00:00Z",
+          "localizedDescription": "改善裝置聲音診斷與儲存流程、Live Activity 暫停計時與低延遲字幕、獨立字幕字級與彈性 PiP 比例、ASR 熱切換、中文定稿分段及翻譯自動恢復。",
+          "downloadURL": "https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/download/v1.9.0/LectureTranscriber-v1.9.0.ipa",
+          "size": 0,
+          "minOSVersion": "16.1"
+        },
         {
           "version": "1.8.5",
           "date": "2026-09-16T00:00:00Z",

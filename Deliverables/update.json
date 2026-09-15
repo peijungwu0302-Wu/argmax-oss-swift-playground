@@ -1,8 +1,8 @@
 {
   "bundleIdentifier": "com.peijungwu0302.lecturetranscriber",
-  "version": "1.8.5",
-  "build": 18,
+  "version": "1.9.0",
+  "build": 19,
   "minimumOS": "16.1",
-  "downloadURL": "https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/download/v1.8.5/LectureTranscriber-v1.8.5.ipa",
-  "notes": "原生 Xcode 27 / iOS 27 SDK 編譯支援 ScreenCaptureKit 裝置音訊擷取、修正實體 iOS 27 裝置聲音可用性、移除動態 runtime 橋接、新增 ScreenCaptureKit 弱鏈結與 screen-capture 背景模式。"
+  "downloadURL": "https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/download/v1.9.0/LectureTranscriber-v1.9.0.ipa",
+  "notes": "改善裝置聲音診斷、Live Activity 暫停與字幕更新、彈性字級與 PiP 比例、ASR 熱切換、中文定稿分段及翻譯自動恢復。"
 }

@@ -96,31 +96,32 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild -project AppBuild/LectureTranscriber.xcodeproj -scheme LectureTranscriber -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/UniversalBuild" CODE_SIGNING_ALLOWED=NO build 2>&1 | tee "$RUNNER_TEMP/lecture-device.log"
-          python3 AppBuild/package_ipa.py "$RUNNER_TEMP/UniversalBuild/Build/Products/Debug-iphoneos/LectureTranscriber.app" "$RUNNER_TEMP/LectureTranscriber-v1.8.5.ipa"
-          cp "$RUNNER_TEMP/LectureTranscriber-v1.8.5.ipa" "$RUNNER_TEMP/LectureTranscriber-1.8.5-unsigned.ipa"
+          python3 AppBuild/package_ipa.py "$RUNNER_TEMP/UniversalBuild/Build/Products/Debug-iphoneos/LectureTranscriber.app" "$RUNNER_TEMP/LectureTranscriber-v1.9.0.ipa"
+          cp "$RUNNER_TEMP/LectureTranscriber-v1.9.0.ipa" "$RUNNER_TEMP/LectureTranscriber-1.9.0-unsigned.ipa"
       - uses: actions/upload-artifact@v4
         with:
-          name: LectureTranscriber-v1.8.5-IPA
+          name: LectureTranscriber-v1.9.0-IPA
           path: |
-            ${{ runner.temp }}/LectureTranscriber-v1.8.5.ipa
-            ${{ runner.temp }}/LectureTranscriber-1.8.5-unsigned.ipa
+            ${{ runner.temp }}/LectureTranscriber-v1.9.0.ipa
+            ${{ runner.temp }}/LectureTranscriber-1.9.0-unsigned.ipa
       - name: Create GitHub Release
-        if: github.ref == 'refs/tags/v1.8.5'
+        if: github.ref == 'refs/tags/v1.9.0'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.8.5
+          tag_name: v1.9.0
           files: |
-            ${{ runner.temp }}/LectureTranscriber-v1.8.5.ipa
+            ${{ runner.temp }}/LectureTranscriber-v1.9.0.ipa
             Deliverables/update.json
             Deliverables/sidestore.json
-          name: LectureTranscriber v1.8.5
+          name: LectureTranscriber v1.9.0
           body: |
-            ## LectureTranscriber v1.8.5
-            - 原生 Xcode 27 / iOS 27 SDK 編譯支援 ScreenCaptureKit 裝置音訊擷取
-            - 移除動態 Objective-C runtime 橋接，改採原生 ScreenCaptureKit 呼叫與弱鏈結
-            - 新增 NSScreenCaptureUsageDescription 隱私宣告與 screen-capture 背景模式
-            - 完美相容實體 iOS 27 裝置聲音即時字幕、PiP 子母畫面與翻譯
-            - 維持 SideStore 單一 universal IPA、單一 Widget Extension、零額外 App ID
+            ## LectureTranscriber v1.9.0
+            - 改善裝置聲音診斷、擷取前說明與停止後文字稿儲存流程
+            - 修正 Live Activity 暫停、恢復與停止計時，並降低字幕更新延遲
+            - 新增獨立字幕字級、彈性 PiP 比例與穩定字幕版面
+            - 支援辨識引擎不中斷擷取的熱切換與統一模型狀態
+            - 改善中文定稿分段與翻譯佇列自動恢復
+            - 新增 Apple 翻譯品質模式與英文／日文至繁體中文路徑
           draft: false
           prerelease: false
       - name: Report validation errors
