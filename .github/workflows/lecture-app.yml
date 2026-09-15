@@ -62,6 +62,8 @@ jobs:
         run: |
           xcodebuild -version
           swift --version
+          echo "=== ScreenCaptureKit Headers ==="
+          find "$(xcrun --sdk iphoneos --show-sdk-path)/System/Library/Frameworks/ScreenCaptureKit.framework" -name "*.h" -exec cat {} +
       - name: Persistence and export checks
         run: |
           set -o pipefail
