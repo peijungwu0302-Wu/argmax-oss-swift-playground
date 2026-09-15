@@ -234,7 +234,7 @@ final class LiveActivityCoordinator: ObservableObject {
     private func contentState(isRecording: Bool? = nil, isPaused: Bool? = nil) -> LectureActivityAttributes.ContentState {
         LectureActivityAttributes.ContentState(
             isRecording: isRecording ?? (timerState.phase == .recording || timerState.phase == .paused),
-            isPaused: isPaused ?? timerState.phase == .paused,
+            isPaused: isPaused ?? (timerState.phase == .paused),
             timerReferenceDate: clock.timerReferenceDate,
             elapsedWhenPaused: clock.elapsedWhenPaused,
             latestOriginal: lastOriginal,
