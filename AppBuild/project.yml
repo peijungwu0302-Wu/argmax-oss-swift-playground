@@ -50,7 +50,7 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         CODE_SIGNING_ALLOWED: NO
         TARGETED_DEVICE_FAMILY: "1,2"
-        OTHER_LDFLAGS:
+        "OTHER_LDFLAGS[sdk=iphoneos*]":
           - $(inherited)
           - -weak_framework
           - ScreenCaptureKit
