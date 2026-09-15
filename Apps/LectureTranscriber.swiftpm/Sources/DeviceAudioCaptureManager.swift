@@ -211,45 +211,23 @@ public final class DeviceAudioCaptureManager: NSObject, ObservableObject, @unche
 
         #if canImport(ScreenCaptureKit)
         if #available(iOS 27.0, iPadOS 27.0, macOS 15.0, *) {
-            do {
-                let config = SCStreamConfiguration()
-                config.capturesAudio = true
-                config.excludesCurrentProcessAudio = true
-                config.sampleRate = 16000
-                config.channelCount = 1
-                config.queueDepth = 5
+            let receiver = SCStreamAudioReceiver()
+            receiver.manager = self
+            self.streamReceiver = receiver
 
-                // Minimize video processing
-                config.width = 2
-                config.height = 2
-                config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
-
-                let shareable = try await SCShareableContent.current
-                guard let display = shareable.displays.first else {
-                    throw LectureError.message(L10n.tr("找不到可擷取的裝置螢幕或音訊來源。", "No shareable display or audio source found."))
-                }
-
-                let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
-                let receiver = SCStreamAudioReceiver()
-                receiver.manager = self
-                self.streamReceiver = receiver
-
-                let stream = SCStream(filter: filter, configuration: config, delegate: receiver)
-                try stream.addStreamOutput(
-                    receiver,
-                    type: .audio,
-                    sampleHandlerQueue: DispatchQueue(label: "com.peijungwu0302.deviceaudio.capture", qos: .userInitiated)
-                )
-
-                try await stream.startCapture()
-                self.activeStream = stream
-                self.isCapturing = true
-                self.diagnostics.isCapturing = true
-                return
-            } catch {
-                diagnostics.lastError = error.localizedDescription
-                throw error
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                receiver.startContinuation = continuation
+                let picker = SCContentSharingPicker.shared
+                let pickerConfig = SCContentSharingPickerConfiguration()
+                #if os(iOS) || os(visionOS)
+                pickerConfig.showsMicrophoneControl = false
+                #endif
+                picker.defaultConfiguration = pickerConfig
+                picker.addObserver(receiver)
+                picker.isActive = true
+                picker.present()
             }
+            return
         }
         #endif
 
@@ -257,12 +235,17 @@ public final class DeviceAudioCaptureManager: NSObject, ObservableObject, @unche
     }
 
     public func stop() async {
-        guard isCapturing else { return }
+        guard isCapturing || streamReceiver != nil else { return }
 
         #if canImport(ScreenCaptureKit)
         if #available(iOS 27.0, iPadOS 27.0, macOS 15.0, *) {
             if let scStream = activeStream as? SCStream {
                 try? await scStream.stopCapture()
+            }
+            if let receiver = streamReceiver as? SCStreamAudioReceiver {
+                receiver.startContinuation?.resume(throwing: CancellationError())
+                receiver.startContinuation = nil
+                SCContentSharingPicker.shared.removeObserver(receiver)
             }
         }
         #endif
@@ -306,10 +289,72 @@ public final class DeviceAudioCaptureManager: NSObject, ObservableObject, @unche
 
 #if canImport(ScreenCaptureKit)
 @available(iOS 27.0, iPadOS 27.0, macOS 15.0, *)
-private final class SCStreamAudioReceiver: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
+private final class SCStreamAudioReceiver: NSObject, SCStreamOutput, SCStreamDelegate, SCContentSharingPickerObserver, @unchecked Sendable {
     weak var manager: DeviceAudioCaptureManager?
+    var startContinuation: CheckedContinuation<Void, Error>?
     private var converter: AVAudioConverter?
     private let targetFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
+
+    // MARK: - SCContentSharingPickerObserver
+
+    nonisolated func contentSharingPicker(_ picker: SCContentSharingPicker, didUpdateWith filter: SCContentFilter, for stream: SCStream?) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let config = SCStreamConfiguration()
+                config.capturesAudio = true
+                config.excludesCurrentProcessAudio = true
+                config.sampleRate = 16000
+                config.channelCount = 1
+                config.width = 2
+                config.height = 2
+
+                if let oldStream = self.manager?.activeStream as? SCStream {
+                    try? await oldStream.stopCapture()
+                }
+
+                let scStream = SCStream(filter: filter, configuration: config, delegate: self)
+                try scStream.addStreamOutput(
+                    self,
+                    type: .audio,
+                    sampleHandlerQueue: DispatchQueue(label: "com.peijungwu0302.deviceaudio.capture", qos: .userInitiated)
+                )
+
+                try await scStream.startCapture()
+                guard let manager = self.manager else {
+                    try? await scStream.stopCapture()
+                    return
+                }
+                manager.activeStream = scStream
+                manager.isCapturing = true
+                manager.diagnostics.isCapturing = true
+                self.startContinuation?.resume(returning: ())
+                self.startContinuation = nil
+            } catch {
+                self.startContinuation?.resume(throwing: error)
+                self.startContinuation = nil
+                self.manager?.handleStreamError(error)
+            }
+        }
+    }
+
+    nonisolated func contentSharingPicker(_ picker: SCContentSharingPicker, didCancelFor stream: SCStream?) {
+        Task { @MainActor [weak self] in
+            let err = LectureError.message(L10n.tr("已取消選取音訊來源。", "Audio source selection cancelled."))
+            self?.startContinuation?.resume(throwing: err)
+            self?.startContinuation = nil
+        }
+    }
+
+    nonisolated func contentSharingPickerStartDidFailWithError(_ error: Error) {
+        Task { @MainActor [weak self] in
+            self?.startContinuation?.resume(throwing: error)
+            self?.startContinuation = nil
+            self?.manager?.handleStreamError(error)
+        }
+    }
+
+    // MARK: - SCStreamOutput & SCStreamDelegate
 
     nonisolated func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         // Discard all video frames immediately
@@ -367,7 +412,7 @@ private final class SCStreamAudioReceiver: NSObject, SCStreamOutput, SCStreamDel
             bufferListSize: MemoryLayout<AudioBufferList>.size,
             blockBufferAllocator: nil,
             blockBufferMemoryAllocator: nil,
-            flags: kCMSampleBufferFlag_AudioBufferList_AssureOwnership,
+            flags: 0,
             blockBufferOut: &blockBuffer
         )
         guard status == noErr else { return nil }
