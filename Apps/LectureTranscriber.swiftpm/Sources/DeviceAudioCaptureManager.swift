@@ -163,8 +163,8 @@ public final class DeviceAudioCaptureManager: NSObject, ObservableObject, @unche
     @Published public private(set) var isCapturing = false
     @Published public private(set) var diagnostics = DeviceAudioDiagnostics()
 
-    private var activeStream: AnyObject?
-    private var streamReceiver: AnyObject?
+    fileprivate var activeStream: AnyObject?
+    fileprivate var streamReceiver: AnyObject?
     private var captureStartTime: Date?
 
     private override init() {
@@ -218,12 +218,12 @@ public final class DeviceAudioCaptureManager: NSObject, ObservableObject, @unche
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 receiver.startContinuation = continuation
                 let picker = SCContentSharingPicker.shared
-                let pickerConfig = SCContentSharingPickerConfiguration()
+                var pickerConfig = SCContentSharingPickerConfiguration()
                 #if os(iOS) || os(visionOS)
                 pickerConfig.showsMicrophoneControl = false
                 #endif
                 picker.defaultConfiguration = pickerConfig
-                picker.addObserver(receiver)
+                picker.add(receiver)
                 picker.isActive = true
                 picker.present()
             }
@@ -245,7 +245,7 @@ public final class DeviceAudioCaptureManager: NSObject, ObservableObject, @unche
             if let receiver = streamReceiver as? SCStreamAudioReceiver {
                 receiver.startContinuation?.resume(throwing: CancellationError())
                 receiver.startContinuation = nil
-                SCContentSharingPicker.shared.removeObserver(receiver)
+                SCContentSharingPicker.shared.remove(receiver)
             }
         }
         #endif
