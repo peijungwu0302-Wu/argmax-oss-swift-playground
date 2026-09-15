@@ -281,24 +281,34 @@ public final class DeviceAudioCaptureManager: NSObject, ObservableObject, @unche
 
     #if canImport(ScreenCaptureKit)
     @available(iOS 27.0, iPadOS 27.0, macOS 15.0, *)
-    private func startNativeCapture() async throws {
-        let picker = SCContentSharingPicker.shared
-        picker.add(self)
-        picker.isActive = true
-
+    private func createStreamConfiguration() -> SCStreamConfiguration {
         let config = SCStreamConfiguration()
         config.capturesAudio = true
         config.excludesCurrentProcessAudio = true
         config.sampleRate = 16000
         config.channelCount = 1
+
+        #if os(macOS)
         config.queueDepth = 5
+        config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+        #endif
 
         // Minimize video processing
         config.width = 2
         config.height = 2
-        config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+        return config
+    }
 
-        // First attempt: Check if shareable content is already available without user interaction
+    @available(iOS 27.0, iPadOS 27.0, macOS 15.0, *)
+    private func startNativeCapture() async throws {
+        let picker = SCContentSharingPicker.shared
+        picker.add(self)
+        picker.isActive = true
+
+        let config = createStreamConfiguration()
+
+        #if os(macOS)
+        // macOS allows direct filter inspection if screen recording permission is already granted
         var directFilter: SCContentFilter?
         do {
             let shareable = try await SCShareableContent.current
@@ -306,7 +316,7 @@ public final class DeviceAudioCaptureManager: NSObject, ObservableObject, @unche
                 directFilter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
             }
         } catch {
-            // Permission or picker interaction needed
+            // Fall back to picker
         }
 
         if let filter = directFilter {
@@ -317,8 +327,9 @@ public final class DeviceAudioCaptureManager: NSObject, ObservableObject, @unche
                 // Direct start failed, fall back to picker presentation
             }
         }
+        #endif
 
-        // Second attempt: Present system content sharing picker
+        // iOS 27+ / macOS fallback: content capture is driven by SCContentSharingPicker
         diagnostics.captureStatus = "Waiting for picker"
         let chosenFilter: SCContentFilter = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<SCContentFilter, Error>) in
             self.pickerContinuation = continuation
@@ -414,30 +425,49 @@ public final class DeviceAudioCaptureManager: NSObject, ObservableObject, @unche
 #if canImport(ScreenCaptureKit)
 @available(iOS 27.0, iPadOS 27.0, macOS 14.0, *)
 extension DeviceAudioCaptureManager: SCContentSharingPickerObserver {
-    public func contentSharingPicker(_ picker: SCContentSharingPicker, didUpdateWith filter: SCContentFilter, for stream: SCStream?) {
-        if let continuation = pickerContinuation as? CheckedContinuation<SCContentFilter, Error> {
-            pickerContinuation = nil
-            continuation.resume(returning: filter)
-        } else if let activeStream = activeStream as? SCStream {
-            Task {
-                try? await activeStream.updateContentFilter(filter)
+    nonisolated public func contentSharingPicker(_ picker: SCContentSharingPicker, didUpdateWith filter: SCContentFilter, for stream: SCStream?) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if let continuation = self.pickerContinuation as? CheckedContinuation<SCContentFilter, Error> {
+                self.pickerContinuation = nil
+                continuation.resume(returning: filter)
+            } else {
+                #if os(macOS)
+                if let activeStream = self.activeStream as? SCStream {
+                    try? await activeStream.updateContentFilter(filter)
+                }
+                #else
+                if self.isCapturing {
+                    if let activeStream = self.activeStream as? SCStream {
+                        try? await activeStream.stopCapture()
+                    }
+                    let config = self.createStreamConfiguration()
+                    try? await self.beginStreamCapture(filter: filter, config: config)
+                }
+                #endif
             }
         }
     }
 
-    public func contentSharingPicker(_ picker: SCContentSharingPicker, didCancelFor stream: SCStream?) {
-        if let continuation = pickerContinuation as? CheckedContinuation<SCContentFilter, Error> {
-            pickerContinuation = nil
-            continuation.resume(throwing: LectureError.message(L10n.tr("已取消分享內容選取。", "Content sharing selection canceled.")))
+    nonisolated public func contentSharingPicker(_ picker: SCContentSharingPicker, didCancelFor stream: SCStream?) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if let continuation = self.pickerContinuation as? CheckedContinuation<SCContentFilter, Error> {
+                self.pickerContinuation = nil
+                continuation.resume(throwing: LectureError.message(L10n.tr("已取消分享內容選取。", "Content sharing selection canceled.")))
+            }
         }
     }
 
-    public func contentSharingPickerStartDidFailWithError(_ error: Error) {
-        if let continuation = pickerContinuation as? CheckedContinuation<SCContentFilter, Error> {
-            pickerContinuation = nil
-            continuation.resume(throwing: error)
-        } else {
-            handleStreamError(error)
+    nonisolated public func contentSharingPickerStartDidFailWithError(_ error: Error) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if let continuation = self.pickerContinuation as? CheckedContinuation<SCContentFilter, Error> {
+                self.pickerContinuation = nil
+                continuation.resume(throwing: error)
+            } else {
+                self.handleStreamError(error)
+            }
         }
     }
 }
