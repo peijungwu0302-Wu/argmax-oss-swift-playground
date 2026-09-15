@@ -746,7 +746,7 @@ final class AudioAndCaptionTests: XCTestCase {
         queue.enqueue(line, route: route)
         queue.enqueue(line, route: route)
         XCTAssertEqual(queue.pending.count, 1)
-        queue.markCompleted(lineID: line.id)
+        queue.removeCompleted([line.id])
         XCTAssertTrue(queue.pending.isEmpty)
     }
 

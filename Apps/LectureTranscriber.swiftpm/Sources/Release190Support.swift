@@ -180,4 +180,8 @@ struct TranslationRecoveryQueue {
         pending.append(PendingTranslation(line: line, route: route))
     }
     mutating func markCompleted(lineID: UUID) { pending.removeAll { $0.line.id == lineID } }
+    mutating func removeCompleted(_ lineIDs: Set<UUID>) {
+        guard !lineIDs.isEmpty else { return }
+        pending.removeAll { lineIDs.contains($0.line.id) }
+    }
 }

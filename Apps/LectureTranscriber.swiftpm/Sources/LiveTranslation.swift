@@ -28,6 +28,7 @@ final class TranslationCoordinator: ObservableObject {
 
     func setState(_ state: TranslationCoordinatorState) { self.state = state }
     func synchronize(_ lines: [TranscriptLine], route: TranslationRoute, translatedIDs: Set<UUID>) {
+        queue.removeCompleted(translatedIDs)
         for line in lines where !translatedIDs.contains(line.id) { queue.enqueue(line, route: route) }
         armWatchdogIfNeeded()
     }
