@@ -181,27 +181,3 @@ struct TranslationRecoveryQueue {
     }
     mutating func markCompleted(lineID: UUID) { pending.removeAll { $0.line.id == lineID } }
 }
-
-enum ChineseFinalSegmenter {
-    static func split(_ line: TranscriptLine) -> [TranscriptLine] {
-        let text = line.text
-        guard !text.isEmpty else { return [] }
-        var pieces: [String] = []
-        var current = ""
-        for character in text {
-            current.append(character)
-            if "。！？；".contains(character) || current.count >= 60 {
-                pieces.append(current); current = ""
-            }
-        }
-        if !current.isEmpty { pieces.append(current) }
-        guard pieces.count > 1 else { return [line] }
-        let total = Double(max(1, text.count)), duration = max(0, line.end - line.start)
-        var cursor = line.start
-        return pieces.enumerated().map { index, piece in
-            let end = index == pieces.count - 1 ? line.end : cursor + duration * Double(piece.count) / total
-            defer { cursor = end }
-            return TranscriptLine(start: cursor, end: end, text: piece)
-        }
-    }
-}

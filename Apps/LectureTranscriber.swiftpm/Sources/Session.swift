@@ -21,6 +21,27 @@ enum RecognitionLanguage {
     }
     static func isMixed(_ value: String) -> Bool { value == "mixed" || value == "mixed-en" }
 }
+enum ChineseFinalSegmenter {
+    static func split(_ line: TranscriptLine) -> [TranscriptLine] {
+        let text = line.text
+        guard !text.isEmpty else { return [] }
+        var pieces: [String] = [], current = ""
+        for character in text {
+            current.append(character)
+            if "。！？；".contains(character) || current.count >= 60 { pieces.append(current); current = "" }
+        }
+        if !current.isEmpty { pieces.append(current) }
+        guard pieces.count > 1 else { return [line] }
+        let total = Double(max(1, text.count)), duration = max(0, line.end - line.start)
+        var cursor = line.start
+        return pieces.enumerated().map { index, piece in
+            let begin = cursor
+            let end = index == pieces.count - 1 ? line.end : begin + duration * Double(piece.count) / total
+            cursor = end
+            return TranscriptLine(start: begin, end: end, text: piece)
+        }
+    }
+}
 struct SpeechDecode: Sendable { var lines: [TranscriptLine]; var endsWithPause: Bool }
 struct Bookmark: Codable, Identifiable, Sendable {
     var id = UUID()
@@ -580,7 +601,7 @@ struct LectureSession: Codable, Identifiable, Sendable {
 
     mutating func appendConfirmed(_ additions: [TranscriptLine]) {
         let finalized = RecognitionLanguage.primary(language) == "zh" || language == "mixed" || language == "auto"
-            ? additions.flatMap(ChineseFinalSegmenter.split)
+            ? additions.flatMap { ChineseFinalSegmenter.split($0) }
             : additions
         if !finalized.isEmpty { previousLines = nil }
         var idx = preferredVersionIndex
@@ -612,7 +633,7 @@ struct LectureSession: Codable, Identifiable, Sendable {
                !"。！？.!?".contains(last.text.last ?? " "), last.text.count + addition.text.count <= 100 {
                 let joined = oldWords + newWords
                 let lastIndex = transcriptVersions[idx].lines.count - 1
-                transcriptVersions[idx].lines[lastIndex].text = joined.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
+                transcriptVersions[idx].lines[lastIndex].text = joined.map { $0.text }.joined().trimmingCharacters(in: .whitespacesAndNewlines)
                 transcriptVersions[idx].lines[lastIndex].end = addition.end
                 transcriptVersions[idx].lines[lastIndex].words = joined
                 if let tvCount = transcriptVersions[idx].translationVersions?.count, tvCount > 0 {
