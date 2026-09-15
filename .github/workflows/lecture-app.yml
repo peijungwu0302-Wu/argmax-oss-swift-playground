@@ -1,7 +1,7 @@
 name: Lecture App Validation
 on:
   push:
-    branches: [playground-compatible, 'release/**', main]
+    branches: [playground-compatible, 'release/**', main, 'fix/**']
     tags: ['v*']
     paths: ['Apps/**', 'AppBuild/**', 'AppTests/**', '.github/workflows/lecture-app.yml', 'Deliverables/**']
   workflow_dispatch:
@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   playground-package:
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -54,7 +54,7 @@ jobs:
             ${{ runner.temp }}/playground-*.log
             ${{ runner.temp }}/playground-launch.png
   ios-build:
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -96,30 +96,30 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild -project AppBuild/LectureTranscriber.xcodeproj -scheme LectureTranscriber -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/UniversalBuild" CODE_SIGNING_ALLOWED=NO build 2>&1 | tee "$RUNNER_TEMP/lecture-device.log"
-          python3 AppBuild/package_ipa.py "$RUNNER_TEMP/UniversalBuild/Build/Products/Debug-iphoneos/LectureTranscriber.app" "$RUNNER_TEMP/LectureTranscriber-v1.8.4.ipa"
-          cp "$RUNNER_TEMP/LectureTranscriber-v1.8.4.ipa" "$RUNNER_TEMP/LectureTranscriber-1.8.4-unsigned.ipa"
+          python3 AppBuild/package_ipa.py "$RUNNER_TEMP/UniversalBuild/Build/Products/Debug-iphoneos/LectureTranscriber.app" "$RUNNER_TEMP/LectureTranscriber-v1.8.5.ipa"
+          cp "$RUNNER_TEMP/LectureTranscriber-v1.8.5.ipa" "$RUNNER_TEMP/LectureTranscriber-1.8.5-unsigned.ipa"
       - uses: actions/upload-artifact@v4
         with:
-          name: LectureTranscriber-v1.8.4-IPA
+          name: LectureTranscriber-v1.8.5-IPA
           path: |
-            ${{ runner.temp }}/LectureTranscriber-v1.8.4.ipa
-            ${{ runner.temp }}/LectureTranscriber-1.8.4-unsigned.ipa
+            ${{ runner.temp }}/LectureTranscriber-v1.8.5.ipa
+            ${{ runner.temp }}/LectureTranscriber-1.8.5-unsigned.ipa
       - name: Create GitHub Release
-        if: github.ref == 'refs/tags/v1.8.4'
+        if: github.ref == 'refs/tags/v1.8.5'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.8.4
+          tag_name: v1.8.5
           files: |
-            ${{ runner.temp }}/LectureTranscriber-v1.8.4.ipa
+            ${{ runner.temp }}/LectureTranscriber-v1.8.5.ipa
             Deliverables/update.json
             Deliverables/sidestore.json
-          name: LectureTranscriber v1.8.4
+          name: LectureTranscriber v1.8.5
           body: |
-            ## LectureTranscriber v1.8.4
-            - 修復實體 iOS 27 裝置聲音可用性檢測、新增裝置聲音即時觀測與診斷面板
-            - 新增課程詞彙 (Course Vocabulary Beta) 支援標準名詞與識別別名替換
-            - 整合 Apple Speech 脈絡詞提示與 SenseVoice 穩定後置詞彙修正
-            - 全域語系即時切換 (繁體中文 / 英文 / 系統預設)
+            ## LectureTranscriber v1.8.5
+            - 原生 Xcode 27 / iOS 27 SDK 編譯支援 ScreenCaptureKit 裝置音訊擷取
+            - 移除動態 Objective-C runtime 橋接，改採原生 ScreenCaptureKit 呼叫與弱鏈結
+            - 新增 NSScreenCaptureUsageDescription 隱私宣告與 screen-capture 背景模式
+            - 完美相容實體 iOS 27 裝置聲音即時字幕、PiP 子母畫面與翻譯
             - 維持 SideStore 單一 universal IPA、單一 Widget Extension、零額外 App ID
           draft: false
           prerelease: false
@@ -145,7 +145,7 @@ jobs:
             ${{ runner.temp }}/LaunchTests.xcresult
 
   sensevoice-native:
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4

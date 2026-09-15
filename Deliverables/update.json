@@ -1,8 +1,8 @@
 {
   "bundleIdentifier": "com.peijungwu0302.lecturetranscriber",
-  "version": "1.8.4",
-  "build": 17,
+  "version": "1.8.5",
+  "build": 18,
   "minimumOS": "16.1",
-  "downloadURL": "https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/download/v1.8.4/LectureTranscriber-v1.8.4.ipa",
-  "notes": "修復實體 iOS 27 裝置聲音可用性檢測、新增裝置聲音即時觀測與診斷面板、新增課程詞彙 (Course Vocabulary Beta) 支援標準名詞與識別別名替換、整合 Apple Speech 脈絡詞提示與 SenseVoice 穩定後置詞彙修正、全域語系即時切換。"
+  "downloadURL": "https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/download/v1.8.5/LectureTranscriber-v1.8.5.ipa",
+  "notes": "原生 Xcode 27 / iOS 27 SDK 編譯支援 ScreenCaptureKit 裝置音訊擷取、修正實體 iOS 27 裝置聲音可用性、移除動態 runtime 橋接、新增 ScreenCaptureKit 弱鏈結與 screen-capture 背景模式。"
 }

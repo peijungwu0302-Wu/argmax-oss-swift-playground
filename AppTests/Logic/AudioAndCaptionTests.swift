@@ -48,8 +48,8 @@ final class AudioAndCaptionTests: XCTestCase {
     @MainActor
     func testUniversalInstallConfiguration() {
         XCTAssertEqual(Bundle.main.bundleIdentifier, "com.peijungwu0302.lecturetranscriber")
-        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String, "1.8.4")
-        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "17")
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String, "1.8.5")
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "18")
         XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "UIDeviceFamily") as? [Int], [1, 2])
         XCTAssertTrue(LectureController().supportsBackgroundAudio)
         XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "UIRequiresFullScreen") as? Bool, false)
@@ -644,7 +644,7 @@ final class AudioAndCaptionTests: XCTestCase {
 
         // Test diagnostics model formatting
         var diag = DeviceAudioDiagnostics(
-            appVersion: "1.8.4 (17)",
+            appVersion: "1.8.5 (18)",
             osVersion: "iOS 27.0",
             isSupported: true,
             isCapturing: true,
@@ -662,7 +662,7 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertTrue(diag.audioBuffersReceiving)
         XCTAssertEqual(diag.firstBufferLatencyText, "0.125 s")
         let summary = diag.formattedSummary()
-        XCTAssertTrue(summary.contains("App Version: 1.8.4 (17)"))
+        XCTAssertTrue(summary.contains("App Version: 1.8.5 (18)"))
         XCTAssertTrue(summary.contains("Total Buffers Received: 42"))
         XCTAssertTrue(summary.contains("Sample Rate: 16000 Hz"))
         XCTAssertTrue(summary.contains("Current ASR Engine: Apple Speech"))

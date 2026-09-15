@@ -23,11 +23,12 @@ targets:
       path: LectureInfo.plist
       properties:
         CFBundleDisplayName: 課堂逐字稿
-        CFBundleShortVersionString: "1.8.4"
-        CFBundleVersion: "17"
+        CFBundleShortVersionString: "1.8.5"
+        CFBundleVersion: "18"
         NSMicrophoneUsageDescription: 錄製課堂聲音，在這台裝置上產生逐字稿。
+        NSScreenCaptureUsageDescription: 擷取裝置音訊以進行即時課堂語音辨識與字幕轉錄。
         NSSupportsLiveActivities: YES
-        UIBackgroundModes: [audio]
+        UIBackgroundModes: [audio, screen-capture]
         UIRequiresFullScreen: false
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight, UIInterfaceOrientationPortraitUpsideDown]
         UILaunchScreen: {}
@@ -42,12 +43,17 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.peijungwu0302.lecturetranscriber
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: LectureInfo.plist
-        MARKETING_VERSION: "1.8.4"
-        CURRENT_PROJECT_VERSION: "17"
+        MARKETING_VERSION: "1.8.5"
+        CURRENT_PROJECT_VERSION: "18"
         INFOPLIST_KEY_NSMicrophoneUsageDescription: 錄製課堂聲音，在這台裝置上產生逐字稿。
+        INFOPLIST_KEY_NSScreenCaptureUsageDescription: 擷取裝置音訊以進行即時課堂語音辨識與字幕轉錄。
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         CODE_SIGNING_ALLOWED: NO
         TARGETED_DEVICE_FAMILY: "1,2"
+        OTHER_LDFLAGS:
+          - $(inherited)
+          - -weak_framework
+          - ScreenCaptureKit
   LectureTranscriberWidget:
     type: app-extension
     platform: iOS
@@ -60,8 +66,8 @@ targets:
       path: LectureTranscriberWidgetInfo.plist
       properties:
         CFBundleDisplayName: 課堂逐字稿動態島
-        CFBundleShortVersionString: "1.8.4"
-        CFBundleVersion: "17"
+        CFBundleShortVersionString: "1.8.5"
+        CFBundleVersion: "18"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
@@ -71,8 +77,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.peijungwu0302.lecturetranscriber.widget
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: LectureTranscriberWidgetInfo.plist
-        MARKETING_VERSION: "1.8.4"
-        CURRENT_PROJECT_VERSION: "17"
+        MARKETING_VERSION: "1.8.5"
+        CURRENT_PROJECT_VERSION: "18"
         CODE_SIGNING_ALLOWED: NO
         TARGETED_DEVICE_FAMILY: "1,2"
   LogicTests:
