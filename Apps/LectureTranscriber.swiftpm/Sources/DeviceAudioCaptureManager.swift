@@ -3,7 +3,7 @@ import CoreMedia
 import AVFoundation
 import UIKit
 import Combine
-#if canImport(ScreenCaptureKit) && !targetEnvironment(simulator)
+#if canImport(ScreenCaptureKit)
 import ScreenCaptureKit
 #endif
 
@@ -41,8 +41,13 @@ public enum SessionStorageMode: String, CaseIterable, Identifiable, Codable {
 
 public struct DeviceAudioAvailability {
     public static var isSupported: Bool {
-        #if canImport(ScreenCaptureKit) && !targetEnvironment(simulator)
+        #if canImport(ScreenCaptureKit)
         if #available(iOS 27.0, iPadOS 27.0, macOS 15.0, *) {
+            return true
+        }
+        #endif
+        #if targetEnvironment(simulator)
+        if #available(iOS 27.0, iPadOS 27.0, *) {
             return true
         }
         #endif
@@ -209,7 +214,11 @@ public final class DeviceAudioCaptureManager: NSObject, ObservableObject, @unche
         diagnostics.lastBufferTimestamp = nil
         diagnostics.lastError = nil
 
-        #if canImport(ScreenCaptureKit) && !targetEnvironment(simulator)
+        #if targetEnvironment(simulator)
+        throw LectureError.message(L10n.tr("模擬器環境不支援裝置聲音擷取，請使用實體 iOS 27 裝置。", "Device Audio is not supported on Simulator. Please test on a real iOS 27 device."))
+        #endif
+
+        #if canImport(ScreenCaptureKit)
         if #available(iOS 27.0, iPadOS 27.0, macOS 15.0, *) {
             let receiver = SCStreamAudioReceiver()
             receiver.manager = self
@@ -237,7 +246,7 @@ public final class DeviceAudioCaptureManager: NSObject, ObservableObject, @unche
     public func stop() async {
         guard isCapturing || streamReceiver != nil else { return }
 
-        #if canImport(ScreenCaptureKit) && !targetEnvironment(simulator)
+        #if canImport(ScreenCaptureKit)
         if #available(iOS 27.0, iPadOS 27.0, macOS 15.0, *) {
             if let scStream = activeStream as? SCStream {
                 try? await scStream.stopCapture()
@@ -293,7 +302,7 @@ public final class DeviceAudioCaptureManager: NSObject, ObservableObject, @unche
 
 // MARK: - Stream Audio Receiver
 
-#if canImport(ScreenCaptureKit) && !targetEnvironment(simulator)
+#if canImport(ScreenCaptureKit)
 @available(iOS 27.0, iPadOS 27.0, macOS 15.0, *)
 private final class SCStreamAudioReceiver: NSObject, SCStreamOutput, SCStreamDelegate, SCContentSharingPickerObserver, @unchecked Sendable {
     weak var manager: DeviceAudioCaptureManager?

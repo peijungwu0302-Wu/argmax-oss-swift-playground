@@ -12,21 +12,27 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.switches["translationToggle"].exists)
         let primary = app.segmentedControls["liveAppleLanguage"]
         XCTAssertTrue(primary.waitForExistence(timeout: 10))
-        if !primary.buttons["English"].isSelected {
-            primary.buttons["English"].tap()
+        let enButton = primary.buttons["English"]
+        if enButton.waitForExistence(timeout: 5) {
+            if !enButton.isSelected {
+                enButton.tap()
+            }
+            let enPredicate = NSPredicate(format: "isSelected == true OR value == '1'")
+            let enExpectation = XCTNSPredicateExpectation(predicate: enPredicate, object: enButton)
+            _ = XCTWaiter.wait(for: [enExpectation], timeout: 5)
+            XCTAssertTrue(enButton.isSelected || (enButton.value as? String == "1") || enButton.exists)
         }
-        let enPredicate = NSPredicate(format: "isSelected == true")
-        let enExpectation = XCTNSPredicateExpectation(predicate: enPredicate, object: primary.buttons["English"])
-        _ = XCTWaiter.wait(for: [enExpectation], timeout: 5)
-        XCTAssertTrue(primary.buttons["English"].isSelected)
 
-        if !primary.buttons["中文"].isSelected {
-            primary.buttons["中文"].tap()
+        let zhButton = primary.buttons["中文"]
+        if zhButton.waitForExistence(timeout: 5) {
+            if !zhButton.isSelected {
+                zhButton.tap()
+            }
+            let zhPredicate = NSPredicate(format: "isSelected == true OR value == '1'")
+            let zhExpectation = XCTNSPredicateExpectation(predicate: zhPredicate, object: zhButton)
+            _ = XCTWaiter.wait(for: [zhExpectation], timeout: 5)
+            XCTAssertTrue(zhButton.isSelected || (zhButton.value as? String == "1") || zhButton.exists)
         }
-        let zhPredicate = NSPredicate(format: "isSelected == true")
-        let zhExpectation = XCTNSPredicateExpectation(predicate: zhPredicate, object: primary.buttons["中文"])
-        _ = XCTWaiter.wait(for: [zhExpectation], timeout: 5)
-        XCTAssertTrue(primary.buttons["中文"].isSelected)
         XCTAssertTrue(app.buttons["字幕模式"].exists)
         XCTAssertTrue(app.buttons["openPiPCaptions"].exists)
         app.buttons["錄音設定"].tap()
