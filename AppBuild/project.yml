@@ -15,8 +15,6 @@ targets:
       - ../Apps/LectureTranscriber.swiftpm/Sources
     dependencies:
       - target: LectureTranscriberWidget
-      - sdk: ScreenCaptureKit.framework
-        weak: true
       - package: WhisperLibrary
         product: WhisperKit
       - package: WhisperLibrary
