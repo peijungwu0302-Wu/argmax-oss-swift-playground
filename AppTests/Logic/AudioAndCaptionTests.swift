@@ -671,5 +671,89 @@ final class AudioAndCaptionTests: XCTestCase {
         let copied = DeviceAudioCaptureManager.shared.copyDiagnostics()
         XCTAssertFalse(copied.isEmpty)
     }
+
+    func testLiveActivityStateMachineFreezesPauseAndStop() {
+        let start = Date(timeIntervalSince1970: 2_000_000_000)
+        var state = LiveActivityTimerState(startedAt: start)
+        state.pause(at: start.addingTimeInterval(10))
+        XCTAssertEqual(state.elapsed(at: start.addingTimeInterval(100)), 10, accuracy: 0.001)
+        XCTAssertFalse(state.rendersRunningTimer)
+        state.resume(at: start.addingTimeInterval(100))
+        XCTAssertEqual(state.elapsed(at: start.addingTimeInterval(105)), 15, accuracy: 0.001)
+        state.stop(at: start.addingTimeInterval(110))
+        XCTAssertEqual(state.elapsed(at: start.addingTimeInterval(999)), 20, accuracy: 0.001)
+        XCTAssertFalse(state.rendersRunningTimer)
+        XCTAssertEqual(state.phase, .stopped)
+    }
+
+    func testLiveActivityRefreshPresetsAndNewestPartialWins() {
+        XCTAssertEqual(LiveActivityRefreshPreset.fast.interval, 0.10, accuracy: 0.001)
+        XCTAssertEqual(LiveActivityRefreshPreset.balanced.interval, 0.25, accuracy: 0.001)
+        XCTAssertEqual(LiveActivityRefreshPreset.saver.interval, 0.50, accuracy: 0.001)
+        var buffer = LatestCaptionCoalescer(interval: 0.25)
+        let t0 = Date(timeIntervalSince1970: 2_000_000_000)
+        XCTAssertEqual(buffer.offer("A", at: t0), "A")
+        XCTAssertNil(buffer.offer("B", at: t0.addingTimeInterval(0.05)))
+        XCTAssertNil(buffer.offer("C", at: t0.addingTimeInterval(0.10)))
+        XCTAssertEqual(buffer.flush(at: t0.addingTimeInterval(0.25)), "C")
+    }
+
+    @MainActor
+    func testDisplaySettingsPersistenceAndReset() throws {
+        let suite = "DisplaySettingsTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var settings = DisplaySettings(defaults: defaults)
+        settings.appOriginalScale = 3
+        settings.pipTranslationScale = 0.3
+        settings.historyScale = 2.4
+        settings = DisplaySettings(defaults: defaults)
+        XCTAssertEqual(settings.appOriginalScale, 3)
+        XCTAssertEqual(settings.pipTranslationScale, 0.3)
+        XCTAssertEqual(settings.historyScale, 2.4)
+        settings.resetAll()
+        XCTAssertEqual(settings.appOriginalScale, 1)
+        XCTAssertEqual(settings.appTranslationScale, 1)
+        XCTAssertEqual(settings.pipOriginalScale, 1)
+        XCTAssertEqual(settings.pipTranslationScale, 1)
+        XCTAssertEqual(settings.historyScale, 1)
+    }
+
+    func testChineseFinalSegmentationHasNoMissingOrDuplicateText() {
+        let input = TranscriptLine(start: 0, end: 20, text: "今天介紹非線性系統。接著討論平衡點！最後說明穩定性")
+        let output = ChineseFinalSegmenter.split(input)
+        XCTAssertEqual(output.map(\.text).joined(), input.text)
+        XCTAssertEqual(output.first?.start, 0)
+        XCTAssertEqual(output.last?.end, 20)
+        XCTAssertTrue(zip(output, output.dropFirst()).allSatisfy { $0.end <= $1.start })
+    }
+
+    func testASRHotSwitchBoundaryIsMonotonicAndPreservesCounters() {
+        let boundary = ASRSwitchBoundary(engine: "apple", sampleIndex: 160_000, timestamp: 10, totalBuffers: 1205)
+        let switched = boundary.switching(to: "sensevoice", atSample: 160_000, timestamp: 10)
+        XCTAssertEqual(switched.totalBuffers, 1205)
+        XCTAssertEqual(switched.sampleIndex, 160_000)
+        XCTAssertEqual(switched.timestamp, 10)
+        XCTAssertEqual(switched.engine, "sensevoice")
+    }
+
+    func testTranslationRouteMetadataAndQueueDeduplication() {
+        let route = TranslationRoute(source: "ja", target: "zh-Hant")
+        XCTAssertEqual(route.source, "ja")
+        XCTAssertEqual(route.target, "zh-Hant")
+        var queue = TranslationRecoveryQueue()
+        let line = TranscriptLine(start: 1, end: 2, text: "こんにちは")
+        queue.enqueue(line, route: route)
+        queue.enqueue(line, route: route)
+        XCTAssertEqual(queue.pending.count, 1)
+        queue.markCompleted(lineID: line.id)
+        XCTAssertTrue(queue.pending.isEmpty)
+    }
+
+    func testDeviceAudioSavePreferenceDefaultsToAskEveryTime() {
+        XCTAssertEqual(DeviceAudioSavePreference.defaultValue, .askEveryTime)
+        XCTAssertTrue(DeviceAudioSavePreference.askEveryTime.requiresDecision)
+        XCTAssertFalse(DeviceAudioSavePreference.alwaysSave.requiresDecision)
+    }
 }
 
