@@ -111,6 +111,42 @@ actor WhisperEngine {
         }
         return SpeechDecode(lines: lines, endsWithPause: SpeechBoundary.endsWithPause(samples))
     }
+
+    func transcribe(samples: [Float], offset: Double, language: String, vocabulary: String,
+                    final: Bool, onDraft: @escaping @Sendable (String, Int) -> Void) async throws -> SpeechDecode {
+        guard let kit else { throw LectureError.message("請先載入語音模型。") }
+        guard !samples.isEmpty else { return SpeechDecode(lines: [], endsWithPause: false) }
+        let rms = sqrt(samples.reduce(Double(0)) { $0 + Double($1) * Double($1) } / Double(samples.count))
+        if rms < 0.0001 { return SpeechDecode(lines: [], endsWithPause: true) }
+        let prompt = String(vocabulary.prefix(500)).trimmingCharacters(in: .whitespacesAndNewlines)
+        let tokens = kit.tokenizer.map { Array($0.encode(text: prompt).suffix(160)) }
+        var options = DecodingOptions(task: .transcribe, language: RecognitionLanguage.primary(language),
+            temperatureFallbackCount: final ? 2 : 0, usePrefillPrompt: true, detectLanguage: language == "auto",
+            skipSpecialTokens: true, withoutTimestamps: false,
+            wordTimestamps: kit.textDecoder.supportsWordTimestamps, windowClipTime: 0,
+            promptTokens: prompt.isEmpty ? nil : tokens, concurrentWorkerCount: 1)
+        let relay = DraftRelay(onDraft)
+        var results = try await kit.transcribe(audioArray: samples, decodeOptions: options) { progress in
+            relay.publish(progress.text); return nil
+        }
+        if options.wordTimestamps && !relay.latestText.isEmpty
+            && results.flatMap(\.segments).allSatisfy({ $0.end <= $0.start || $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+            options.wordTimestamps = false
+            results = try await kit.transcribe(audioArray: samples, decodeOptions: options) { progress in
+                relay.publish(progress.text); return nil
+            }
+        }
+        let duration = Double(samples.count) / 16000
+        let lines = results.flatMap(\.segments).compactMap { segment -> TranscriptLine? in
+            let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+            let begin = min(duration, max(0, Double(segment.start)))
+            let end = min(duration, max(begin, Double(segment.end)))
+            guard end > begin else { return nil }
+            return TranscriptLine(start: offset + begin, end: offset + end, text: text)
+        }
+        return SpeechDecode(lines: lines, endsWithPause: SpeechBoundary.endsWithPause(samples))
+    }
 }
 
 // Decoder callbacks can arrive off the main actor. Throttle UI work and number updates

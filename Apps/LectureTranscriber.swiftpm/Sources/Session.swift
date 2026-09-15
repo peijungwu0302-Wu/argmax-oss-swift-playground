@@ -208,11 +208,14 @@ struct TranslationVersion: Codable, Identifiable, Sendable, Equatable {
     var provider: String // "apple", "google", "microsoft"
     var sourceLocale: String // "en", "ja", etc.
     var targetLocale: String // "zh-Hant"
+    var strategy: String
+    var recognitionEngine: String?
+    var recognitionLanguage: String?
     var lines: [TranslatedLine] = []
     var isPreferred: Bool = false
 
     enum CodingKeys: String, CodingKey {
-        case id, createdAt, name, provider, sourceLocale, targetLocale, lines, isPreferred
+        case id, createdAt, name, provider, sourceLocale, targetLocale, strategy, recognitionEngine, recognitionLanguage, lines, isPreferred
     }
 
     init(id: UUID = UUID(),
@@ -221,6 +224,9 @@ struct TranslationVersion: Codable, Identifiable, Sendable, Equatable {
          provider: String = "apple",
          sourceLocale: String = "en",
          targetLocale: String = "zh-Hant",
+         strategy: String = "automatic",
+         recognitionEngine: String? = nil,
+         recognitionLanguage: String? = nil,
          lines: [TranslatedLine] = [],
          isPreferred: Bool = false) {
         self.id = id
@@ -229,6 +235,9 @@ struct TranslationVersion: Codable, Identifiable, Sendable, Equatable {
         self.provider = provider
         self.sourceLocale = sourceLocale
         self.targetLocale = targetLocale
+        self.strategy = strategy
+        self.recognitionEngine = recognitionEngine
+        self.recognitionLanguage = recognitionLanguage
         self.lines = lines
         self.isPreferred = isPreferred
     }
@@ -247,6 +256,9 @@ struct TranslationVersion: Codable, Identifiable, Sendable, Equatable {
         self.provider = try container.decodeIfPresent(String.self, forKey: .provider) ?? "apple"
         self.sourceLocale = try container.decodeIfPresent(String.self, forKey: .sourceLocale) ?? "en"
         self.targetLocale = try container.decodeIfPresent(String.self, forKey: .targetLocale) ?? "zh-Hant"
+        self.strategy = try container.decodeIfPresent(String.self, forKey: .strategy) ?? "automatic"
+        self.recognitionEngine = try container.decodeIfPresent(String.self, forKey: .recognitionEngine)
+        self.recognitionLanguage = try container.decodeIfPresent(String.self, forKey: .recognitionLanguage)
         self.lines = try container.decodeIfPresent([TranslatedLine].self, forKey: .lines) ?? []
         self.isPreferred = try container.decodeIfPresent(Bool.self, forKey: .isPreferred) ?? false
     }
@@ -567,7 +579,10 @@ struct LectureSession: Codable, Identifiable, Sendable {
     }
 
     mutating func appendConfirmed(_ additions: [TranscriptLine]) {
-        if !additions.isEmpty { previousLines = nil }
+        let finalized = RecognitionLanguage.primary(language) == "zh" || language == "mixed" || language == "auto"
+            ? additions.flatMap(ChineseFinalSegmenter.split)
+            : additions
+        if !finalized.isEmpty { previousLines = nil }
         var idx = preferredVersionIndex
         if idx < 0 {
             let eng: TranscriptEngine
@@ -590,7 +605,7 @@ struct LectureSession: Codable, Identifiable, Sendable {
             preferredVersionID = v.id
             idx = 0
         }
-        for addition in additions {
+        for addition in finalized {
             if let last = transcriptVersions[idx].lines.last, let oldWords = last.words, let newWords = addition.words,
                !oldWords.isEmpty, !newWords.isEmpty, addition.start - last.end < 0.7,
                addition.start >= last.end - 0.08, addition.end - last.start <= 6,

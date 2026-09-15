@@ -40,7 +40,7 @@ struct LiveActivityUpdatePolicy {
     private var lastSeenTranslation = ""
     private var lastSeenRevision = -1
 
-    init(partialInterval: TimeInterval = 1) { self.partialInterval = max(1, partialInterval) }
+    init(partialInterval: TimeInterval = 0.25) { self.partialInterval = max(0.10, partialInterval) }
 
     mutating func accept(kind: LiveActivityCaptionKind, revision: Int, original: String,
                          translation: String, at now: Date = Date()) -> LiveActivityUpdateDecision {
@@ -72,6 +72,11 @@ final class LiveActivityCoordinator: ObservableObject {
             if !liveActivityEnabled { stop() }
         }
     }
+    @Published var refreshPreset: LiveActivityRefreshPreset = LiveActivityRefreshPreset(
+        rawValue: UserDefaults.standard.string(forKey: "liveActivityRefreshPreset") ?? ""
+    ) ?? .balanced {
+        didSet { UserDefaults.standard.set(refreshPreset.rawValue, forKey: "liveActivityRefreshPreset") }
+    }
 
     var isSupported: Bool {
         #if canImport(ActivityKit)
@@ -84,7 +89,8 @@ final class LiveActivityCoordinator: ObservableObject {
     private var activeActivity: Any?
     private var activeLectureID: UUID?
     private var clock = LiveActivityClock(startedAt: Date())
-    private var updatePolicy = LiveActivityUpdatePolicy()
+    private var timerState = LiveActivityTimerState(startedAt: Date())
+    private var updatePolicy = LiveActivityUpdatePolicy(partialInterval: 0.25)
     private var pendingPartialTask: Task<Void, Never>?
     private var lastEngineName = "Apple Live"
     private var lastOriginal = ""
@@ -101,13 +107,15 @@ final class LiveActivityCoordinator: ObservableObject {
         if activeLectureID == lectureID, activeActivity is Activity<LectureActivityAttributes> {
             lastEngineName = engineName
             clock.resume()
+            timerState.resume()
             publishCurrentState()
             return
         }
         stop()
         activeLectureID = lectureID
         clock = LiveActivityClock(startedAt: Date())
-        updatePolicy = LiveActivityUpdatePolicy()
+        timerState = LiveActivityTimerState(startedAt: Date())
+        updatePolicy = LiveActivityUpdatePolicy(partialInterval: refreshPreset.interval)
         lastEngineName = engineName
         lastOriginal = ""
         lastTranslation = ""
@@ -195,7 +203,7 @@ final class LiveActivityCoordinator: ObservableObject {
         guard #available(iOS 16.1, *), activeActivity is Activity<LectureActivityAttributes> else { return }
         pendingPartialTask?.cancel()
         pendingPartialTask = nil
-        if isPaused { clock.pause() } else { clock.resume() }
+        if isPaused { clock.pause(); timerState.pause() } else { clock.resume(); timerState.resume() }
         _ = elapsed // Compatibility input; elapsed seconds are never interpreted as an epoch.
         publishCurrentState()
         #endif
@@ -207,6 +215,7 @@ final class LiveActivityCoordinator: ObservableObject {
         pendingPartialTask?.cancel()
         pendingPartialTask = nil
         clock.pause()
+        timerState.stop()
         let finalState = contentState(isRecording: false, isPaused: false)
         Task {
             if #available(iOS 16.2, *) {
@@ -224,8 +233,8 @@ final class LiveActivityCoordinator: ObservableObject {
     @available(iOS 16.1, *)
     private func contentState(isRecording: Bool? = nil, isPaused: Bool? = nil) -> LectureActivityAttributes.ContentState {
         LectureActivityAttributes.ContentState(
-            isRecording: isRecording ?? !clock.isPaused,
-            isPaused: isPaused ?? clock.isPaused,
+            isRecording: isRecording ?? (timerState.phase == .recording || timerState.phase == .paused),
+            isPaused: isPaused ?? timerState.phase == .paused,
             timerReferenceDate: clock.timerReferenceDate,
             elapsedWhenPaused: clock.elapsedWhenPaused,
             latestOriginal: lastOriginal,

@@ -76,6 +76,7 @@ public struct DeviceAudioDiagnostics: Sendable, Codable {
     public var lastError: String?
     public var lastAudioSourceError: String?
     public var currentASREngine: String
+    public var audioSessionEvents: [String]
 
     public init(
         appVersion: String = "1.8.5 (18)",
@@ -91,7 +92,8 @@ public struct DeviceAudioDiagnostics: Sendable, Codable {
         droppedBuffers: Int = 0,
         lastError: String? = nil,
         lastAudioSourceError: String? = nil,
-        currentASREngine: String = "Apple Speech"
+        currentASREngine: String = "Apple Speech",
+        audioSessionEvents: [String] = []
     ) {
         self.appVersion = appVersion
         self.osVersion = osVersion
@@ -107,6 +109,7 @@ public struct DeviceAudioDiagnostics: Sendable, Codable {
         self.lastError = lastError
         self.lastAudioSourceError = lastAudioSourceError
         self.currentASREngine = currentASREngine
+        self.audioSessionEvents = audioSessionEvents
     }
 
     public var audioBuffersReceiving: Bool {
@@ -143,6 +146,7 @@ public struct DeviceAudioDiagnostics: Sendable, Codable {
         Current ASR Engine: \(currentASREngine)
         Last Error: \(lastError ?? "None")
         Last Audio Error: \(lastAudioSourceError ?? "None")
+        Audio Session Events:\n\(audioSessionEvents.suffix(12).joined(separator: "\n"))
         Generated At: \(Date().formatted())
         ================================
         """
@@ -167,10 +171,12 @@ public final class DeviceAudioCaptureManager: NSObject, ObservableObject, @unche
     public weak var delegate: DeviceAudioCaptureDelegate?
     @Published public private(set) var isCapturing = false
     @Published public private(set) var diagnostics = DeviceAudioDiagnostics()
+    @Published public private(set) var isProbeActive = false
 
     fileprivate var activeStream: AnyObject?
     fileprivate var streamReceiver: AnyObject?
     private var captureStartTime: Date?
+    private var recordedFirstBufferSession = false
 
     private override init() {
         super.init()
@@ -213,6 +219,14 @@ public final class DeviceAudioCaptureManager: NSObject, ObservableObject, @unche
         diagnostics.firstBufferLatency = nil
         diagnostics.lastBufferTimestamp = nil
         diagnostics.lastError = nil
+        diagnostics.audioSessionEvents = []
+        recordedFirstBufferSession = false
+        recordAudioSessionEvent("before SCContentSharingPicker")
+        // Device Audio capture does not need an app-owned playback/record session.
+        // Release any session left active by microphone or local playback before
+        // invoking ScreenCaptureKit so LectureTranscriber cannot duck the source.
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        recordAudioSessionEvent("after releasing app audio session")
 
         #if targetEnvironment(simulator)
         throw LectureError.message(L10n.tr("模擬器環境不支援裝置聲音擷取，請使用實體 iOS 27 裝置。", "Device Audio is not supported on Simulator. Please test on a real iOS 27 device."))
@@ -259,6 +273,7 @@ public final class DeviceAudioCaptureManager: NSObject, ObservableObject, @unche
         }
         #endif
 
+        recordAudioSessionEvent("capture stop")
         activeStream = nil
         streamReceiver = nil
         isCapturing = false
@@ -269,6 +284,7 @@ public final class DeviceAudioCaptureManager: NSObject, ObservableObject, @unche
         activeStream = stream
         isCapturing = true
         diagnostics.isCapturing = true
+        recordAudioSessionEvent("after SCStream.startCapture")
     }
 
     fileprivate func recordBuffer(sampleRate: Double, channels: Int) {
@@ -280,11 +296,38 @@ public final class DeviceAudioCaptureManager: NSObject, ObservableObject, @unche
         if diagnostics.firstBufferLatency == nil, let start = captureStartTime {
             diagnostics.firstBufferLatency = now.timeIntervalSince(start)
         }
+        if !recordedFirstBufferSession {
+            recordedFirstBufferSession = true
+            recordAudioSessionEvent("first audio buffer")
+        }
+    }
+
+    public func startCaptureProbe() async throws {
+        delegate = nil
+        isProbeActive = true
+        do { try await start() }
+        catch { isProbeActive = false; throw error }
+    }
+
+    public func stopCaptureProbe() async {
+        await stop()
+        isProbeActive = false
+    }
+
+    func recordAudioSessionEvent(_ label: String) {
+        let audio = AVAudioSession.sharedInstance()
+        let inputs = audio.currentRoute.inputs.map { "\($0.portType.rawValue):\($0.portName)" }.joined(separator: ",")
+        let outputs = audio.currentRoute.outputs.map { "\($0.portType.rawValue):\($0.portName)" }.joined(separator: ",")
+        let options = String(describing: audio.categoryOptions)
+        let entry = "[\(label)] category=\(audio.category.rawValue) mode=\(audio.mode.rawValue) options=\(options) route=in[\(inputs)] out[\(outputs)] sampleRate=\(audio.sampleRate) outputVolume=\(audio.outputVolume) secondarySilenced=\(audio.secondaryAudioShouldBeSilencedHint)"
+        diagnostics.audioSessionEvents.append(entry)
+        print("DeviceAudioAudioSession \(entry)")
     }
 
     fileprivate func handleStreamError(_ error: Error) {
         isCapturing = false
         diagnostics.isCapturing = false
+        isProbeActive = false
         diagnostics.lastError = error.localizedDescription
         activeStream = nil
         streamReceiver = nil
@@ -316,6 +359,7 @@ private final class SCStreamAudioReceiver: NSObject, SCStreamOutput, SCStreamDel
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
+                self.manager?.recordAudioSessionEvent("after picker selection")
                 let config = SCStreamConfiguration()
                 config.capturesAudio = true
                 config.excludesCurrentProcessAudio = true

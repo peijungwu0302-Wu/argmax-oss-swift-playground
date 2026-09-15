@@ -174,25 +174,29 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
     }
 
     func update(original: String, translated: String, sourceSize: Double, translationSize: Double) {
+        let presentationChanged = self.sourceSize != sourceSize || self.translationSize != translationSize
         self.sourceSize = sourceSize
         self.translationSize = translationSize
         let resolvedOriginal = original.isEmpty ? L10n.tr("等待語音…", "Waiting for speech…") : original
-        if resolvedOriginal != self.original || translated != self.translated {
+        if presentationChanged || resolvedOriginal != self.original || translated != self.translated {
             self.original = resolvedOriginal
             self.translated = translated
             render()
         }
     }
 
-    func start(recording: Bool) {
+    func start(recording: Bool, requiresAudioSession: Bool = true) {
         do {
-            let audio = AVAudioSession.sharedInstance()
-            try audio.setCategory(
-                recording ? .playAndRecord : .playback,
-                mode: recording ? .measurement : .default,
-                options: recording ? [.defaultToSpeaker, .mixWithOthers, .allowBluetooth] : [.mixWithOthers]
-            )
-            try audio.setActive(true)
+            if !requiresAudioSession { DeviceAudioCaptureManager.shared.recordAudioSessionEvent("PiP start") }
+            if requiresAudioSession {
+                let audio = AVAudioSession.sharedInstance()
+                try audio.setCategory(
+                    recording ? .playAndRecord : .playback,
+                    mode: recording ? .measurement : .default,
+                    options: recording ? [.defaultToSpeaker, .mixWithOthers, .allowBluetooth] : [.mixWithOthers]
+                )
+                try audio.setActive(true)
+            }
             render(force: true)
             guard let pip, pip.isPictureInPicturePossible else {
                 status = L10n.tr("子母畫面尚未就緒，請稍候再按「開啟子母字幕」。", "PiP is not ready yet. Try Open PiP Captions again shortly.")
@@ -204,7 +208,7 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
         }
     }
 
-    func startAutomaticallyWhenReady(recording: Bool, maximumAttempts: Int = 5) {
+    func startAutomaticallyWhenReady(recording: Bool, requiresAudioSession: Bool = true, maximumAttempts: Int = 5) {
         guard PiPPresentationSettings.shared.autoStart, !active else { return }
         autoStartTask?.cancel()
         autoStartTask = Task { [weak self] in
@@ -212,7 +216,7 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
             for attempt in 0..<maximumAttempts {
                 guard !Task.isCancelled, !self.active else { return }
                 if self.possible {
-                    self.start(recording: recording)
+                    self.start(recording: recording, requiresAudioSession: requiresAudioSession)
                     return
                 }
                 if attempt + 1 < maximumAttempts {
@@ -245,7 +249,7 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
             return
         }
 
-        let dims = aspectRatio.dimensions
+        let dims = PiPPresentationSettings.shared.renderDimensions
         let width = dims.width
         let height = dims.height
 
@@ -298,8 +302,10 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
 
         let settings = PiPPresentationSettings.shared
         let actualSize = currentRenderSize ?? CGSize(width: width, height: height)
+        let display = DisplaySettings.shared
         let actualMetrics = PiPLayoutMetrics.make(renderSize: actualSize, ratio: aspectRatio,
-                                                   mode: displayMode, fontScale: settings.fontScale, gap: settings.gap)
+                                                   mode: displayMode, fontScale: display.pipOriginalScale,
+                                                   translationFontScale: display.pipTranslationScale, gap: settings.gap)
         let renderScale = CGFloat(width) / max(1, actualSize.width)
         let metrics = PiPLayoutMetrics(
             horizontalPadding: actualMetrics.horizontalPadding * renderScale,
@@ -481,7 +487,8 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
 
     private var presentationSignature: String {
         let settings = PiPPresentationSettings.shared
-        return "\(settings.fontScale)|\(settings.alignment.rawValue)|\(settings.verticalPosition.rawValue)|\(settings.gap.rawValue)|\(currentRenderSize?.width ?? 0)x\(currentRenderSize?.height ?? 0)"
+        let display = DisplaySettings.shared
+        return "\(display.pipOriginalScale)|\(display.pipTranslationScale)|\(settings.aspectRatioValue)|\(settings.alignment.rawValue)|\(settings.verticalPosition.rawValue)|\(settings.gap.rawValue)|\(currentRenderSize?.width ?? 0)x\(currentRenderSize?.height ?? 0)"
     }
 
     private func captionRect(blockHeight: CGFloat, canvasHeight: CGFloat, metrics: PiPLayoutMetrics,
@@ -495,7 +502,7 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
         case .bottom: y = canvasHeight - metrics.verticalPadding - height
         }
         return CGRect(x: metrics.horizontalPadding, y: y,
-                      width: max(1, CGFloat(aspectRatio.dimensions.width) - metrics.horizontalPadding * 2), height: height)
+                      width: max(1, CGFloat(PiPPresentationSettings.shared.renderDimensions.width) - metrics.horizontalPadding * 2), height: height)
     }
 }
 

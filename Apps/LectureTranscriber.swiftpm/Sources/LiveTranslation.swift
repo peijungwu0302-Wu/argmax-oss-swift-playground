@@ -12,7 +12,53 @@ public protocol TranslationProvider: Sendable {
 
 public struct FeatureFlags {
     public static let googleCloudTranslation = false
+    public static let googleMLKitOfflineTranslation = false
     public static let microsoftTranslation = false
+}
+
+@MainActor
+final class TranslationCoordinator: ObservableObject {
+    static let shared = TranslationCoordinator()
+    @Published private(set) var state: TranslationCoordinatorState = .idle
+    private(set) var queue = TranslationRecoveryQueue()
+    private var attempts = 0
+    private var recoveryTask: Task<Void, Never>?
+    private var watchdogTask: Task<Void, Never>?
+    private var lastProgress = Date()
+
+    func setState(_ state: TranslationCoordinatorState) { self.state = state }
+    func synchronize(_ lines: [TranscriptLine], route: TranslationRoute, translatedIDs: Set<UUID>) {
+        for line in lines where !translatedIDs.contains(line.id) { queue.enqueue(line, route: route) }
+        armWatchdogIfNeeded()
+    }
+    func nextPending() -> PendingTranslation? { queue.pending.first }
+    func completed(_ id: UUID) {
+        queue.markCompleted(lineID: id); attempts = 0; lastProgress = Date(); state = .ready
+        if queue.pending.isEmpty { watchdogTask?.cancel(); watchdogTask = nil }
+    }
+    func recover(controller: LectureController, error: Error) {
+        guard !queue.pending.isEmpty else { state = .failed; return }
+        attempts += 1; state = .recovering
+        let delay = min(16.0, pow(2.0, Double(max(0, attempts - 1))))
+        recoveryTask?.cancel()
+        recoveryTask = Task { [weak self, weak controller] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled, let self, let controller, controller.translationEnabled else { return }
+            controller.translationStatus = L10n.tr("正在自動重建翻譯階段…", "Recreating translation session…")
+            controller.restartTranslation()
+            self.lastProgress = Date()
+        }
+    }
+    private func armWatchdogIfNeeded() {
+        guard !queue.pending.isEmpty, watchdogTask == nil else { return }
+        watchdogTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard let self, !self.queue.pending.isEmpty else { return }
+                if Date().timeIntervalSince(self.lastProgress) > 15, self.state != .translating { self.state = .recovering }
+            }
+        }
+    }
 }
 
 public final class GoogleCloudTranslationProvider: TranslationProvider {
@@ -91,6 +137,7 @@ struct LiveTranslationModifier: ViewModifier {
 @available(iOS 18.0, *)
 private struct TranslationWorker: ViewModifier {
     @ObservedObject var controller: LectureController
+    @ObservedObject private var coordinator = TranslationCoordinator.shared
     @State private var configuration: TranslationSession.Configuration?
 
     func body(content: Content) -> some View {
@@ -109,8 +156,10 @@ private struct TranslationWorker: ViewModifier {
             .translationTask(configuration) { @MainActor translator in
                 guard controller.translationEnabled else { return }
                 do {
+                    coordinator.setState(.preparing)
                     controller.translationStatus = L10n.tr("正在準備翻譯語言；首次需要下載語言資源", "Preparing translation language model…")
                     try await translator.prepareTranslation()
+                    coordinator.setState(.ready)
                     var previousDraft: DraftTranslationKey?
                     var lastDraftAt = Date.distantPast
                     var lastDraftSource = ""
@@ -136,18 +185,20 @@ private struct TranslationWorker: ViewModifier {
                         let pauseThresholdReached = now.timeIntervalSince(lastDraftSourceChangeAt) >= 0.5
                         let isDraftStableEnough = isMeaningful || pauseThresholdReached
 
-                        let translateDraft = key != nil && key != previousDraft
+                        let translateDraft = controller.translationStrategy != .highFidelity && key != nil && key != previousDraft
                             && isDraftStableEnough
                             && now.timeIntervalSince(lastDraftAt) >= interval
                             && (!draftWasLast || lecture.lines.first { lecture.translation(for: $0) == nil } == nil)
 
-                        let pending = lecture.lines.first {
-                            lecture.translation(for: $0) == nil && (retryAfter[$0.id] ?? .distantPast) <= now
-                        }
+                        let translatedIDs = Set((lecture.translations ?? []).map(\.id))
+                        coordinator.synchronize(lecture.lines, route: TranslationRoute(source: controller.translationSource, target: controller.translationTarget), translatedIDs: translatedIDs)
+                        let queued = coordinator.nextPending()
+                        let pending = queued.flatMap { (retryAfter[$0.line.id] ?? .distantPast) <= now ? $0.line : nil }
 
                         do {
                             // LIVE LANE PRIORITY
                             if translateDraft, let key {
+                                coordinator.setState(.translating)
                                 lastDraftAt = Date(); draftWasLast = true
                                 let text = try await translate(key.source, with: translator)
                                 try Task.checkCancellation()
@@ -161,6 +212,7 @@ private struct TranslationWorker: ViewModifier {
                             }
                             // BACKLOG LANE
                             else if let line = pending {
+                                coordinator.setState(.translating)
                                 draftWasLast = false
                                 // If this line is the last confirmed line, ends with a dangling clause, and recording is ongoing,
                                 // give a short grace period (1.0s) for the next segment to arrive so we can merge them before translating.
@@ -187,6 +239,7 @@ private struct TranslationWorker: ViewModifier {
                                 try Task.checkCancellation()
                                 guard controller.translationEnabled else { return }
                                 controller.saveTranslation(sessionID: lecture.id, line: line, text: text)
+                                coordinator.completed(line.id)
                                 if let merged = mergedNextLine {
                                     controller.saveTranslation(sessionID: lecture.id, line: merged, text: text)
                                     retryAfter.removeValue(forKey: merged.id)
@@ -195,6 +248,7 @@ private struct TranslationWorker: ViewModifier {
                             }
                             // IDLE LANE
                             else {
+                                coordinator.setState(.ready)
                                 controller.translationStatus = retryAfter.isEmpty
                                     ? L10n.tr("裝置端翻譯已就緒", "On-device translation ready")
                                     : L10n.tr("部分段落等待重試；新字幕仍持續翻譯", "Some segments retrying; live translation active")
@@ -208,6 +262,7 @@ private struct TranslationWorker: ViewModifier {
                                 retryAfter[pending.id] = Date().addingTimeInterval(5)
                             }
                             controller.translationStatus = L10n.tr("翻譯暫時失敗，稍後自動重試：\(error.localizedDescription)", "Translation failed temporarily: \(error.localizedDescription)")
+                            coordinator.recover(controller: controller, error: error)
                             try await Task.sleep(nanoseconds: 600_000_000)
                         }
                     }
@@ -215,6 +270,7 @@ private struct TranslationWorker: ViewModifier {
                 } catch {
                     guard controller.translationEnabled else { return }
                     controller.translationStatus = L10n.tr("翻譯語言尚未就緒：\(error.localizedDescription)。可按「重試翻譯」。", "Translation not ready: \(error.localizedDescription)")
+                    coordinator.recover(controller: controller, error: error)
                 }
             }
     }
@@ -226,7 +282,7 @@ private struct TranslationWorker: ViewModifier {
         }
         configuration = .init(
             source: Locale.Language(identifier: controller.translationSource),
-            target: Locale.Language(identifier: "zh-Hant")
+            target: Locale.Language(identifier: controller.translationTarget)
         )
     }
 

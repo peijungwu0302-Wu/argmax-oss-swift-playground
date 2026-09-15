@@ -35,26 +35,31 @@ struct LectureTranscriberActivityWidget: Widget {
                         Text(formatDuration(context.state.elapsedWhenPaused))
                             .font(.caption2.monospacedDigit())
                             .foregroundStyle(.yellow)
-                    } else {
+                    } else if context.state.isRecording && !context.state.isPaused {
                         Text(timerInterval: context.state.timerReferenceDate...Date.distantFuture, pauseTime: nil, countsDown: false)
                             .font(.caption2.monospacedDigit())
                             .foregroundStyle(.red)
+                    } else {
+                        Text(formatDuration(context.state.elapsedWhenPaused))
+                            .font(.caption2.monospacedDigit())
                     }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(alignment: .leading, spacing: 3) {
-                        if context.state.captionMode != "chineseOnly", !context.state.latestOriginal.isEmpty {
-                            Text(context.state.latestOriginal)
+                        if context.state.captionMode != "chineseOnly" {
+                            Text(context.state.latestOriginal.isEmpty ? " " : context.state.latestOriginal)
                                 .font(.caption2)
                                 .foregroundStyle(.white)
                                 .lineLimit(2)
+                                .frame(minHeight: 32, alignment: .topLeading)
                         }
-                        if context.state.captionMode != "originalOnly", !context.state.latestTranslation.isEmpty {
-                            Text(context.state.latestTranslation)
+                        if context.state.captionMode != "originalOnly" {
+                            Text(context.state.latestTranslation.isEmpty ? " " : context.state.latestTranslation)
                                 .font(.caption2)
                                 .bold()
                                 .foregroundStyle(Color(red: 1.0, green: 0.86, blue: 0.35))
                                 .lineLimit(2)
+                                .frame(minHeight: 32, alignment: .topLeading)
                         }
                         if context.state.latestOriginal.isEmpty && context.state.latestTranslation.isEmpty {
                             Text(context.state.isPaused ? "錄音已暫停" : "正在聆聽課堂聲音…")
@@ -72,11 +77,14 @@ struct LectureTranscriberActivityWidget: Widget {
                     Text(formatDuration(context.state.elapsedWhenPaused))
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.yellow)
-                } else {
+                } else if context.state.isRecording && !context.state.isPaused {
                     Text(timerInterval: context.state.timerReferenceDate...Date.distantFuture, pauseTime: nil, countsDown: false)
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.red)
                         .frame(maxWidth: 44)
+                } else {
+                    Text(formatDuration(context.state.elapsedWhenPaused))
+                        .font(.caption2.monospacedDigit())
                 }
             } minimal: {
                 Image(systemName: context.state.isPaused ? "pause.circle.fill" : "record.circle")
@@ -111,7 +119,7 @@ struct LockScreenLiveActivityView: View {
                     }
                     .font(.caption.monospacedDigit().bold())
                     .foregroundStyle(.yellow)
-                } else {
+                } else if context.state.isRecording && !context.state.isPaused {
                     HStack(spacing: 4) {
                         Circle()
                             .fill(.red)
@@ -120,6 +128,9 @@ struct LockScreenLiveActivityView: View {
                     }
                     .font(.caption.monospacedDigit().bold())
                     .foregroundStyle(.primary)
+                } else {
+                    Text(formatDuration(context.state.elapsedWhenPaused))
+                        .font(.caption.monospacedDigit().bold())
                 }
             }
 
@@ -130,13 +141,15 @@ struct LockScreenLiveActivityView: View {
                         .font(.footnote)
                         .foregroundStyle(.primary)
                         .lineLimit(2)
+                        .frame(minHeight: 38, alignment: .topLeading)
                 }
-                if context.state.captionMode != "originalOnly", !context.state.latestTranslation.isEmpty {
-                    Text(context.state.latestTranslation)
+                if context.state.captionMode != "originalOnly" {
+                    Text(context.state.latestTranslation.isEmpty ? " " : context.state.latestTranslation)
                         .font(.footnote)
                         .bold()
                         .foregroundStyle(Color(red: 0.95, green: 0.75, blue: 0.20))
                         .lineLimit(2)
+                        .frame(minHeight: 38, alignment: .topLeading)
                 }
             }
             .padding(.vertical, 2)

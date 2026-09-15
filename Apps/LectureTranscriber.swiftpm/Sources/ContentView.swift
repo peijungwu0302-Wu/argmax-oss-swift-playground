@@ -11,6 +11,7 @@ struct ContentView: View {
     @ObservedObject private var l10n = L10n.shared
     @ObservedObject private var courseVocabulary = CourseVocabulary.shared
     @ObservedObject private var deviceAudioCapture = DeviceAudioCaptureManager.shared
+    @ObservedObject private var displaySettings = DisplaySettings.shared
     @State private var showHistory = false
     @State private var showImport = false
     @State private var importAfterHistory = false
@@ -28,15 +29,14 @@ struct ContentView: View {
     @State private var renamingSession: LectureSession?
     @State private var renameTitle = ""
     @State private var showRenameAlert = false
+    @State private var showDeviceAudioPreflight = false
+    @State private var showDeviceAudioSaveDecision = false
     @State private var captionMode = true
     @State private var reviewedLine: TranscriptLine?
     @State private var showSpeakers = false
     @StateObject private var pip = CaptionPiP()
     @StateObject private var updates = AppUpdates()
     @AppStorage("automaticallyCheckUpdates") private var automaticallyCheckUpdates = true
-    @AppStorage("captionFontSize") private var captionFontSize = 25.0
-    @AppStorage("translationFontSize") private var translationFontSize = 20.0
-    @AppStorage("transcriptFontSize") private var transcriptFontSize = 17.0
     private let paper = Color(red: 0.97, green: 0.95, blue: 0.90)
     private let ink = Color(red: 0.20, green: 0.19, blue: 0.16)
     private let gold = Color(red: 0.59, green: 0.40, blue: 0.08)
@@ -61,7 +61,9 @@ struct ContentView: View {
                             TextField(L10n.tr("搜尋逐字稿", "Search transcript"), text: $controller.search)
                             Toggle(L10n.tr("跟隨最新", "Follow latest"), isOn: $followLatest).font(.caption).fixedSize()
                         }.foregroundStyle(.secondary)
-                        let height = max(280, geometry.size.height - 350)
+                        let height = geometry.size.width > geometry.size.height
+                            ? max(180, geometry.size.height * 0.38)
+                            : max(280, geometry.size.height - 350)
                         if geometry.size.width >= 700 && controller.translationEnabled {
                             HStack(alignment: .top, spacing: 20) {
                                 transcriptPane(translated: false).frame(maxWidth: .infinity)
@@ -87,7 +89,7 @@ struct ContentView: View {
             .foregroundStyle(ink)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
-                    if !isFullTranscript && captionMode && (controller.isRecording || !controller.caption.isEmpty) { captionPanel }
+                    if !isFullTranscript && captionMode && displaySettings.showAppCaptions && (controller.isRecording || !controller.caption.isEmpty) { captionPanel }
                     if !isFullTranscript { bottomBar }
                 }
             }
@@ -111,12 +113,13 @@ struct ContentView: View {
                     Button {
                         controller.pipEnabled = true
                         pip.setSamplePreview(false)
-                        pip.start(recording: controller.isRecording)
+                        pip.start(recording: controller.isRecording, requiresAudioSession: controller.audioSource == .microphone)
                     } label: {
                         Image(systemName: pip.active ? "pip.fill" : "pip.enter")
                     }
                     .accessibilityLabel(L10n.tr("開啟子母字幕", "Open PiP Captions"))
                     .accessibilityIdentifier("openPiPCaptions")
+                    .disabled(!displaySettings.showPiPCaptions)
                     Button { captionMode.toggle() } label: {
                         Image(systemName: captionMode ? "captions.bubble.fill" : "captions.bubble")
                     }.accessibilityLabel(L10n.tr("字幕模式", "Caption mode"))
@@ -148,8 +151,8 @@ struct ContentView: View {
                     pip: pip,
                     original: controller.caption,
                     translated: controller.translationEnabled ? controller.translationCaption : "",
-                    sourceSize: captionFontSize,
-                    translationSize: translationFontSize
+                    sourceSize: 25 * displaySettings.pipOriginalScale,
+                    translationSize: 20 * displaySettings.pipTranslationScale
                 )
                 .frame(width: 2, height: 2)
                 .opacity(0.01)
@@ -179,6 +182,16 @@ struct ContentView: View {
                 Button(L10n.tr("加入", "Add")) { controller.bookmark(bookmarkNote); bookmarkNote = "" }
                 Button(L10n.tr("取消", "Cancel"), role: .cancel) {}
             } message: { Text(L10n.tr("標記會使用目前的錄音時間。", "Bookmark will use the current timestamp.")) }
+            .alert(L10n.tr("即將顯示系統共享介面", "System Sharing Interface"), isPresented: $showDeviceAudioPreflight) {
+                Button(L10n.tr("取消", "Cancel"), role: .cancel) {}
+                Button(L10n.tr("繼續", "Continue")) { Task { await controller.start() } }
+            } message: {
+                Text(L10n.tr("接下來 iOS 會顯示「共享螢幕」系統介面。\nLectureTranscriber 僅接收裝置音訊進行即時字幕，不錄製或保存螢幕畫面，也不使用麥克風。", "iOS will next show the system Screen Sharing interface. LectureTranscriber receives Device Audio only for live captions. It does not record or save the screen and does not use the microphone."))
+            }
+            .confirmationDialog(L10n.tr("保存本次逐字稿？", "Save this transcript?"), isPresented: $showDeviceAudioSaveDecision, titleVisibility: .visible) {
+                Button(L10n.tr("保存逐字稿", "Save Transcript")) { controller.resolveDeviceAudioSave(save: true) }
+                Button(L10n.tr("捨棄", "Discard"), role: .destructive) { controller.resolveDeviceAudioSave(save: false) }
+            } message: { Text(L10n.tr("只會保存文字、翻譯與相關資訊；不會保存裝置音訊或螢幕畫面。", "Only transcript, translations, and metadata are saved. Device Audio and screen video are never saved.")) }
             .alert(L10n.tr("需要留意", "Notice"), isPresented: Binding(get: { controller.errorMessage != nil }, set: { if !$0 { controller.errorMessage = nil } })) {
                 Button(L10n.tr("知道了", "OK")) { controller.errorMessage = nil }
             } message: { Text(controller.errorMessage ?? "") }
@@ -188,7 +201,7 @@ struct ContentView: View {
         .onChange(of: pip.active) { value in controller.pipActive = value && !pip.paused }
         .onChange(of: pip.paused) { value in controller.pipActive = pip.active && !value }
         .onChange(of: controller.isRecording) { recording in
-            if recording { pip.startAutomaticallyWhenReady(recording: true) }
+            if recording && displaySettings.showPiPCaptions { pip.startAutomaticallyWhenReady(recording: true, requiresAudioSession: controller.audioSource == .microphone) }
         }
         .onAppear {
             pip.restoreUserInterface = {
@@ -281,10 +294,13 @@ struct ContentView: View {
                 Text(controller.displayedDraft.isEmpty ? L10n.tr("已確認", "Confirmed") : L10n.tr("辨識中 · 可修正", "Recognizing · Draft")).font(.caption)
             }.foregroundStyle(.white.opacity(0.7))
             Text(controller.caption.isEmpty ? L10n.tr("等待語音…", "Waiting for speech…") : controller.caption)
-                .font(.system(size: captionFontSize, weight: .medium)).lineLimit(4)
+                .font(.system(size: 25 * displaySettings.appOriginalScale, weight: .medium))
+                .lineLimit(DisplaySettings.maxLines(for: displaySettings.appOriginalScale))
                 .frame(maxWidth: .infinity, alignment: .leading).foregroundStyle(.white)
             if controller.translationEnabled && !controller.translationCaption.isEmpty {
-                Text(controller.translationCaption).font(.system(size: translationFontSize)).lineLimit(4)
+                Text(controller.translationCaption)
+                    .font(.system(size: 20 * displaySettings.appTranslationScale))
+                    .lineLimit(DisplaySettings.maxLines(for: displaySettings.appTranslationScale))
                     .foregroundStyle(Color(red: 1, green: 0.85, blue: 0.45))
                 if !controller.validTranslatedDraft.isEmpty {
                     Text(L10n.tr("翻譯草稿 · 稍晚於原文更新", "Draft translation · Updates after speech")).font(.caption2).foregroundStyle(.white.opacity(0.65))
@@ -335,7 +351,7 @@ struct ContentView: View {
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text(TranscriptExport.clock(line.start) + " · " + (controller.session?.speakerLabel(line) ?? ""))
                                         .font(.caption.monospacedDigit()).foregroundStyle(gold)
-                                    Text(text).font(.system(size: transcriptFontSize)).lineSpacing(4).textSelection(.enabled)
+                                    Text(text).font(.system(size: 17 * displaySettings.historyScale)).lineSpacing(4).textSelection(.enabled)
                                     if !translated {
                                         Button(L10n.tr("聽這段原音／核對切點", "Play audio / Review split")) { reviewedLine = line }.font(.caption).disabled(!controller.canManageSessions)
                                     }
@@ -360,7 +376,7 @@ struct ContentView: View {
                         if controller.search.isEmpty && !draft.isEmpty {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text(L10n.tr("草稿 · 可能更新", "Draft · Updating")).font(.caption).foregroundStyle(gold)
-                                Text(draft).font(.system(size: transcriptFontSize)).lineSpacing(4)
+                                Text(draft).font(.system(size: 17 * displaySettings.historyScale)).lineSpacing(4)
                             }.foregroundStyle(.secondary)
                         }
                         if !translated, let marks = controller.session?.bookmarks, !marks.isEmpty {
@@ -418,9 +434,10 @@ struct ContentView: View {
                                 .font(.caption2)
                                 .foregroundStyle(.orange)
                         } else {
-                            Picker(L10n.tr("儲存模式", "Session Storage"), selection: $controller.sessionStorageMode) {
-                                Text(SessionStorageMode.liveOnly.displayName).tag(SessionStorageMode.liveOnly)
-                                Text(SessionStorageMode.saveTranscript.displayName).tag(SessionStorageMode.saveTranscript)
+                            Picker(L10n.tr("結束後處理", "After Capture"), selection: $controller.deviceAudioSavePreference) {
+                                Text(L10n.tr("每次詢問", "Ask Every Time")).tag(DeviceAudioSavePreference.askEveryTime)
+                                Text(L10n.tr("總是保存逐字稿", "Always Save Transcript")).tag(DeviceAudioSavePreference.alwaysSave)
+                                Text(L10n.tr("總是捨棄", "Always Discard")).tag(DeviceAudioSavePreference.alwaysDiscard)
                             }
                             .pickerStyle(.segmented)
                             .frame(maxWidth: 320)
@@ -436,8 +453,9 @@ struct ContentView: View {
                             if controller.isRecording {
                                 await controller.endLecture()
                                 pip.stop()
+                                showDeviceAudioSaveDecision = controller.deviceAudioAwaitingSaveDecision
                             } else {
-                                await controller.start()
+                                showDeviceAudioPreflight = true
                             }
                         } else {
                             if controller.isRecording { await controller.pause() }
@@ -493,6 +511,21 @@ struct ContentView: View {
         return controller.session == nil ? L10n.tr("開始錄音", "Start Recording") : L10n.tr("繼續錄音", "Resume Recording")
     }
 
+    @ViewBuilder
+    private func displayScaleControl(_ title: String, value: Binding<Double>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title)
+                Spacer()
+                Button { value.wrappedValue = max(0.3, value.wrappedValue - 0.1) } label: { Image(systemName: "minus.circle") }
+                Text("\(Int(value.wrappedValue * 100))%").monospacedDigit().frame(minWidth: 52)
+                Button { value.wrappedValue = min(3, value.wrappedValue + 0.1) } label: { Image(systemName: "plus.circle") }
+                Button(L10n.tr("重設", "Reset")) { value.wrappedValue = 1 }.font(.caption)
+            }
+            Slider(value: value, in: 0.3...3, step: 0.1)
+        }
+    }
+
     private var settingsSheet: some View {
         NavigationStack {
             Form {
@@ -511,16 +544,15 @@ struct ContentView: View {
                                 .font(.caption)
                                 .foregroundStyle(.orange)
                         } else {
-                            Picker(L10n.tr("儲存模式", "Session Storage"), selection: $controller.sessionStorageMode) {
-                                Text(SessionStorageMode.liveOnly.displayName).tag(SessionStorageMode.liveOnly)
-                                Text(SessionStorageMode.saveTranscript.displayName).tag(SessionStorageMode.saveTranscript)
+                            Picker(L10n.tr("結束後處理", "After Capture"), selection: $controller.deviceAudioSavePreference) {
+                                Text(L10n.tr("每次詢問", "Ask Every Time")).tag(DeviceAudioSavePreference.askEveryTime)
+                                Text(L10n.tr("總是保存", "Always Save")).tag(DeviceAudioSavePreference.alwaysSave)
+                                Text(L10n.tr("總是捨棄", "Always Discard")).tag(DeviceAudioSavePreference.alwaysDiscard)
                             }
                             .pickerStyle(.segmented)
                             .disabled(controller.isRecording || controller.isBusy)
 
-                            Text(controller.sessionStorageMode == .liveOnly
-                                ? L10n.tr("「僅即時顯示」在結束後不保留錄音與文字紀錄；無任何檔案寫入磁碟。", "'Live Only' keeps no recording or transcript after session ends; no files written to disk.")
-                                : L10n.tr("「保留逐字稿」在結束後僅儲存文字與翻譯紀錄，不儲存任何裝置聲音錄音檔。", "'Save Transcript' saves text and translations only, without saving any audio recording file."))
+                            Text(L10n.tr("擷取時先將定稿逐字稿與翻譯保留在記憶體；結束後再儲存或捨棄。裝置音訊與螢幕畫面永不寫入磁碟。", "Final transcript and translations stay in memory during capture; save or discard after stopping. Device Audio and screen video are never written to disk."))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -532,16 +564,16 @@ struct ContentView: View {
                 }
 
                 // SECTION 1: 辨識核心 (置頂)
-                Section(L10n.tr("1. 辨識核心", "1. Recognition Engine")) {
+                Section(L10n.tr("1. 模型中心", "1. Model Center")) {
                     Picker(L10n.tr("辨識引擎", "Speech Engine"), selection: Binding(get: { controller.recognitionEngine }, set: { value in
-                        controller.setRecognitionEngine(value)
+                        Task { await controller.switchRecognitionEngine(to: value) }
                         if value == "apple" && RecognitionLanguage.primary(controller.language) == nil { controller.setLanguage("zh") }
                         if value == "sensevoice" { controller.setLanguage("auto") }
                     })) {
                         Text(L10n.tr("Apple Speech · 系統內建 · 最快／最省電", "Apple Speech · System Built-in · Fastest / Efficient")).tag("apple")
                         Text(L10n.tr("WhisperKit · Turbo 等模型", "WhisperKit · Models")).tag("whisper")
                         Text(L10n.tr("SenseVoice · 中英混合／多語快速", "SenseVoice · Mixed-language / Multilingual Fast")).tag("sensevoice")
-                    }.disabled(!controller.canManageSessions)
+                    }.disabled(controller.isBusy || controller.isSummarizing)
 
                     if controller.usesWhisper {
                         Picker(L10n.tr("語音模型", "Whisper Model"), selection: $controller.model) {
@@ -559,6 +591,13 @@ struct ContentView: View {
 
                     Text(L10n.tr("純中文／英文推薦 Apple；多語言混說推薦 SenseVoice；離線錄後長文高精度推薦 WhisperKit。", "Apple Speech recommended for pure Zh/En; SenseVoice for bilingual speech; WhisperKit for high accuracy."))
                         .font(.caption).foregroundStyle(.secondary)
+                    HStack { Text(L10n.tr("狀態", "Status")); Spacer(); Text(controller.resourceState.description).font(.caption).foregroundStyle(controller.resourceState.isReady ? .green : .secondary) }
+                    if let p = controller.resourceState.progressValue { ProgressView(value: p) }
+                    Button { Task { await controller.prepareModel() } } label: {
+                        Label(controller.loadedModel != nil ? L10n.tr("已就緒", "Ready") : L10n.tr("下載與準備", "Download & Prepare"), systemImage: "arrow.down.circle")
+                    }
+                    .accessibilityIdentifier("prepareSpeechResource")
+                    .disabled(controller.isRecording || controller.isBusy)
                 }
 
                 // SECTION 2: 即時翻譯
@@ -584,8 +623,15 @@ struct ContentView: View {
 
                     Picker(L10n.tr("翻譯服務提供者", "Translation Provider"), selection: $controller.translationProvider) {
                         Text(L10n.tr("Apple 裝置端翻譯（內建）", "Apple On-Device (Built-in)")).tag("apple")
-                        Text(L10n.tr("Google 雲端翻譯（未啟用）", "Google Cloud (Disabled)")).tag("google")
-                        Text(L10n.tr("Microsoft 翻譯（未啟用）", "Microsoft Azure (Disabled)")).tag("microsoft")
+                    }
+                    Picker(L10n.tr("翻譯品質", "Translation Quality"), selection: $controller.translationStrategy) {
+                        Text(L10n.tr("自動", "Auto")).tag(TranslationQualityStrategy.automatic)
+                        Text(L10n.tr("低延遲", "Low Latency")).tag(TranslationQualityStrategy.lowLatency)
+                        Text(L10n.tr("高忠實度", "High Fidelity")).tag(TranslationQualityStrategy.highFidelity)
+                    }
+                    if controller.translationStrategy == .highFidelity {
+                        Text(L10n.tr("Apple Translation 未提供可指定的模型品質層級；本模式優先翻譯定稿段落，並自動使用系統可用的最佳裝置端資源。", "Apple Translation exposes no selectable model-quality tier. This mode prioritizes finalized segments and uses the best on-device resource supplied by the system."))
+                            .font(.caption).foregroundStyle(.secondary)
                     }
 
                     if controller.translationEnabled {
@@ -648,15 +694,17 @@ struct ContentView: View {
                             Text(mode.title).tag(mode)
                         }
                     }
-                    Picker(L10n.tr("字幕比例", "Aspect Ratio"), selection: $pipSettings.aspectRatio) {
-                        ForEach(PiPAspectRatio.allCases) { ratio in
-                            Text(ratio.title).tag(ratio)
-                        }
-                    }
                     VStack(alignment: .leading) {
-                        Text(L10n.tr("字幕大小：\(Int(pipSettings.fontScale * 100))%", "Caption Size: \(Int(pipSettings.fontScale * 100))%"))
-                        Slider(value: $pipSettings.fontScale, in: 0.75...1.5, step: 0.05)
-                            .accessibilityIdentifier("pipFontScale")
+                        Text(L10n.tr("字幕比例：\(String(format: "%.1f", pipSettings.aspectRatioValue)):1", "Aspect Ratio: \(String(format: "%.1f", pipSettings.aspectRatioValue)):1"))
+                        Slider(value: $pipSettings.aspectRatioValue, in: 2.5...8, step: 0.1)
+                    }
+                    HStack { Text(L10n.tr("翻譯目標", "Translation Target")); Spacer(); Text(L10n.tr("繁體中文", "Traditional Chinese")).foregroundStyle(.secondary) }
+                    VStack(alignment: .leading) {
+                        displayScaleControl(L10n.tr("應用即時原文", "App Live Original"), value: $displaySettings.appOriginalScale)
+                        displayScaleControl(L10n.tr("應用即時翻譯", "App Live Translation"), value: $displaySettings.appTranslationScale)
+                        displayScaleControl(L10n.tr("PiP 原文", "PiP Original"), value: $displaySettings.pipOriginalScale)
+                        displayScaleControl(L10n.tr("PiP 翻譯", "PiP Translation"), value: $displaySettings.pipTranslationScale)
+                        displayScaleControl(L10n.tr("歷史／逐字稿", "History / Transcript"), value: $displaySettings.historyScale)
                     }
                     Picker(L10n.tr("文字對齊", "Text Alignment"), selection: $pipSettings.alignment) {
                         ForEach(PiPTextAlignment.allCases) { Text($0.title).tag($0) }
@@ -670,27 +718,16 @@ struct ContentView: View {
                     Button(L10n.tr("在子母畫面中預覽", "Preview in Picture in Picture")) {
                         pip.setSamplePreview(!controller.isRecording)
                         controller.pipEnabled = true
-                        pip.start(recording: controller.isRecording)
+                        pip.start(recording: controller.isRecording, requiresAudioSession: controller.audioSource == .microphone)
                     }
                     .accessibilityIdentifier("previewPiP")
                     Button(L10n.tr("還原子母字幕預設設定", "Reset PiP Caption Settings")) {
                         pipSettings.reset()
                     }
                     .accessibilityIdentifier("resetPiP")
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(L10n.tr("原文字幕大小：\(Int(captionFontSize))", "Original Font Size: \(Int(captionFontSize))"))
-                        Slider(value: $captionFontSize, in: 14...48, step: 1)
-                            .accessibilityLabel(L10n.tr("原文字幕大小", "Original Caption Font Size"))
-                            .accessibilityIdentifier("原文字幕大小")
-                        Text(L10n.tr("翻譯字幕大小：\(Int(translationFontSize))", "Translation Font Size: \(Int(translationFontSize))"))
-                        Slider(value: $translationFontSize, in: 14...48, step: 1)
-                            .accessibilityLabel(L10n.tr("翻譯字幕大小", "Translation Caption Font Size"))
-                            .accessibilityIdentifier("翻譯字幕大小")
-                        Text(L10n.tr("逐字稿字級：\(Int(transcriptFontSize))", "Transcript Font Size: \(Int(transcriptFontSize))"))
-                        Slider(value: $transcriptFontSize, in: 14...36, step: 1)
-                            .accessibilityLabel(L10n.tr("逐字稿字級", "Transcript Font Size"))
-                            .accessibilityIdentifier("逐字稿大小")
-                    }
+                    Toggle(L10n.tr("顯示 App 即時字幕", "Show App Live Captions"), isOn: $displaySettings.showAppCaptions)
+                    Toggle(L10n.tr("啟用 PiP 字幕", "Enable PiP Captions"), isOn: $displaySettings.showPiPCaptions)
+                    Button(L10n.tr("重設全部顯示設定", "Reset All Display Settings")) { displaySettings.resetAll(); pipSettings.reset() }
                 }
 
                 // SECTION 5: 即時動態與系統整合
@@ -699,6 +736,10 @@ struct ContentView: View {
                         get: { LiveActivityCoordinator.shared.liveActivityEnabled },
                         set: { LiveActivityCoordinator.shared.liveActivityEnabled = $0 }
                     ))
+                    Picker(L10n.tr("即時動態更新速度", "Live Activity Refresh"), selection: Binding(
+                        get: { LiveActivityCoordinator.shared.refreshPreset },
+                        set: { LiveActivityCoordinator.shared.refreshPreset = $0 }
+                    )) { ForEach(LiveActivityRefreshPreset.allCases) { Text($0.title).tag($0) } }
 
                     if !LiveActivityCoordinator.shared.isSupported {
                         Text(L10n.tr("此裝置或系統版本未啟用即時動態支援。", "Live Activities not available or disabled on this device."))
@@ -706,37 +747,6 @@ struct ContentView: View {
                     }
 
                     Text(L10n.tr("錄音時在鎖定畫面與 iPhone 動態島顯示錄音時間、最新原文與繁中翻譯。100% 本機 ActivityKit 更新，不使用 APNs 或 Push。", "Shows recording timer, latest original, and translation on Lock Screen and Dynamic Island. 100% local ActivityKit."))
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-
-                // SECTION 6: 模型與資源管理
-                Section(controller.usesAppleSpeech ? L10n.tr("6. 系統資源", "6. System Resources") : L10n.tr("6. 可下載 App 模型", "6. Downloadable App Models")) {
-                    HStack {
-                        Text(L10n.tr("目前進度", "Current Progress"))
-                        Spacer()
-                        Text(controller.resourceState.description)
-                            .font(.caption)
-                            .foregroundStyle(controller.resourceState.isReady ? Color.green : Color.secondary)
-                    }
-                    if let p = controller.resourceState.progressValue {
-                        ProgressView(value: p)
-                    }
-                    Button {
-                        Task { await controller.prepareModel() }
-                    } label: {
-                        if controller.usesAppleSpeech {
-                            Label(controller.loadedModel == "apple" ? L10n.tr("Apple Speech · 系統內建 · 已就緒", "Apple Speech · System Built-in · Ready") : L10n.tr("準備語音資源", "Prepare Speech Resource"), systemImage: "waveform")
-                        } else {
-                            Label(controller.loadedModel != nil ? L10n.tr("模型已就緒", "Model Ready") : L10n.tr("下載 / 載入模型", "Download / Load Model"), systemImage: "arrow.down.circle")
-                        }
-                    }
-                    .accessibilityLabel(L10n.tr("載入模型", "Load Model"))
-                    .accessibilityIdentifier("prepareSpeechResource")
-                    .disabled(!controller.canManageSessions)
-
-                    Text(controller.usesAppleSpeech
-                         ? L10n.tr("開始錄音時會自動檢查 Apple Speech 系統資源；不必先在設定中下載。", "Apple Speech system resources are checked automatically when recording starts.")
-                         : L10n.tr("App 模型儲存於 Application Support / SpeechModels，既有模型不會因更新而重新下載。", "App models remain in Application Support / SpeechModels and are retained across updates."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
@@ -1216,6 +1226,7 @@ struct DeviceAudioDiagnosticsView: View {
     @ObservedObject var manager = DeviceAudioCaptureManager.shared
     @ObservedObject var controller: LectureController
     @State private var copied = false
+    @State private var showProbePreflight = false
 
     var body: some View {
         Section(L10n.tr("12. 裝置聲音診斷與觀測", "12. Device Audio Diagnostics")) {
@@ -1288,6 +1299,14 @@ struct DeviceAudioDiagnosticsView: View {
                 }
             }
 
+            Button(manager.isProbeActive ? L10n.tr("停止 Capture Probe", "Stop Capture Probe") : L10n.tr("啟動 Capture Probe", "Start Capture Probe")) {
+                if manager.isProbeActive { Task { await manager.stopCaptureProbe() } }
+                else { showProbePreflight = true }
+            }
+            .disabled(controller.isRecording)
+            Text(L10n.tr("Capture Probe 只驗證 ScreenCaptureKit 音訊緩衝，不啟動 ASR、翻譯或 PiP，也不儲存音訊。", "Capture Probe verifies ScreenCaptureKit audio buffers without ASR, translation, PiP, or audio persistence."))
+                .font(.caption).foregroundStyle(.secondary)
+
             Button {
                 manager.updateEnvironmentDiagnostics(engine: controller.usesAppleSpeech ? "Apple Speech" : (controller.usesSenseVoice ? "SenseVoice" : "WhisperKit"))
                 _ = manager.copyDiagnostics()
@@ -1303,6 +1322,11 @@ struct DeviceAudioDiagnosticsView: View {
                 }
             }
         }
+        .alert(L10n.tr("即將顯示系統共享介面", "System Sharing Interface"), isPresented: $showProbePreflight) {
+            Button(L10n.tr("取消", "Cancel"), role: .cancel) {}
+            Button(L10n.tr("繼續", "Continue")) { Task { try? await manager.startCaptureProbe() } }
+        } message: {
+            Text(L10n.tr("iOS 會顯示「共享螢幕」介面。Capture Probe 僅讀取裝置音訊緩衝，不錄製或保存螢幕，也不使用麥克風。", "iOS will show Screen Sharing. Capture Probe reads Device Audio buffers only; it does not record or save the screen and does not use the microphone."))
+        }
     }
 }
-

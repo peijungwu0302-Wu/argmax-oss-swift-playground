@@ -83,6 +83,7 @@ final class LectureController: ObservableObject {
     @Published private(set) var senseVoiceInputStatus = ""
     @Published var pipActive = false
     @Published var pipEnabled = false
+    @Published private(set) var lastASRSwitchBoundary: ASRSwitchBoundary?
     var canProcessLiveAudio: Bool { isInForeground || pipActive || (supportsBackgroundAudio && isRecording) }
 
     @Published var audioSource: AudioInputSource = {
@@ -108,6 +109,20 @@ final class LectureController: ObservableObject {
             UserDefaults.standard.set(sessionStorageMode.rawValue, forKey: "sessionStorageMode")
         }
     }
+    @Published var translationTarget = UserDefaults.standard.string(forKey: "translationTarget") ?? "zh-Hant" {
+        didSet { UserDefaults.standard.set(translationTarget, forKey: "translationTarget") }
+    }
+    @Published var translationStrategy: TranslationQualityStrategy = TranslationQualityStrategy(
+        rawValue: UserDefaults.standard.string(forKey: "translationStrategy") ?? ""
+    ) ?? .automatic {
+        didSet { UserDefaults.standard.set(translationStrategy.rawValue, forKey: "translationStrategy") }
+    }
+    @Published var deviceAudioSavePreference: DeviceAudioSavePreference = DeviceAudioSavePreference(
+        rawValue: UserDefaults.standard.string(forKey: "deviceAudioSavePreference") ?? ""
+    ) ?? .defaultValue {
+        didSet { UserDefaults.standard.set(deviceAudioSavePreference.rawValue, forKey: "deviceAudioSavePreference") }
+    }
+    @Published private(set) var deviceAudioAwaitingSaveDecision = false
 
     @Published var deviceAudioDuration: Double = 0
     private var deviceAudioBuffer: [Float] = []
@@ -429,6 +444,7 @@ final class LectureController: ObservableObject {
                 if usesAppleSpeech {
                     try await startAppleDeviceAudio(current: current)
                 }
+                DeviceAudioCaptureManager.shared.recordAudioSessionEvent("ASR start")
                 draftAudioEnd = 0
             }
 
@@ -499,6 +515,12 @@ final class LectureController: ObservableObject {
                     while isRecording {
                         if !canProcessLiveAudio { try await Task.sleep(nanoseconds: 300_000_000); continue }
                         try await decodeDeviceAudioSenseVoice()
+                        try await Task.sleep(nanoseconds: 250_000_000)
+                    }
+                } else if usesWhisper {
+                    while isRecording {
+                        if !canProcessLiveAudio { try await Task.sleep(nanoseconds: 300_000_000); continue }
+                        try await decodeDeviceAudioWhisper()
                         try await Task.sleep(nanoseconds: 250_000_000)
                     }
                 }
@@ -642,20 +664,7 @@ final class LectureController: ObservableObject {
         meter?.invalidate(); meter = nil
         UIApplication.shared.isIdleTimerDisabled = false
 
-        if audioSource == .deviceAudio {
-            if sessionStorageMode == .liveOnly {
-                session = nil
-                liveDraft = ""
-                provisional = []
-                translatedDraft = ""
-                translationDraftSource = ""
-                translationDraftKey = nil
-                reloadHistory()
-            } else if sessionStorageMode == .saveTranscript {
-                persist()
-                reloadHistory()
-            }
-        } else {
+        if audioSource != .deviceAudio {
             persist()
         }
 
@@ -692,9 +701,13 @@ final class LectureController: ObservableObject {
                 await worker?.value
                 worker = nil
                 isBusy = false
-                status = sessionStorageMode == .liveOnly
-                    ? L10n.tr("即時字幕已結束", "Live Captions ended")
-                    : L10n.tr("即時字幕已結束並儲存逐字稿", "Live Captions ended and transcript saved")
+                switch deviceAudioSavePreference {
+                case .alwaysSave: resolveDeviceAudioSave(save: true)
+                case .alwaysDiscard: resolveDeviceAudioSave(save: false)
+                case .askEveryTime:
+                    deviceAudioAwaitingSaveDecision = true
+                    status = L10n.tr("即時字幕已結束，請選擇儲存或捨棄逐字稿", "Live Captions ended. Save or discard the transcript.")
+                }
                 return
             } else {
                 await pause()
@@ -703,6 +716,90 @@ final class LectureController: ObservableObject {
         LiveActivityCoordinator.shared.stop()
         CaptionFeed.shared.update(isRecording: false, isPaused: false)
         status = L10n.tr("課堂已結束並儲存", "Lecture ended and saved")
+    }
+
+    func switchRecognitionEngine(to value: String) async {
+        guard ["apple", "sensevoice", "whisper"].contains(value), value != recognitionEngine else { return }
+        guard isRecording else { setRecognitionEngine(value); return }
+        guard !isBusy, let current = session else { return }
+        isBusy = true
+        let oldEngine = recognitionEngine
+        status = L10n.tr("正在準備新辨識引擎；目前引擎繼續運作…", "Preparing the new recognizer while the current engine continues…")
+        do {
+            var preparedApple: (any LiveSpeechEngine)?
+            if value == "apple" {
+                guard #available(iOS 26.0, *) else { throw LectureError.message("Apple Speech requires iOS 26+") }
+                let candidate = AppleSpeechEngine()
+                try await candidate.prepare(language: RecognitionLanguage.primary(language) ?? "zh") { _ in }
+                preparedApple = candidate
+            } else if value == "sensevoice" {
+                try await senseVoice.load(language: language, progressState: { _ in })
+            } else {
+                try await engine.load(model, progressState: { _ in })
+            }
+
+            let boundarySamples: Int
+            let boundaryTime: TimeInterval
+            if audioSource == .deviceAudio {
+                boundarySamples = Int(deviceAudioDuration * 16_000)
+                boundaryTime = deviceAudioDuration
+            } else if let part = current.parts.last {
+                updateAudioCount()
+                boundarySamples = session?.parts.last?.sampleCount ?? part.sampleCount
+                boundaryTime = part.offset + Double(boundarySamples) / 16_000
+            } else { boundarySamples = 0; boundaryTime = duration }
+            let buffers = DeviceAudioCaptureManager.shared.diagnostics.totalBuffersReceived
+            lastASRSwitchBoundary = ASRSwitchBoundary(engine: oldEngine, sampleIndex: boundarySamples,
+                                                      timestamp: boundaryTime, totalBuffers: buffers)
+                .switching(to: value, atSample: boundarySamples, timestamp: boundaryTime)
+
+            worker?.cancel(); await worker?.value; worker = nil
+            if oldEngine == "apple" { await appleSpeech?.cancel() }
+            recognitionEngine = value
+            UserDefaults.standard.set(value, forKey: "recognitionEngine")
+            session?.recognitionEngine = value
+            liveDraft = ""; provisional = []; previousHypothesis = []
+            if audioSource == .deviceAudio {
+                deviceAudioProcessedSamples = boundarySamples
+                if value == "apple", let preparedApple {
+                    appleSpeech = preparedApple
+                    try await startAppleDeviceAudio(current: session ?? current)
+                }
+            } else if let index = session?.parts.indices.last {
+                session?.parts[index].processedSamples = boundarySamples
+                if value == "apple", let preparedApple, let part = session?.parts[index] {
+                    appleSpeech = preparedApple
+                    try await startApple(part, current: session ?? current)
+                }
+            }
+            loadedModel = value == "whisper" ? model : value
+            worker = Task { [weak self] in await self?.streamLoop() }
+            status = L10n.tr("辨識引擎已切換，擷取與翻譯持續", "Recognizer switched; capture and translation continue")
+        } catch {
+            recognitionEngine = oldEngine
+            status = L10n.tr("新引擎尚未就緒，目前辨識繼續運作", "New model not ready; current recognizer continues")
+            errorMessage = error.localizedDescription
+        }
+        isBusy = false
+    }
+
+    func resolveDeviceAudioSave(save: Bool) {
+        guard audioSource == .deviceAudio else { return }
+        deviceAudioAwaitingSaveDecision = false
+        if save {
+            guard let session, let store else { return }
+            do {
+                try store.save(session)
+                lastSaved = Date()
+                reloadHistory()
+                status = L10n.tr("已儲存逐字稿與翻譯（無裝置音訊檔）", "Transcript and translations saved (no Device Audio file).")
+            } catch { fail(L10n.tr("無法儲存逐字稿。", "Unable to save transcript."), error) }
+        } else {
+            session = nil; liveDraft = ""; provisional = []; translatedDraft = ""
+            translationDraftSource = ""; translationDraftKey = nil
+            reloadHistory()
+            status = L10n.tr("已捨棄本次裝置聲音逐字稿", "Device Audio transcript discarded.")
+        }
     }
 
     func recover() async {
@@ -1335,7 +1432,7 @@ final class LectureController: ObservableObject {
         } catch { fail("刪除失敗，請重試。", error) }
     }
     private func persist() {
-        if audioSource == .deviceAudio && sessionStorageMode == .liveOnly {
+        if audioSource == .deviceAudio {
             return
         }
         guard let session, let store else { return }
@@ -1440,6 +1537,15 @@ final class LectureController: ObservableObject {
         values.removeAll { $0.id == line.id }
         values.append(TranslatedLine(id: line.id, source: line.text, text: text))
         session?.transcriptVersions[idx].translations = values
+        if let tvID = session?.transcriptVersions[idx].preferredTranslationVersionID,
+           let tvIndex = session?.transcriptVersions[idx].translationVersions?.firstIndex(where: { $0.id == tvID }) {
+            session?.transcriptVersions[idx].translationVersions?[tvIndex].provider = translationProvider
+            session?.transcriptVersions[idx].translationVersions?[tvIndex].sourceLocale = translationSource
+            session?.transcriptVersions[idx].translationVersions?[tvIndex].targetLocale = translationTarget
+            session?.transcriptVersions[idx].translationVersions?[tvIndex].strategy = translationStrategy.rawValue
+            session?.transcriptVersions[idx].translationVersions?[tvIndex].recognitionEngine = recognitionEngine
+            session?.transcriptVersions[idx].translationVersions?[tvIndex].recognitionLanguage = language
+        }
         persist()
         print("CaptionLatency translation_update=\(Date().timeIntervalSince1970)")
         LiveActivityCoordinator.shared.updateTranscript(original: line.text, translation: text)
@@ -1568,6 +1674,34 @@ final class LectureController: ObservableObject {
         }
     }
 
+    private func decodeDeviceAudioWhisper() async throws {
+        deviceAudioBufferLock.lock()
+        let samples = deviceAudioBuffer
+        let bufferStart = deviceAudioBufferStartOffset
+        deviceAudioBufferLock.unlock()
+        let localStart = max(0, deviceAudioProcessedSamples - bufferStart)
+        let available = samples.count - localStart
+        guard available >= 64_000 else { return }
+        let count = min(128_000, available)
+        let input = Array(samples[localStart..<(localStart + count)])
+        let offset = Double(deviceAudioProcessedSamples) / 16_000
+        let decoded = try await engine.transcribe(samples: input, offset: offset, language: language,
+            vocabulary: vocabulary, final: true) { [weak self] text, _ in
+                Task { @MainActor in self?.liveDraft = text }
+            }
+        try Task.checkCancellation()
+        guard isRecording, usesWhisper else { return }
+        let corrected = decoded.lines.map { TranscriptLine(start: $0.start, end: $0.end,
+            text: CourseVocabulary.shared.correctFinalText($0.text), words: $0.words) }
+        session?.appendConfirmed(corrected)
+        deviceAudioProcessedSamples += count
+        liveDraft = ""; provisional = []
+        if let line = corrected.last {
+            CaptionFeed.shared.update(original: caption, translation: validTranslatedDraft)
+            LiveActivityCoordinator.shared.updateTranscript(original: line.text, translation: validTranslatedDraft)
+        }
+    }
+
     private func fail(_ context: String, _ error: Error) {
         status = context
         errorMessage = context + "\n\n" + error.localizedDescription
@@ -1584,17 +1718,16 @@ extension LectureController: DeviceAudioCaptureDelegate {
             Task { [weak self] in
                 try? await self?.appleSpeech?.append(samples)
             }
-        } else if usesSenseVoice {
-            deviceAudioBufferLock.lock()
-            deviceAudioBuffer.append(contentsOf: samples)
-            let maxBufferSize = 30 * 16000
-            if deviceAudioBuffer.count > maxBufferSize {
-                let overflow = deviceAudioBuffer.count - maxBufferSize
-                deviceAudioBuffer.removeFirst(overflow)
-                deviceAudioBufferStartOffset += overflow
-            }
-            deviceAudioBufferLock.unlock()
         }
+        deviceAudioBufferLock.lock()
+        deviceAudioBuffer.append(contentsOf: samples)
+        let maxBufferSize = 30 * 16000
+        if deviceAudioBuffer.count > maxBufferSize {
+            let overflow = deviceAudioBuffer.count - maxBufferSize
+            deviceAudioBuffer.removeFirst(overflow)
+            deviceAudioBufferStartOffset += overflow
+        }
+        deviceAudioBufferLock.unlock()
     }
 
     func deviceAudioDidEncounterError(_ error: Error) {
