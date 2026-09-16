@@ -19,8 +19,15 @@ public enum ASREngineType: String, CaseIterable, Identifiable, Codable, Sendable
         case .apple: return "Apple Live Speech"
         case .sensevoice: return "SenseVoice Small"
         case .whisper: return "WhisperKit"
-        case .zipformer: return "Zipformer (Sherpa)"
-        case .paraformer: return "Paraformer"
+        case .zipformer: return "Zipformer (Planned v1.9.2)"
+        case .paraformer: return "Paraformer (Planned v1.9.2)"
+        }
+    }
+
+    public var isAvailableInCurrentRelease: Bool {
+        switch self {
+        case .apple, .sensevoice, .whisper: return true
+        case .zipformer, .paraformer: return false
         }
     }
 
@@ -72,50 +79,6 @@ public struct ASRSwitchEvent: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
-// MARK: - Zipformer & Paraformer Adapters (SPM Playgrounds Compatible)
-
-/// On-demand adapter for Zipformer bilingual streaming model.
-/// Maintains full binary compatibility with Swift Playgrounds without external C++ linkage.
-public final class ZipformerEngineAdapter: @unchecked Sendable {
-    public private(set) var isLoaded: Bool = false
-    private var vocabulary: [String] = []
-
-    public init() {}
-
-    public func load(progress: @escaping @Sendable (ResourceState) -> Void) async throws {
-        progress(.preparing(progress: 0.1))
-        let base = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-            .appendingPathComponent("SpeechModels/zipformer", isDirectory: true)
-        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        progress(.ready)
-        isLoaded = true
-    }
-
-    public func unload() {
-        isLoaded = false
-    }
-}
-
-/// On-demand adapter for Paraformer bilingual high-accuracy model.
-public final class ParaformerEngineAdapter: @unchecked Sendable {
-    public private(set) var isLoaded: Bool = false
-
-    public init() {}
-
-    public func load(progress: @escaping @Sendable (ResourceState) -> Void) async throws {
-        progress(.preparing(progress: 0.1))
-        let base = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-            .appendingPathComponent("SpeechModels/paraformer", isDirectory: true)
-        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        progress(.ready)
-        isLoaded = true
-    }
-
-    public func unload() {
-        isLoaded = false
-    }
-}
-
 // MARK: - ASR Router
 
 /// Centralized ASR engine orchestrator and hot-switching manager.
@@ -130,12 +93,10 @@ public final class ASRRouter: ObservableObject {
     @Published public private(set) var lastSwitchEvent: ASRSwitchEvent?
     @Published public private(set) var switchHistory: [ASRSwitchEvent] = []
 
-    // Engines
+    // Active Engines
     private var appleEngine: (any LiveSpeechEngine)?
     private var senseVoiceEngine: SenseVoiceEngine?
     private var whisperEngine: WhisperEngine?
-    private var zipformerAdapter: ZipformerEngineAdapter?
-    private var paraformerAdapter: ParaformerEngineAdapter?
 
     // Active streaming parameters
     private var activeLanguage: String = "zh"
@@ -173,12 +134,10 @@ public final class ASRRouter: ObservableObject {
             try await whisperEngine?.load(model, progressState: onProgress)
 
         case .zipformer:
-            if zipformerAdapter == nil { zipformerAdapter = ZipformerEngineAdapter() }
-            try await zipformerAdapter?.load(progress: onProgress)
+            throw LectureError.message("Zipformer runtime is deferred to v1.9.2 (sherpa-onnx runtime not bundled)")
 
         case .paraformer:
-            if paraformerAdapter == nil { paraformerAdapter = ParaformerEngineAdapter() }
-            try await paraformerAdapter?.load(progress: onProgress)
+            throw LectureError.message("Paraformer runtime is deferred to v1.9.2 (sherpa-onnx runtime not bundled)")
         }
     }
 
@@ -229,16 +188,10 @@ public final class ASRRouter: ObservableObject {
                 self.whisperEngine = candidate
 
             case .zipformer:
-                let candidate = ZipformerEngineAdapter()
-                try await candidate.load(progress: { _ in })
-                await stopOldEngine(oldEngine)
-                self.zipformerAdapter = candidate
+                throw LectureError.message("Zipformer runtime is deferred to v1.9.2 (sherpa-onnx runtime not bundled)")
 
             case .paraformer:
-                let candidate = ParaformerEngineAdapter()
-                try await candidate.load(progress: { _ in })
-                await stopOldEngine(oldEngine)
-                self.paraformerAdapter = candidate
+                throw LectureError.message("Paraformer runtime is deferred to v1.9.2 (sherpa-onnx runtime not bundled)")
             }
 
             // 2. Candidate started successfully! Update pointers and record switch event
@@ -286,12 +239,8 @@ public final class ASRRouter: ObservableObject {
         case .whisper:
             await whisperEngine?.unload()
             self.whisperEngine = nil
-        case .zipformer:
-            zipformerAdapter?.unload()
-            self.zipformerAdapter = nil
-        case .paraformer:
-            paraformerAdapter?.unload()
-            self.paraformerAdapter = nil
+        case .zipformer, .paraformer:
+            break
         }
     }
 
@@ -305,7 +254,7 @@ public final class ASRRouter: ObservableObject {
         case .apple:
             try await appleEngine?.append(samples)
         case .sensevoice, .whisper, .zipformer, .paraformer:
-            // Buffer-based engines consume from buffer loop
+            // Buffer-based engines consume from circular buffer loop
             break
         }
     }

@@ -52,8 +52,6 @@ public final class ModelCenter: ObservableObject {
     @Published public private(set) var manifest: [ModelManifestItem] = []
     @Published public private(set) var modelStates: [String: ResourceState] = [:]
 
-    private var activeDownloadTasks: [String: Task<Void, Error>] = [:]
-
     private init() {
         populateManifest()
         refreshAllModelStates()
@@ -127,7 +125,7 @@ public final class ModelCenter: ObservableObject {
             ),
             ModelManifestItem(
                 id: "zipformer-bilingual",
-                name: "Zipformer Bilingual (Sherpa)",
+                name: "Zipformer Bilingual (Planned v1.9.2)",
                 engineType: .zipformer,
                 downloadSizeMB: 48,
                 memoryEstimateMB: 150,
@@ -135,11 +133,12 @@ public final class ModelCenter: ObservableObject {
                 supportsVocabularyBias: false,
                 isBuiltIn: false,
                 isExperimental: false,
-                isSupportedOnCurrentDevice: true
+                isSupportedOnCurrentDevice: false,
+                unsupportedReason: "Zipformer runtime is deferred to v1.9.2 (sherpa-onnx runtime not bundled)"
             ),
             ModelManifestItem(
                 id: "paraformer-bilingual",
-                name: "Paraformer Bilingual",
+                name: "Paraformer Bilingual (Planned v1.9.2)",
                 engineType: .paraformer,
                 downloadSizeMB: 226,
                 memoryEstimateMB: 340,
@@ -147,7 +146,8 @@ public final class ModelCenter: ObservableObject {
                 supportsVocabularyBias: false,
                 isBuiltIn: false,
                 isExperimental: false,
-                isSupportedOnCurrentDevice: true
+                isSupportedOnCurrentDevice: false,
+                unsupportedReason: "Paraformer runtime is deferred to v1.9.2 (sherpa-onnx runtime not bundled)"
             ),
             ModelManifestItem(
                 id: "moonshine-base",
@@ -159,7 +159,8 @@ public final class ModelCenter: ObservableObject {
                 supportsVocabularyBias: false,
                 isBuiltIn: false,
                 isExperimental: true,
-                isSupportedOnCurrentDevice: true
+                isSupportedOnCurrentDevice: false,
+                unsupportedReason: "Moonshine experimental runtime deferred to v1.9.2"
             ),
             ModelManifestItem(
                 id: "qwen3-asr",
@@ -172,20 +173,26 @@ public final class ModelCenter: ObservableObject {
                 isBuiltIn: false,
                 isExperimental: true,
                 isSupportedOnCurrentDevice: false,
-                unsupportedReason: "Qwen3-ASR requires high-memory server/desktop profile (>16GB RAM) not supported on standard iOS device"
+                unsupportedReason: "Qwen3-ASR requires high-memory server profile (>16GB RAM) not supported on standard iOS device"
             )
         ]
     }
 
     public func state(for modelId: String) -> ResourceState {
-        if let item = manifest.first(where: { $0.id == modelId }), item.isBuiltIn {
-            return .ready
+        if let item = manifest.first(where: { $0.id == modelId }) {
+            if item.isBuiltIn { return .ready }
+            if !item.isSupportedOnCurrentDevice {
+                return .failed(item.unsupportedReason ?? "Unsupported")
+            }
         }
         return modelStates[modelId] ?? (isModelDownloaded(modelId) ? .ready : .notDownloaded)
     }
 
     public func isModelDownloaded(_ modelId: String) -> Bool {
         if modelId == "apple" { return true }
+        guard let item = manifest.first(where: { $0.id == modelId }), item.isSupportedOnCurrentDevice else {
+            return false
+        }
         guard let base = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
             .appendingPathComponent("SpeechModels", isDirectory: true) else { return false }
 
@@ -219,7 +226,7 @@ public final class ModelCenter: ObservableObject {
     }
 
     public func deleteModel(_ modelId: String) throws {
-        guard let item = manifest.first(where: { $0.id == modelId }), !item.isBuiltIn else { return }
+        guard let item = manifest.first(where: { $0.id == modelId }), !item.isBuiltIn, item.isSupportedOnCurrentDevice else { return }
         let base = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
             .appendingPathComponent("SpeechModels", isDirectory: true)
 

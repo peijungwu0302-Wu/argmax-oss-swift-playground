@@ -45,17 +45,50 @@ public enum CaptionSyncState: String, Sendable, Codable, Equatable {
     case stale = "STALE"
 }
 
+// MARK: - Snapshot Model
+
+public struct CaptionTimelineSnapshot: Sendable, Equatable {
+    public let syncState: CaptionSyncState
+    public let capturedThrough: Double
+    public let fedThrough: Double
+    public let recognizedThrough: Double
+    public let translatedThrough: Double
+    public let displayedThrough: Double
+
+    // Media position lags (all within the media timeline)
+    public let recognitionMediaLag: Double
+    public let translationMediaLag: Double
+    public let displayMediaLag: Double
+    public let endToEndMediaLag: Double
+
+    // Backward-compatible alias
+    public var captureToASRLag: Double { recognitionMediaLag }
+}
+
 // MARK: - Caption Synchronization Watermarks & Timeline
 
 @MainActor
 public final class CaptionTimeline: ObservableObject {
     public static let shared = CaptionTimeline()
 
-    @Published public private(set) var watermarkCapturedThrough: Double = 0.0
-    @Published public private(set) var watermarkFedToASRThrough: Double = 0.0
-    @Published public private(set) var watermarkRecognizedThrough: Double = 0.0
-    @Published public private(set) var watermarkTranslatedThrough: Double = 0.0
-    @Published public private(set) var watermarkDisplayedThrough: Double = 0.0
+    // Explicit single media timeline (capture-relative monotonic seconds)
+    private var sessionEpochPTS: Double?
+
+    @Published public private(set) var capturedThrough: Double = 0.0
+    @Published public private(set) var fedThrough: Double = 0.0
+    @Published public private(set) var recognizedThrough: Double = 0.0
+    @Published public private(set) var translatedThrough: Double = 0.0
+    @Published public private(set) var displayedThrough: Double = 0.0
+
+    // Backward-compatible property aliases
+    public var audioCapturedPTS: Double { capturedThrough }
+    public var audioFedToASRPTS: Double { fedThrough }
+    public var asrFinalizedPTS: Double { recognizedThrough }
+
+    // Separate wall-clock processing durations (tracked separately; NEVER subtracted from media PTS)
+    @Published public private(set) var lastASRProcessingDuration: Double?
+    @Published public private(set) var lastTranslationProcessingDuration: Double?
+    @Published public private(set) var lastDisplayRenderDuration: Double?
 
     @Published public private(set) var syncState: CaptionSyncState = .normal
     @Published public private(set) var cues: [CaptionCue] = []
@@ -64,59 +97,124 @@ public final class CaptionTimeline: ObservableObject {
     private var revisionCounter: Int = 0
 
     // Sensible thresholds for catch-up and stale states
-    private let catchUpEnterThreshold: Double = 1.2  // seconds of lag
-    private let catchUpExitThreshold: Double = 0.35  // seconds of lag to return to normal
-    private let staleThreshold: Double = 3.5         // seconds of display lag to declare stale
+    private let catchUpEnterThreshold: Double = 1.2   // seconds of lag
+    private let catchUpExitThreshold: Double = 0.35   // seconds of lag to return to normal
+    private let staleThreshold: Double = 3.5          // seconds of display lag to declare stale
 
-    public var recognitionLag: Double {
-        max(0.0, watermarkCapturedThrough - watermarkRecognizedThrough)
+    // Media position lags
+    public var recognitionMediaLag: Double {
+        max(0.0, capturedThrough - recognizedThrough)
     }
 
-    public var translationLag: Double {
-        max(0.0, watermarkRecognizedThrough - watermarkTranslatedThrough)
+    public var translationMediaLag: Double {
+        max(0.0, recognizedThrough - translatedThrough)
     }
 
-    public var displayLag: Double {
-        max(0.0, watermarkRecognizedThrough - watermarkDisplayedThrough)
+    public var displayMediaLag: Double {
+        max(0.0, recognizedThrough - displayedThrough)
     }
+
+    public var endToEndMediaLag: Double {
+        max(0.0, capturedThrough - displayedThrough)
+    }
+
+    // Backward-compatible lag alias
+    public var captureToASRLag: Double { recognitionMediaLag }
 
     public init() {}
 
     public func reset() {
-        watermarkCapturedThrough = 0.0
-        watermarkFedToASRThrough = 0.0
-        watermarkRecognizedThrough = 0.0
-        watermarkTranslatedThrough = 0.0
-        watermarkDisplayedThrough = 0.0
+        sessionEpochPTS = nil
+        capturedThrough = 0.0
+        fedThrough = 0.0
+        recognizedThrough = 0.0
+        translatedThrough = 0.0
+        displayedThrough = 0.0
+        lastASRProcessingDuration = nil
+        lastTranslationProcessingDuration = nil
+        lastDisplayRenderDuration = nil
         syncState = .normal
         cues.removeAll()
         activeCue = nil
         revisionCounter = 0
     }
 
+    // MARK: - Time Normalization
+
+    private func normalize(pts: Double) -> Double {
+        if sessionEpochPTS == nil {
+            // If the incoming PTS is a realistic absolute timestamp (e.g. > 1000s), set epoch
+            if pts > 1000.0 {
+                sessionEpochPTS = pts
+            } else {
+                sessionEpochPTS = 0.0
+            }
+        }
+        return max(0.0, pts - (sessionEpochPTS ?? 0.0))
+    }
+
     // MARK: - Watermark Updates
 
-    public func recordCaptured(through timestamp: Double) {
-        watermarkCapturedThrough = max(watermarkCapturedThrough, timestamp)
+    public func recordAudioCaptured(duration: Double, pts: Double) {
+        let normalized = normalize(pts: pts)
+        capturedThrough = max(capturedThrough, normalized)
         updateSyncState()
+    }
+
+    public func recordCaptured(through timestamp: Double) {
+        recordAudioCaptured(duration: 0, pts: timestamp)
+    }
+
+    public func recordAudioFedToASR(samplesCount: Int, pts: Double) {
+        let normalized = normalize(pts: pts)
+        fedThrough = max(fedThrough, normalized)
     }
 
     public func recordFedToASR(through timestamp: Double) {
-        watermarkFedToASRThrough = max(watermarkFedToASRThrough, timestamp)
+        recordAudioFedToASR(samplesCount: 0, pts: timestamp)
+    }
+
+    public func recordASRFinalized(throughPTS: Double, wallClockDuration: Double? = nil) {
+        let normalized = normalize(pts: throughPTS)
+        recognizedThrough = max(recognizedThrough, normalized)
+        if let duration = wallClockDuration {
+            lastASRProcessingDuration = duration
+        }
+        updateSyncState()
     }
 
     public func recordRecognized(through timestamp: Double) {
-        watermarkRecognizedThrough = max(watermarkRecognizedThrough, timestamp)
-        updateSyncState()
+        recordASRFinalized(throughPTS: timestamp)
+    }
+
+    public func recordTranslationComplete(forLine: UUID? = nil, throughPTS: Double? = nil, wallClockDuration: Double? = nil) {
+        if let pts = throughPTS {
+            let normalized = normalize(pts: pts)
+            translatedThrough = max(translatedThrough, normalized)
+        } else {
+            translatedThrough = max(translatedThrough, recognizedThrough)
+        }
+        if let duration = wallClockDuration {
+            lastTranslationProcessingDuration = duration
+        }
     }
 
     public func recordTranslated(through timestamp: Double) {
-        watermarkTranslatedThrough = max(watermarkTranslatedThrough, timestamp)
+        recordTranslationComplete(throughPTS: timestamp)
+    }
+
+    public func recordCaptionDisplayed(at wallClock: Double? = nil, throughPTS: Double? = nil) {
+        if let pts = throughPTS {
+            let normalized = normalize(pts: pts)
+            displayedThrough = max(displayedThrough, normalized)
+        } else {
+            displayedThrough = max(displayedThrough, recognizedThrough)
+        }
+        updateSyncState()
     }
 
     public func recordDisplayed(through timestamp: Double) {
-        watermarkDisplayedThrough = max(watermarkDisplayedThrough, timestamp)
-        updateSyncState()
+        recordCaptionDisplayed(throughPTS: timestamp)
     }
 
     // MARK: - Cue Management
@@ -133,7 +231,6 @@ public final class CaptionTimeline: ObservableObject {
         recordRecognized(through: end)
 
         // In CATCHING_UP mode: latest-state-wins for partials
-        // We do not churn old intermediate partial cues
         if let existing = activeCue, !existing.isFinal {
             var updated = existing
             updated.endTime = max(existing.endTime, end)
@@ -178,12 +275,13 @@ public final class CaptionTimeline: ObservableObject {
             engine: engine,
             language: language
         )
+        // Finalized cues are NEVER dropped; history remains complete!
         cues.append(finalCue)
         activeCue = finalCue
 
-        // Cap in-memory active timeline to recent window (e.g. 50 cues)
-        if cues.count > 50 {
-            cues.removeFirst(cues.count - 50)
+        // Cap in-memory active timeline to recent window
+        if cues.count > 100 {
+            cues.removeFirst(cues.count - 100)
         }
         return finalCue
     }
@@ -207,21 +305,22 @@ public final class CaptionTimeline: ObservableObject {
 
     // MARK: - Catch-Up & Stale Logic
 
-    /// Called when source media pauses: aggressively drain backlog
+    /// Called when source media pauses: aggressively drain backlog to normal
     public func drainBacklog() {
-        watermarkRecognizedThrough = watermarkCapturedThrough
-        watermarkTranslatedThrough = watermarkRecognizedThrough
+        recognizedThrough = capturedThrough
+        translatedThrough = recognizedThrough
+        displayedThrough = recognizedThrough
         updateSyncState()
     }
 
     private func updateSyncState() {
-        let recLag = recognitionLag
-        let dispLag = displayLag
+        let recLag = recognitionMediaLag
+        let dispLag = displayMediaLag
 
         if dispLag > staleThreshold {
             syncState = .stale
             // Jump display forward toward newest recognized watermark
-            watermarkDisplayedThrough = watermarkRecognizedThrough - 0.2
+            displayedThrough = max(0.0, recognizedThrough - 0.2)
         } else if recLag > catchUpEnterThreshold || dispLag > catchUpEnterThreshold {
             syncState = .catchingUp
         } else if recLag <= catchUpExitThreshold && dispLag <= catchUpExitThreshold {
@@ -229,15 +328,30 @@ public final class CaptionTimeline: ObservableObject {
         }
     }
 
+    public func snapshot() -> CaptionTimelineSnapshot {
+        CaptionTimelineSnapshot(
+            syncState: syncState,
+            capturedThrough: capturedThrough,
+            fedThrough: fedThrough,
+            recognizedThrough: recognizedThrough,
+            translatedThrough: translatedThrough,
+            displayedThrough: displayedThrough,
+            recognitionMediaLag: recognitionMediaLag,
+            translationMediaLag: translationMediaLag,
+            displayMediaLag: displayMediaLag,
+            endToEndMediaLag: endToEndMediaLag
+        )
+    }
+
     public func formattedDiagnostics() -> String {
         """
         [Sync: \(syncState.rawValue)]
-        Captured: \(String(format: "%.2f s", watermarkCapturedThrough))
-        Fed ASR:  \(String(format: "%.2f s", watermarkFedToASRThrough))
-        Recognized: \(String(format: "%.2f s", watermarkRecognizedThrough))
-        Translated: \(String(format: "%.2f s", watermarkTranslatedThrough))
-        Displayed:  \(String(format: "%.2f s", watermarkDisplayedThrough))
-        Lag: Rec=\(String(format: "%.2f s", recognitionLag)), Trans=\(String(format: "%.2f s", translationLag)), Disp=\(String(format: "%.2f s", displayLag))
+        Captured:   \(String(format: "%.2f s", capturedThrough))
+        Fed ASR:    \(String(format: "%.2f s", fedThrough))
+        Recognized: \(String(format: "%.2f s", recognizedThrough))
+        Translated: \(String(format: "%.2f s", translatedThrough))
+        Displayed:  \(String(format: "%.2f s", displayedThrough))
+        Media Lag:  Rec=\(String(format: "%.2f s", recognitionMediaLag)), Trans=\(String(format: "%.2f s", translationMediaLag)), Disp=\(String(format: "%.2f s", displayMediaLag)), E2E=\(String(format: "%.2f s", endToEndMediaLag))
         """
     }
 }
