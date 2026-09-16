@@ -482,7 +482,7 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
     nonisolated func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) {
         Task { @MainActor in
             self.active = false
-            self.lifecycleState = .failedRecoverable(error.localizedDescription)
+            self.lifecycleState = .failedRecoverable
             self.status = error.localizedDescription
             AudioSessionCoordinator.shared.endPiPPresentation()
             print("CaptionPiP failedToStart: \(error)")

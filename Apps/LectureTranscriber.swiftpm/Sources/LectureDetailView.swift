@@ -758,7 +758,7 @@ struct LectureDetailView: View {
     }
 
     private func migrateLegacyAudio() async {
-        guard let store = controller.store else { return }
+        guard let store = try? SessionStore() else { return }
         isMigratingAudio = true
         defer { isMigratingAudio = false }
         do {

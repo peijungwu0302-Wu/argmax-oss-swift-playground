@@ -247,6 +247,10 @@ public final class AudioSessionCoordinator: ObservableObject {
 
     // MARK: - Picture-in-Picture Policy
 
+    public func prepareForPiP(isDeviceAudio: Bool = false) {
+        beginPiPPresentation(requiresAudioSession: !isDeviceAudio)
+    }
+
     /// Invariant: PiP during Device Audio must NOT activate an app-owned audio session.
     public func beginPiPPresentation(requiresAudioSession: Bool = false) {
         guard requiresAudioSession else {

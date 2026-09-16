@@ -32,6 +32,7 @@ final class PCMRecorder: @unchecked Sendable {
         )
     }
 
+    @MainActor
     func start(at url: URL, allowsPlayback: Bool = false) throws {
         // Centralized AudioSession policy
         try AudioSessionCoordinator.shared.activateMicrophoneCapture(allowsPlayback: allowsPlayback)
@@ -94,6 +95,7 @@ final class PCMRecorder: @unchecked Sendable {
         catch { stop(); throw error }
     }
 
+    @MainActor
     func stop() {
         if let engine {
             engine.inputNode.removeTap(onBus: 0)
