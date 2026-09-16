@@ -145,7 +145,7 @@ public final class ASRRouter: ObservableObject {
 
     /// Switches the active engine while transcription is ongoing.
     /// Invariant: If candidate engine preparation fails, active engine continues without interruption.
-    public func hotSwitch(
+    func hotSwitch(
         to newType: ASREngineType,
         targetLanguage: String,
         modelName: String? = nil,

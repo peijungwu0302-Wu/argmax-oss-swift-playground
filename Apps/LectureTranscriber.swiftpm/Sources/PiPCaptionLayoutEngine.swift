@@ -4,18 +4,18 @@ import CoreGraphics
 
 // MARK: - Caption Presentation Model
 
-public struct CaptionPresentationModel: Equatable {
-    public var originalText: String
-    public var translatedText: String
-    public var displayMode: PiPDisplayMode
-    public var fontScale: Double
-    public var translationFontScale: Double
-    public var aspectRatio: PiPAspectRatio
-    public var alignment: NSTextAlignment
-    public var verticalPosition: PiPVerticalPosition
-    public var isSamplePreview: Bool
+struct CaptionPresentationModel: Equatable {
+    var originalText: String
+    var translatedText: String
+    var displayMode: PiPDisplayMode
+    var fontScale: Double
+    var translationFontScale: Double
+    var aspectRatio: PiPAspectRatio
+    var alignment: NSTextAlignment
+    var verticalPosition: PiPVerticalPosition
+    var isSamplePreview: Bool
 
-    public init(
+    init(
         originalText: String = "",
         translatedText: String = "",
         displayMode: PiPDisplayMode = .bilingual,
@@ -40,18 +40,18 @@ public struct CaptionPresentationModel: Equatable {
 
 // MARK: - Measured Layout Rectangles
 
-public struct PiPMeasuredLayout {
-    public var originalRect: CGRect?
-    public var originalTextToDraw: String
-    public var originalFont: UIFont
-    public var originalColor: UIColor
+struct PiPMeasuredLayout {
+    var originalRect: CGRect?
+    var originalTextToDraw: String
+    var originalFont: UIFont
+    var originalColor: UIColor
 
-    public var translationRect: CGRect?
-    public var translationTextToDraw: String
-    public var translationFont: UIFont
-    public var translationColor: UIColor
+    var translationRect: CGRect?
+    var translationTextToDraw: String
+    var translationFont: UIFont
+    var translationColor: UIColor
 
-    public var paragraphStyle: NSParagraphStyle
+    var paragraphStyle: NSParagraphStyle
 }
 
 // MARK: - PiP Caption Layout Engine
@@ -59,15 +59,15 @@ public struct PiPMeasuredLayout {
 /// Real measurement-based layout engine for Picture in Picture captions.
 /// Solves the text clipping / truncation bug without shrinking user font size or discarding transcript data.
 /// Uses measured geometry, adaptive bilingual space allocation, and a rolling/tail window for long sentences.
-public final class PiPCaptionLayoutEngine {
-    public static let shared = PiPCaptionLayoutEngine()
+final class PiPCaptionLayoutEngine {
+    static let shared = PiPCaptionLayoutEngine()
 
     // Smooth moving average for bilingual allocation ratio to prevent bouncing
     private var lastAllocatedOrigRatio: CGFloat = 0.46
 
-    public init() {}
+    init() {}
 
-    public func layout(
+    func layout(
         model: CaptionPresentationModel,
         canvasSize: CGSize,
         metrics: PiPLayoutMetrics
@@ -320,7 +320,7 @@ public final class PiPCaptionLayoutEngine {
 
     // MARK: - Geometry Measurement
 
-    public func measureText(
+    func measureText(
         _ text: String,
         font: UIFont,
         maxWidth: CGFloat,
