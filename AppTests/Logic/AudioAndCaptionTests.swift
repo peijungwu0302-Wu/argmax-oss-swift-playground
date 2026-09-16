@@ -930,10 +930,17 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertFalse(paraformer?.isSupportedOnCurrentDevice == true, "Paraformer must be unavailable in v1.9.1 without sherpa-onnx runtime")
         XCTAssertFalse(center.isModelDownloaded("paraformer-bilingual"))
 
-        // Verify Qwen3-ASR unsupported status on standard mobile profile
+        // Verify Qwen3-ASR unsupported status on standard mobile profile and truthful wording
         let qwen3 = center.manifest.first(where: { $0.id == "qwen3-asr" })
         XCTAssertNotNil(qwen3)
         XCTAssertFalse(qwen3?.isSupportedOnCurrentDevice == true)
+        let qwenReason = qwen3?.unsupportedReason ?? ""
+        XCTAssertFalse(qwenReason.contains("16GB"), "Must not claim >16GB RAM requirement")
+        XCTAssertFalse(qwenReason.contains("16 GB"), "Must not claim >16 GB RAM requirement")
+        XCTAssertTrue(
+            qwenReason.contains("LectureTranscriber 尚未整合可用的 iOS 裝置端執行環境") ||
+            qwenReason.contains("An iOS on-device runtime has not yet been integrated into LectureTranscriber.")
+        )
     }
 
     @MainActor
@@ -952,11 +959,12 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertEqual(coordinator.currentState, .idle)
 
         // 2. Microphone Capture: Baseline mode must be .default, NOT .spokenAudio and NOT .measurement
-        try coordinator.activateMicrophoneCapture(allowsPlayback: true)
+        try coordinator.activateMicrophoneCapture(preferBluetoothMic: false, allowsPlayback: true)
         XCTAssertEqual(coordinator.currentState, .microphoneCapture)
         XCTAssertEqual(AVAudioSession.sharedInstance().category, .playAndRecord)
         XCTAssertEqual(AVAudioSession.sharedInstance().mode, .default, "Microphone capture must use .default mode")
         XCTAssertTrue(AVAudioSession.sharedInstance().categoryOptions.contains(.mixWithOthers), "Must preserve .mixWithOthers")
+        XCTAssertFalse(AVAudioSession.sharedInstance().categoryOptions.contains(.bluetoothHFPCompatible), "Built-in mic must not use HFP")
 
         coordinator.deactivateMicrophoneCapture()
         XCTAssertEqual(coordinator.currentState, .idle)

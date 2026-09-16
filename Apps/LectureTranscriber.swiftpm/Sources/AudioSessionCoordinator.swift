@@ -155,7 +155,7 @@ public final class AudioSessionCoordinator: ObservableObject {
 
         if preferBluetoothMic && hasBluetoothInput {
             // User explicitly requested Bluetooth microphone -> HFP mode
-            options.insert(.allowBluetooth)
+            options.insert(.bluetoothHFPCompatible)
             targetMicType = "Bluetooth Mic (HFP)"
         } else if hasBluetoothOutput || hasBluetoothInput {
             // Bluetooth device connected, but user wants built-in mic capture + Bluetooth media output
@@ -354,3 +354,20 @@ public final class AudioSessionCoordinator: ObservableObject {
         })
     }
 }
+
+// MARK: - Compatibility Extensions
+
+extension AVAudioSession.CategoryOptions {
+    public static var bluetoothHFPCompatible: AVAudioSession.CategoryOptions {
+        #if compiler(>=6.0)
+        if #available(iOS 18.0, *) {
+            return .allowBluetoothHFP
+        } else {
+            return .allowBluetooth
+        }
+        #else
+        return .allowBluetooth
+        #endif
+    }
+}
+

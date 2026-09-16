@@ -173,7 +173,10 @@ public final class ModelCenter: ObservableObject {
                 isBuiltIn: false,
                 isExperimental: true,
                 isSupportedOnCurrentDevice: false,
-                unsupportedReason: "Qwen3-ASR requires high-memory server profile (>16GB RAM) not supported on standard iOS device"
+                unsupportedReason: L10n.tr(
+                    "LectureTranscriber 尚未整合可用的 iOS 裝置端執行環境",
+                    "An iOS on-device runtime has not yet been integrated into LectureTranscriber."
+                )
             )
         ]
     }
