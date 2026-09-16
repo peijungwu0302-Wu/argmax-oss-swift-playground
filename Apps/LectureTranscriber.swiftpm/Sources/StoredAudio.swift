@@ -143,6 +143,11 @@ enum StoredAudio {
         }
     }
 
+    static func archiveWAV(source: URL, samples: [Float]) throws -> URL {
+        try AudioStorage.encodePCM16(samples).write(to: source)
+        return try archiveWAV(source: source, samples: samples.count)
+    }
+
     /// Creates a standard RIFF/WAVE file from a source raw audio file with bounded memory.
     static func archiveWAV(source: URL, samples: Int) throws -> URL {
         guard samples > 0 else { throw LectureError.message("音訊長度不足，無法封裝 WAV。") }

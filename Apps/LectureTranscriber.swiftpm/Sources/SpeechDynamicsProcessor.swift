@@ -14,6 +14,11 @@ public struct AudioDynamicsDiagnostics: Sendable, Codable, Equatable {
     public var postPeakdBFS: Float = -100
     public var targetGaindB: Float = 0
 
+    // Backward-compatible aliases for testing
+    public var prePeakDBFS: Float { prePeakdBFS }
+    public var postPeakDBFS: Float { postPeakdBFS }
+    public var effectiveGainDB: Float { targetGaindB }
+
     public init() {}
 
     public func formattedSummary() -> String {
@@ -52,6 +57,12 @@ public final class SpeechDynamicsProcessor: @unchecked Sendable {
     public func currentDiagnostics() -> AudioDynamicsDiagnostics {
         lock.lock(); defer { lock.unlock() }
         return lastDiagnostics
+    }
+
+    /// Convenience processor returning both processed samples and captured dynamics diagnostics.
+    public func processWithDiagnostics(_ samples: [Float]) -> ([Float], AudioDynamicsDiagnostics) {
+        let out = process(samples)
+        return (out, currentDiagnostics())
     }
 
     /// Processes a block of PCM samples in place, returning a listener-optimized speech audio buffer.

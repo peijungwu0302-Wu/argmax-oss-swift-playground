@@ -134,6 +134,10 @@ public final class AudioSessionCoordinator: ObservableObject {
     ///    Does NOT enable HFP.
     /// 2. Built-in mic + speaker: [.mixWithOthers, .defaultToSpeaker].
     /// 3. Bluetooth microphone: [.mixWithOthers, .allowBluetooth] only when user/system intentionally selects Bluetooth mic.
+    public func activateMicrophoneCapture(preferBluetoothMic: Bool, allowsPlayback: Bool = true) throws {
+        try activateMicrophoneCapture(allowsPlayback: allowsPlayback, preferBluetoothMic: preferBluetoothMic)
+    }
+
     public func activateMicrophoneCapture(allowsPlayback: Bool = true, preferBluetoothMic: Bool = false) throws {
         // Invariant: If device audio capture is running, microphone capture cannot overlap
         if currentState == .deviceAudioCapture {

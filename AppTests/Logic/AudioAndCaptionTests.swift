@@ -801,6 +801,7 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertEqual(playableURL.path, archivedWAV.path, "Standard audio container must be played directly without temporary conversion")
     }
 
+    @MainActor
     func testCaptionTimelineWatermarksAndSyncState() {
         let timeline = CaptionTimeline()
         timeline.reset()
@@ -959,7 +960,7 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertEqual(coordinator.currentState, .idle)
 
         // 2. Microphone Capture: Baseline mode must be .default, NOT .spokenAudio and NOT .measurement
-        try coordinator.activateMicrophoneCapture(preferBluetoothMic: false, allowsPlayback: true)
+        try coordinator.activateMicrophoneCapture(allowsPlayback: true, preferBluetoothMic: false)
         XCTAssertEqual(coordinator.currentState, .microphoneCapture)
         XCTAssertEqual(AVAudioSession.sharedInstance().category, .playAndRecord)
         XCTAssertEqual(AVAudioSession.sharedInstance().mode, .default, "Microphone capture must use .default mode")
