@@ -153,13 +153,49 @@ public struct DeviceAudioDiagnostics: Sendable, Codable {
     }
 }
 
+// MARK: - Timed Audio Chunk
+
+public struct TimedAudioChunk: Sendable {
+    public let samples: [Float]
+    public let sampleRate: Double
+    public let channelCount: Int
+    public let level: Float
+    public let pts: Double
+    public let startSampleIndex: Int
+    public let endSampleIndex: Int
+    public var duration: Double { Double(samples.count) / max(1.0, sampleRate) }
+
+    public init(
+        samples: [Float],
+        sampleRate: Double = 16000,
+        channelCount: Int = 1,
+        level: Float = 0,
+        pts: Double = 0,
+        startSampleIndex: Int = 0,
+        endSampleIndex: Int = 0
+    ) {
+        self.samples = samples
+        self.sampleRate = sampleRate
+        self.channelCount = channelCount
+        self.level = level
+        self.pts = pts
+        self.startSampleIndex = startSampleIndex
+        self.endSampleIndex = endSampleIndex
+    }
+}
+
 // MARK: - Delegate Protocol
 
 @MainActor
 public protocol DeviceAudioCaptureDelegate: AnyObject {
     func deviceAudioDidOutput(samples: [Float], level: Float)
+    func deviceAudioDidOutput(chunk: TimedAudioChunk)
     func deviceAudioDidEncounterError(_ error: Error)
     func deviceAudioDidStopBySystem()
+}
+
+public extension DeviceAudioCaptureDelegate {
+    func deviceAudioDidOutput(chunk: TimedAudioChunk) {}
 }
 
 // MARK: - Device Audio Capture Manager
@@ -225,7 +261,7 @@ public final class DeviceAudioCaptureManager: NSObject, ObservableObject, @unche
         // Device Audio capture does not need an app-owned playback/record session.
         // Release any session left active by microphone or local playback before
         // invoking ScreenCaptureKit so LectureTranscriber cannot duck the source.
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        AudioSessionCoordinator.shared.activateDeviceAudioCapture()
         recordAudioSessionEvent("after releasing app audio session")
 
         #if targetEnvironment(simulator)
@@ -274,6 +310,7 @@ public final class DeviceAudioCaptureManager: NSObject, ObservableObject, @unche
         #endif
 
         recordAudioSessionEvent("capture stop")
+        AudioSessionCoordinator.shared.deactivateDeviceAudioCapture()
         activeStream = nil
         streamReceiver = nil
         isCapturing = false
@@ -425,6 +462,8 @@ private final class SCStreamAudioReceiver: NSObject, SCStreamOutput, SCStreamDel
         }
     }
 
+    private var sampleCounter: Int = 0
+
     private func processAudioBuffer(_ sampleBuffer: CMSampleBuffer) {
         guard let pcmBuffer = extractPCMBuffer(from: sampleBuffer) else { return }
         let inRate = pcmBuffer.format.sampleRate
@@ -440,9 +479,27 @@ private final class SCStreamAudioReceiver: NSObject, SCStreamOutput, SCStreamDel
         let power = samples.reduce(Float(0)) { $0 + $1 * $1 } / Float(max(1, length))
         let level = min(1, max(0, (20 * log10(max(sqrt(power), 0.00001)) + 60) / 60))
 
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        let ptsSeconds = pts.isValid ? CMTimeGetSeconds(pts) : 0.0
+
+        let startSample = sampleCounter
+        sampleCounter += length
+        let endSample = sampleCounter
+
+        let chunk = TimedAudioChunk(
+            samples: samples,
+            sampleRate: 16000,
+            channelCount: 1,
+            level: level,
+            pts: ptsSeconds,
+            startSampleIndex: startSample,
+            endSampleIndex: endSample
+        )
+
         Task { @MainActor [weak self] in
             guard let manager = self?.manager, manager.isCapturing else { return }
             manager.recordBuffer(sampleRate: inRate, channels: inChannels)
+            manager.delegate?.deviceAudioDidOutput(chunk: chunk)
             manager.delegate?.deviceAudioDidOutput(samples: samples, level: level)
         }
     }

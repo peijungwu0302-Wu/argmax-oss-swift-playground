@@ -248,8 +248,30 @@ final class LectureController: ObservableObject {
         guard usesAppleSpeech, value == "zh" || value == "en", !isBusy,
               !isSummarizing, pendingAppleLanguage == nil else { return }
         guard isRecording else { setLanguage(value); return }
-        guard RecognitionLanguage.primary(language) != value,
-              let id = activePartID, let index = session?.parts.firstIndex(where: { $0.id == id }) else { return }
+        guard RecognitionLanguage.primary(language) != value else { return }
+
+        if audioSource == .deviceAudio {
+            session?.language = value
+            pendingAppleLanguage = value
+            status = "正在切換為\(value == "en" ? "英文" : "中文")；裝置聲音持續接收，字幕稍後接續…"
+            persist()
+            Task { [weak self] in
+                guard let self, let current = self.session else { return }
+                do {
+                    try await self.appleSpeech?.finish()
+                    try await self.startAppleDeviceAudio(current: current)
+                    self.pendingAppleLanguage = nil
+                    self.loadedModel = "apple"
+                    self.status = L10n.tr("正在擷取裝置聲音 · Apple \(value == "en" ? "英文" : "中文")", "Capturing Device Audio · Apple \(value == "en" ? "English" : "Chinese")")
+                } catch {
+                    self.pendingAppleLanguage = nil
+                    self.fail(L10n.tr("切換語言失敗", "Failed to switch language"), error)
+                }
+            }
+            return
+        }
+
+        guard let id = activePartID, let index = session?.parts.firstIndex(where: { $0.id == id }) else { return }
         updateAudioCount()
         guard let part = session?.parts[index] else { return }
         // Fix the boundary at the button press. Capture continues into the same
@@ -1237,13 +1259,13 @@ final class LectureController: ObservableObject {
     private func archiveCompletedAudio() async {
         guard let store, let current = session, !isRecording else { return }
         for part in current.parts where part.processedSamples == part.sampleCount && part.sampleCount > 0 {
-            guard AudioStorage.bytesPerSample(fileName: part.fileName) != nil,
-                  let bitRate = part.recordingQuality?.bitRate else { continue }
+            guard AudioStorage.bytesPerSample(fileName: part.fileName) != nil else { continue }
+            let quality = part.recordingQuality ?? .standard
             let original = store.audioURL(current, part)
-            status = "正在壓縮保存錄音，請保持 App 開啟…"
+            status = L10n.tr("正在封裝保存錄音，請保持 App 開啟…", "Packaging audio, please keep app open…")
             do {
                 let archived = try await Task.detached(priority: .utility) {
-                    try PCMRecorder.archive(original, samples: part.sampleCount, bitRate: bitRate)
+                    try PCMRecorder.archive(source: original, samples: part.sampleCount, quality: quality)
                 }.value
                 guard var updated = session, updated.id == current.id,
                       let index = updated.parts.firstIndex(where: { $0.id == part.id }) else { return }
@@ -1252,7 +1274,7 @@ final class LectureController: ObservableObject {
                 session = updated; lastSaved = Date()
                 try FileManager.default.removeItem(at: original)
             } catch {
-                errorMessage = "錄音已保存，但壓縮尚未完成：\(error.localizedDescription)。原始聲音不會因壓縮失敗被刪除。"
+                errorMessage = "錄音已保存，但封裝尚未完成：\(error.localizedDescription)。原始聲音不會因封裝失敗被刪除。"
             }
         }
     }
@@ -1466,6 +1488,7 @@ final class LectureController: ObservableObject {
                     print("CaptionLatency final_transcript=\(Date().timeIntervalSince1970)")
                     LiveActivityCoordinator.shared.updateTranscript(original: corrected, translation: self.validTranslatedDraft)
                     CaptionFeed.shared.update(original: self.caption, translation: self.validTranslatedDraft)
+                    CaptionTimeline.shared.recordASRFinalized(throughPTS: offset + confirmed.end)
                 }
                 let through = result.finalizedThrough.isFinite ? result.finalizedThrough : result.end
                 let durable = from + Int(max(0, through) * 16000)
@@ -1548,6 +1571,7 @@ final class LectureController: ObservableObject {
         }
         persist()
         print("CaptionLatency translation_update=\(Date().timeIntervalSince1970)")
+        CaptionTimeline.shared.recordTranslationComplete(forLine: line.id)
         LiveActivityCoordinator.shared.updateTranscript(original: line.text, translation: text)
         CaptionFeed.shared.update(original: caption, translation: text)
     }
@@ -1617,6 +1641,7 @@ final class LectureController: ObservableObject {
                     print("CaptionLatency final_transcript=\(Date().timeIntervalSince1970)")
                     LiveActivityCoordinator.shared.updateTranscript(original: corrected, translation: self.validTranslatedDraft)
                     CaptionFeed.shared.update(original: self.caption, translation: self.validTranslatedDraft)
+                    CaptionTimeline.shared.recordASRFinalized(throughPTS: offset + confirmed.end)
                 }
                 if self.sessionStorageMode == .saveTranscript {
                     self.persist()
@@ -1709,13 +1734,21 @@ final class LectureController: ObservableObject {
 }
 
 extension LectureController: DeviceAudioCaptureDelegate {
+    func deviceAudioDidOutput(chunk: TimedAudioChunk) {
+        guard isRecording, audioSource == .deviceAudio else { return }
+        CaptionTimeline.shared.recordAudioCaptured(duration: chunk.duration, pts: chunk.pts)
+        deviceAudioDidOutput(samples: chunk.samples, level: chunk.level)
+    }
+
     func deviceAudioDidOutput(samples: [Float], level: Float) {
         guard isRecording, audioSource == .deviceAudio else { return }
         self.level = level
         self.deviceAudioDuration += Double(samples.count) / 16000
 
         if usesAppleSpeech {
+            let pts = self.deviceAudioDuration
             Task { [weak self] in
+                CaptionTimeline.shared.recordAudioFedToASR(samplesCount: samples.count, pts: pts)
                 try? await self?.appleSpeech?.append(samples)
             }
         }

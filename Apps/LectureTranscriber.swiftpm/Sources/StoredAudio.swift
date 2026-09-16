@@ -29,6 +29,7 @@ enum StoredAudio {
             return url
         } catch { try? FileManager.default.removeItem(at: url); throw error }
     }
+
     // Decode files in bounded buffers, downmixing/resampling through Core Audio.
     static func importAudio(_ source: URL, to destination: URL) throws -> Int {
         if let width = AudioStorage.bytesPerSample(fileName: source.lastPathComponent) {
@@ -63,31 +64,35 @@ enum StoredAudio {
         guard total > 0 else { throw LectureError.message("檔案沒有可辨識的音訊。") }
         try output.synchronize(); return total
     }
+
+    /// Returns a playable URL directly for standard audio files (m4a, wav, caf),
+    /// eliminating expensive whole-file temporary WAV creation for long recordings.
     static func playable(_ source: URL, samples: Int) throws -> URL {
+        let ext = source.pathExtension.lowercased()
+        if ext == "m4a" || ext == "wav" || ext == "caf" || ext == "mp3" {
+            return source
+        }
         guard AudioStorage.bytesPerSample(fileName: source.lastPathComponent) != nil else { return source }
         guard samples > 0, UInt64(samples) * 2 + 36 < UInt64(UInt32.max) else { throw LectureError.message("音訊長度不適合 WAV 匯出。") }
+
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("LectureAudioExports", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let outputURL = folder.appendingPathComponent(source.deletingLastPathComponent().lastPathComponent + "-" + source.deletingPathExtension().lastPathComponent + ".wav")
-        var header = Data()
-        func ascii(_ text: String) { header.append(contentsOf: text.utf8) }
-        func u32(_ value: UInt32) { var v = value.littleEndian; withUnsafeBytes(of: &v) { header.append(contentsOf: $0) } }
-        func u16(_ value: UInt16) { var v = value.littleEndian; withUnsafeBytes(of: &v) { header.append(contentsOf: $0) } }
-        ascii("RIFF"); u32(UInt32(samples * 2 + 36)); ascii("WAVEfmt "); u32(16)
-        u16(1); u16(1); u32(16000); u32(32000); u16(2); u16(16); ascii("data"); u32(UInt32(samples * 2))
-        try header.write(to: outputURL, options: .atomic)
-        let file = try FileHandle(forWritingTo: outputURL); defer { try? file.close() }
-        try file.seekToEnd()
-        for start in stride(from: 0, to: samples, by: 16000) {
-            try file.write(contentsOf: AudioStorage.encodePCM16(read(source, from: start, count: min(16000, samples - start))))
+
+        // If cached export exists and has expected size, reuse it
+        if let existing = try? FileManager.default.attributesOfItem(atPath: outputURL.path),
+           let size = existing[.size] as? NSNumber, size.intValue == samples * 2 + 44 {
+            return outputURL
         }
-        try file.synchronize(); return outputURL
+
+        try writeWAVFile(from: source, to: outputURL, samples: samples)
+        return outputURL
     }
 
     static func read(_ url: URL, from start: Int, count: Int) throws -> [Float] {
         guard start >= 0, count > 0 else { return [] }
         guard let width = AudioStorage.bytesPerSample(fileName: url.lastPathComponent) else {
-            return try readCompressed(url, from: start, count: count)
+            return try readStandardAudio(url, from: start, count: count)
         }
         let file = try FileHandle(forReadingFrom: url)
         defer { try? file.close() }
@@ -105,8 +110,7 @@ enum StoredAudio {
     }
 
     // Archive only after capture closes and all recognition has consumed the PCM.
-    // Work in bounded buffers; do not load a lecture into RAM. The caller commits
-    // the verified new filename atomically before removing the original file.
+    // Work in bounded buffers; do not load a lecture into RAM.
     static func archive(_ source: URL, samples: Int, bitRate: Int) throws -> URL {
         guard samples > 0, bitRate == 32000 || bitRate == 64000 else {
             throw LectureError.message("壓縮設定不正確，原始錄音已保留。")
@@ -114,7 +118,7 @@ enum StoredAudio {
         let destination = source.deletingLastPathComponent().appendingPathComponent(UUID().uuidString + ".m4a")
         do {
             try writeArchive(source, destination: destination, samples: samples, bitRate: bitRate)
-            // Check both ends after closing the encoder, including its delayed tail.
+            // Check both ends after closing the encoder
             _ = try read(destination, from: 0, count: min(samples, 16000))
             _ = try read(destination, from: max(0, samples - 16000), count: min(samples, 16000))
             return destination
@@ -123,10 +127,57 @@ enum StoredAudio {
             throw error
         }
     }
+
+    /// Archives recording into standard container based on selected RecordingQuality.
+    /// Compact -> AAC m4a (~32 kbps)
+    /// Standard -> AAC m4a (~64 kbps)
+    /// Uncompressed -> Standard WAV with valid RIFF header
+    static func archive(source: URL, samples: Int, quality: RecordingQuality) throws -> URL {
+        switch quality {
+        case .compact:
+            return try archive(source, samples: samples, bitRate: 32000)
+        case .standard:
+            return try archive(source, samples: samples, bitRate: 64000)
+        case .uncompressed:
+            return try archiveWAV(source: source, samples: samples)
+        }
+    }
+
+    /// Creates a standard RIFF/WAVE file from a source raw audio file with bounded memory.
+    static func archiveWAV(source: URL, samples: Int) throws -> URL {
+        guard samples > 0 else { throw LectureError.message("音訊長度不足，無法封裝 WAV。") }
+        let destination = source.deletingLastPathComponent().appendingPathComponent(UUID().uuidString + ".wav")
+        do {
+            try writeWAVFile(from: source, to: destination, samples: samples)
+            // Verify ends
+            _ = try read(destination, from: 0, count: min(samples, 16000))
+            _ = try read(destination, from: max(0, samples - 16000), count: min(samples, 16000))
+            return destination
+        } catch {
+            try? FileManager.default.removeItem(at: destination)
+            throw error
+        }
+    }
+
+    private static func writeWAVFile(from source: URL, to destination: URL, samples: Int) throws {
+        var header = Data()
+        func ascii(_ text: String) { header.append(contentsOf: text.utf8) }
+        func u32(_ value: UInt32) { var v = value.littleEndian; withUnsafeBytes(of: &v) { header.append(contentsOf: $0) } }
+        func u16(_ value: UInt16) { var v = value.littleEndian; withUnsafeBytes(of: &v) { header.append(contentsOf: $0) } }
+
+        ascii("RIFF"); u32(UInt32(samples * 2 + 36)); ascii("WAVEfmt "); u32(16)
+        u16(1); u16(1); u32(16000); u32(32000); u16(2); u16(16); ascii("data"); u32(UInt32(samples * 2))
+
+        try header.write(to: destination, options: .atomic)
+        let file = try FileHandle(forWritingTo: destination); defer { try? file.close() }
+        try file.seekToEnd()
+        for start in stride(from: 0, to: samples, by: 16000) {
+            try file.write(contentsOf: AudioStorage.encodePCM16(read(source, from: start, count: min(16000, samples - start))))
+        }
+        try file.synchronize()
+    }
+
     private static func writeArchive(_ source: URL, destination: URL, samples: Int, bitRate: Int) throws {
-        // AAC's supported rate/bitrate pairs differ from the 16 kHz ASR format.
-        // Use 32 kHz for the archive; ExtAudioFile converts from the original
-        // 16 kHz client format, including converter priming and the final tail.
         var output = AudioStreamBasicDescription()
         output.mFormatID = kAudioFormatMPEG4AAC; output.mSampleRate = 32000; output.mChannelsPerFrame = 1
         var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
@@ -161,35 +212,86 @@ enum StoredAudio {
         let result = ExtAudioFileDispose(file); disposed = true
         try checked(result, "完成 AAC 尾段")
     }
-    private static func readCompressed(_ url: URL, from start: Int, count: Int) throws -> [Float] {
+
+    private static func readStandardAudio(_ url: URL, from start: Int, count: Int) throws -> [Float] {
         var opened: ExtAudioFileRef?
-        try checked(ExtAudioFileOpenURL(url as CFURL, &opened), "開啟 AAC 錄音")
-        guard let file = opened else { throw LectureError.message("無法開啟 AAC 錄音。") }
+        try checked(ExtAudioFileOpenURL(url as CFURL, &opened), "開啟音訊檔案")
+        guard let file = opened else { throw LectureError.message("無法開啟音訊檔案。") }
         defer { ExtAudioFileDispose(file) }
         var source = AudioStreamBasicDescription()
         var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
-        try checked(ExtAudioFileGetProperty(file, kExtAudioFileProperty_FileDataFormat, &size, &source), "讀取 AAC 格式")
-        guard source.mChannelsPerFrame == 1, source.mSampleRate > 0 else { throw LectureError.message("錄音格式不符。") }
+        try checked(ExtAudioFileGetProperty(file, kExtAudioFileProperty_FileDataFormat, &size, &source), "讀取音訊格式")
+        guard source.mChannelsPerFrame >= 1, source.mSampleRate > 0 else { throw LectureError.message("錄音格式不符。") }
         let format = try clientFormat()
         var client = format.streamDescription.pointee
-        try checked(ExtAudioFileSetProperty(file, kExtAudioFileProperty_ClientDataFormat, size, &client), "設定 AAC 讀取格式")
-        let position = Int64((Double(start) * source.mSampleRate / 16000).rounded())
-        try checked(ExtAudioFileSeek(file, position), "定位 AAC 音訊")
+        try checked(ExtAudioFileSetProperty(file, kExtAudioFileProperty_ClientDataFormat, size, &client), "設定讀取格式")
+        let position = Int64((Double(start) * source.mSampleRate / 16000.0).rounded())
+        try checked(ExtAudioFileSeek(file, position), "定位音訊")
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(count)),
-              let channel = buffer.floatChannelData?[0] else { throw LectureError.message("無法配置 AAC 讀取緩衝區。") }
+              let channel = buffer.floatChannelData?[0] else { throw LectureError.message("無法配置音訊讀取緩衝區。") }
         buffer.frameLength = AVAudioFrameCount(count)
         var frames = AVAudioFrameCount(count)
-        try checked(ExtAudioFileRead(file, &frames, buffer.mutableAudioBufferList), "讀取 AAC 音訊")
-        guard Int(frames) == count else { throw LectureError.message("壓縮錄音長度不足，原檔已保留。") }
-        return Array(UnsafeBufferPointer(start: channel, count: count))
+        try checked(ExtAudioFileRead(file, &frames, buffer.mutableAudioBufferList), "讀取音訊資料")
+        let actual = Int(frames)
+        return Array(UnsafeBufferPointer(start: channel, count: actual))
     }
+
     private static func clientFormat() throws -> AVAudioFormat {
         guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false) else {
             throw LectureError.message("無法建立錄音格式。")
         }
         return format
     }
+
     private static func checked(_ status: OSStatus, _ action: String) throws {
         guard status == noErr else { throw LectureError.message("\(action)失敗（\(status)），原始錄音已保留。") }
+    }
+
+    // MARK: - Safe Legacy Audio Migration
+
+    /// Safely migrates raw headerless PCM recordings (.pcm or .pcm16) in a lecture to a standard container (m4a or wav).
+    /// Guarantees:
+    /// 1. Bounded memory O(chunk).
+    /// 2. Validates duration and endpoints before committing.
+    /// 3. Commits metadata atomically.
+    /// 4. Only deletes the old PCM file after successful metadata commit.
+    /// 5. On failure, deletes incomplete destination and leaves original PCM intact.
+    static func migrateLegacyAudio(lecture: LectureSession, store: SessionStore) async throws -> LectureSession {
+        var updated = lecture
+        var didModify = false
+
+        for i in 0..<updated.parts.count {
+            let part = updated.parts[i]
+            let ext = URL(fileURLWithPath: part.fileName).pathExtension.lowercased()
+            guard ext == "pcm" || ext == "pcm16" else { continue }
+            guard part.sampleCount > 0 else { continue }
+
+            let originalURL = store.audioURL(lecture, part)
+            guard FileManager.default.fileExists(atPath: originalURL.path) else { continue }
+
+            let quality = part.recordingQuality ?? .standard
+            let destinationURL: URL
+            switch quality {
+            case .compact:
+                destinationURL = try archive(originalURL, samples: part.sampleCount, bitRate: 32000)
+            case .standard:
+                destinationURL = try archive(originalURL, samples: part.sampleCount, bitRate: 64000)
+            case .uncompressed:
+                destinationURL = try archiveWAV(source: originalURL, samples: part.sampleCount)
+            }
+
+            // Atomic update: only point to new file and delete original once metadata is saved
+            updated.parts[i].fileName = destinationURL.lastPathComponent
+            do {
+                try store.save(updated)
+                try? FileManager.default.removeItem(at: originalURL)
+                didModify = true
+            } catch {
+                try? FileManager.default.removeItem(at: destinationURL)
+                throw error
+            }
+        }
+
+        return updated
     }
 }

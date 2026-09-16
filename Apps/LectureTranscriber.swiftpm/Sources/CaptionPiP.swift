@@ -48,12 +48,23 @@ enum PiPAspectRatio: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+public enum PiPLifecycleState: String, Sendable, Codable, Equatable {
+    case idle
+    case preparing
+    case ready
+    case startRequested
+    case starting
+    case active
+    case failedRecoverable
+}
+
 @MainActor
 final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureControllerDelegate, AVPictureInPictureSampleBufferPlaybackDelegate {
     @Published private(set) var active = false
     @Published private(set) var possible = false
     @Published private(set) var paused = false
     @Published private(set) var status = ""
+    @Published private(set) var lifecycleState: PiPLifecycleState = .idle
     @Published var displayMode: PiPDisplayMode = .bilingual {
         didSet {
             PiPPresentationSettings.shared.captionMode = displayMode
@@ -185,31 +196,38 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
         }
     }
 
+    private var pendingRecording: Bool = false
+    private var pendingRequiresAudioSession: Bool = true
+
     func start(recording: Bool, requiresAudioSession: Bool = true) {
+        pendingRecording = recording
+        pendingRequiresAudioSession = requiresAudioSession
         do {
-            if !requiresAudioSession { DeviceAudioCaptureManager.shared.recordAudioSessionEvent("PiP start") }
-            if requiresAudioSession {
-                let audio = AVAudioSession.sharedInstance()
-                try audio.setCategory(
-                    recording ? .playAndRecord : .playback,
-                    mode: recording ? .measurement : .default,
-                    options: recording ? [.defaultToSpeaker, .mixWithOthers, .allowBluetooth] : [.mixWithOthers]
-                )
-                try audio.setActive(true)
+            if !requiresAudioSession {
+                DeviceAudioCaptureManager.shared.recordAudioSessionEvent("PiP start")
+            } else {
+                AudioSessionCoordinator.shared.prepareForPiP(isDeviceAudio: false)
             }
             render(force: true)
             guard let pip, pip.isPictureInPicturePossible else {
-                status = L10n.tr("子母畫面尚未就緒，請稍候再按「開啟子母字幕」。", "PiP is not ready yet. Try Open PiP Captions again shortly.")
+                lifecycleState = .startRequested
+                status = L10n.tr("子母畫面尚未就緒，已排程就緒後自動開啟。", "PiP is not ready yet; will start as soon as display is ready.")
+                startAutomaticallyWhenReady(recording: recording, requiresAudioSession: requiresAudioSession)
                 return
             }
+            lifecycleState = .starting
             pip.startPictureInPicture()
         } catch {
+            lifecycleState = .failedRecoverable
             status = L10n.tr("子母畫面啟動失敗：", "Failed to start PiP: ") + error.localizedDescription
         }
     }
 
-    func startAutomaticallyWhenReady(recording: Bool, requiresAudioSession: Bool = true, maximumAttempts: Int = 5) {
-        guard PiPPresentationSettings.shared.autoStart, !active else { return }
+    func startAutomaticallyWhenReady(recording: Bool, requiresAudioSession: Bool = true, maximumAttempts: Int = 15) {
+        guard !active else { return }
+        lifecycleState = .startRequested
+        pendingRecording = recording
+        pendingRequiresAudioSession = requiresAudioSession
         autoStartTask?.cancel()
         autoStartTask = Task { [weak self] in
             guard let self else { return }
@@ -223,7 +241,10 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
                     try? await Task.sleep(nanoseconds: 350_000_000)
                 }
             }
-            self.status = L10n.tr("無法自動開啟；錄音仍持續，可按「開啟子母字幕」重試。", "Automatic PiP was unavailable. Recording continues; use Open PiP Captions to retry.")
+            if !self.active && self.lifecycleState == .startRequested {
+                self.lifecycleState = .failedRecoverable
+                self.status = L10n.tr("畫面就緒逾時；錄音仍持續，可按「開啟子母字幕」重試。", "PiP display readiness timed out. Audio continues; use Open PiP Captions to retry.")
+            }
         }
     }
 
@@ -316,64 +337,45 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
             lineSpacing: actualMetrics.lineSpacing * renderScale,
             maxLines: actualMetrics.maxLines
         )
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byWordWrapping
-        paragraph.alignment = settings.alignment.nsAlignment
-        paragraph.lineSpacing = metrics.lineSpacing
-
-        let horizontalPadding = metrics.horizontalPadding
-        let textWidth = CGFloat(width) - (horizontalPadding * 2)
-
+        var sampleOriginal = original
+        var sampleTranslated = translated
         if isSamplePreview {
-            original = "The system is asymptotically stable."
-            translated = "這個系統是漸近穩定的。"
+            sampleOriginal = "The system is asymptotically stable."
+            sampleTranslated = "這個系統是漸近穩定的。"
         }
-        switch displayMode {
-            case .chineseOnly:
-                let textToDraw = translated.isEmpty ? original : translated
-                let rect = captionRect(blockHeight: metrics.translationFont * CGFloat(metrics.maxLines + 1), canvasHeight: CGFloat(height), metrics: metrics, position: settings.verticalPosition)
-                (textToDraw as NSString).draw(in: rect, withAttributes: [
-                    .font: UIFont.systemFont(ofSize: metrics.translationFont, weight: .semibold),
-                    .foregroundColor: UIColor(red: 1.0, green: 0.86, blue: 0.35, alpha: 1.0),
-                    .paragraphStyle: paragraph
-                ])
 
-            case .originalOnly:
-                let rect = captionRect(blockHeight: metrics.originalFont * CGFloat(metrics.maxLines + 1), canvasHeight: CGFloat(height), metrics: metrics, position: settings.verticalPosition)
-                (original as NSString).draw(in: rect, withAttributes: [
-                    .font: UIFont.systemFont(ofSize: metrics.originalFont, weight: .medium),
-                    .foregroundColor: UIColor.white,
-                    .paragraphStyle: paragraph
-                ])
+        let presentationModel = CaptionPresentationModel(
+            originalText: sampleOriginal,
+            translatedText: sampleTranslated,
+            displayMode: displayMode,
+            fontScale: display.pipOriginalScale,
+            translationFontScale: display.pipTranslationScale,
+            aspectRatio: aspectRatio,
+            alignment: settings.alignment.nsAlignment,
+            verticalPosition: settings.verticalPosition,
+            isSamplePreview: isSamplePreview
+        )
 
-            case .bilingual:
-                if translated.isEmpty {
-                    let rect = captionRect(blockHeight: metrics.originalFont * CGFloat(metrics.maxLines + 1), canvasHeight: CGFloat(height), metrics: metrics, position: settings.verticalPosition)
-                    (original as NSString).draw(in: rect, withAttributes: [
-                        .font: UIFont.systemFont(ofSize: metrics.originalFont, weight: .medium),
-                        .foregroundColor: UIColor.white,
-                        .paragraphStyle: paragraph
-                    ])
-                } else {
-                    let available = CGFloat(height) - metrics.verticalPadding * 2 - metrics.blockGap
-                    let origHeight = available * 0.46
-                    let transHeight = available * 0.54
-                    let totalHeight = origHeight + metrics.blockGap + transHeight
-                    let block = captionRect(blockHeight: totalHeight, canvasHeight: CGFloat(height), metrics: metrics, position: settings.verticalPosition)
-                    let origY = block.minY
-                    let transY = origY + origHeight + metrics.blockGap
+        let measuredLayout = PiPCaptionLayoutEngine.shared.layout(
+            model: presentationModel,
+            canvasSize: CGSize(width: width, height: height),
+            metrics: metrics
+        )
 
-                    (original as NSString).draw(in: CGRect(x: horizontalPadding, y: origY, width: textWidth, height: origHeight), withAttributes: [
-                        .font: UIFont.systemFont(ofSize: metrics.originalFont, weight: .regular),
-                        .foregroundColor: UIColor(white: 0.92, alpha: 1.0),
-                        .paragraphStyle: paragraph
-                    ])
-                    (translated as NSString).draw(in: CGRect(x: horizontalPadding, y: transY, width: textWidth, height: transHeight), withAttributes: [
-                        .font: UIFont.systemFont(ofSize: metrics.translationFont, weight: .semibold),
-                        .foregroundColor: UIColor(red: 1.0, green: 0.86, blue: 0.35, alpha: 1.0),
-                        .paragraphStyle: paragraph
-                    ])
-                }
+        if let origRect = measuredLayout.originalRect, !measuredLayout.originalTextToDraw.isEmpty {
+            (measuredLayout.originalTextToDraw as NSString).draw(in: origRect, withAttributes: [
+                .font: measuredLayout.originalFont,
+                .foregroundColor: measuredLayout.originalColor,
+                .paragraphStyle: measuredLayout.paragraphStyle
+            ])
+        }
+
+        if let transRect = measuredLayout.translationRect, !measuredLayout.translationTextToDraw.isEmpty {
+            (measuredLayout.translationTextToDraw as NSString).draw(in: transRect, withAttributes: [
+                .font: measuredLayout.translationFont,
+                .foregroundColor: measuredLayout.translationColor,
+                .paragraphStyle: measuredLayout.paragraphStyle
+            ])
         }
         UIGraphicsPopContext()
 
@@ -426,6 +428,7 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
 
         if layer.isReadyForMoreMediaData {
             layer.enqueue(sample)
+            CaptionTimeline.shared.recordCaptionDisplayed(at: CACurrentMediaTime())
             lastRenderedOriginal = original
             lastRenderedTranslation = translated
             lastRenderedMode = displayMode
@@ -462,20 +465,26 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
     // MARK: - AVPictureInPictureControllerDelegate
     func pictureInPictureControllerDidStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
         active = true
+        lifecycleState = .active
         status = L10n.tr("子母畫面字幕已啟動", "PiP captions active")
+        AudioSessionCoordinator.shared.beginPiPPresentation()
         render(force: true)
     }
 
     func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
         active = false
         paused = false
+        lifecycleState = .idle
         status = L10n.tr("子母畫面字幕已結束", "PiP captions stopped")
+        AudioSessionCoordinator.shared.endPiPPresentation()
     }
 
     nonisolated func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) {
         Task { @MainActor in
             self.active = false
+            self.lifecycleState = .failedRecoverable(error.localizedDescription)
             self.status = error.localizedDescription
+            AudioSessionCoordinator.shared.endPiPPresentation()
             print("CaptionPiP failedToStart: \(error)")
         }
     }

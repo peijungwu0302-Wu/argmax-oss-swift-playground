@@ -53,8 +53,7 @@ struct AudioLibraryView: View {
             let playable = try await Task.detached(priority: .userInitiated) { try StoredAudio.playable(url, samples: part.sampleCount) }.value
             if share { shared = SharedFile(url: playable) }
             else {
-                try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-                try AVAudioSession.sharedInstance().setActive(true)
+                try AudioSessionCoordinator.shared.activatePlayback()
                 let next = try AVAudioPlayer(contentsOf: playable)
                 guard next.play() else { throw LectureError.message("無法播放這段音訊。") }
                 player = next; playing = part.id

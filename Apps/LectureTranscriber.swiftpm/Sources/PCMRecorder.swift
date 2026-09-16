@@ -10,16 +10,32 @@ final class PCMRecorder: @unchecked Sendable {
     private var level: Float = 0
     private var failure: String?
     private var accepting = false
-    struct Snapshot { var samples: Int; var level: Float; var error: String? }
+    private let dynamicsProcessor = SpeechDynamicsProcessor(sampleRate: 16000)
+
+    /// Optional real-time callback delivering pristine 16 kHz mono Float32 audio to ASR router
+    var onASRAudio: (@Sendable ([Float]) -> Void)?
+
+    struct Snapshot: Sendable {
+        var samples: Int
+        var level: Float
+        var error: String?
+        var dynamics: AudioDynamicsDiagnostics
+    }
+
     func snapshot() -> Snapshot {
         lock.lock(); defer { lock.unlock() }
-        return Snapshot(samples: count, level: level, error: failure)
+        return Snapshot(
+            samples: count,
+            level: level,
+            error: failure,
+            dynamics: dynamicsProcessor.currentDiagnostics()
+        )
     }
+
     func start(at url: URL, allowsPlayback: Bool = false) throws {
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(allowsPlayback ? .playAndRecord : .record, mode: .measurement,
-                                options: allowsPlayback ? [.defaultToSpeaker, .mixWithOthers] : [])
-        try session.setActive(true)
+        // Centralized AudioSession policy
+        try AudioSessionCoordinator.shared.activateMicrophoneCapture(allowsPlayback: allowsPlayback)
+
         let engine = AVAudioEngine()
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
@@ -37,6 +53,7 @@ final class PCMRecorder: @unchecked Sendable {
         writer = file; count = 0; level = 0; failure = nil; accepting = true
         lock.unlock()
         self.engine = engine
+
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
             guard let self else { return }
             self.lock.lock(); defer { self.lock.unlock() }
@@ -56,16 +73,27 @@ final class PCMRecorder: @unchecked Sendable {
             }
             guard let channel = output.floatChannelData?[0], output.frameLength > 0 else { return }
             let length = Int(output.frameLength)
+            let asrSamples = Array(UnsafeBufferPointer(start: channel, count: length))
+
+            // 1. Deliver pristine uncompressed PCM to ASR branch
+            self.onASRAudio?(asrSamples)
+
+            // 2. Process through listener-oriented speech dynamics processor (Gain + Compressor + Peak Limiter)
+            let recordingSamples = self.dynamicsProcessor.process(asrSamples)
+
             do {
-                try writer.write(contentsOf: AudioStorage.encodePCM16(Array(UnsafeBufferPointer(start: channel, count: length))))
+                try writer.write(contentsOf: AudioStorage.encodePCM16(recordingSamples))
                 self.count += length
-                let power = UnsafeBufferPointer(start: channel, count: length).reduce(Float(0)) { $0 + $1 * $1 } / Float(length)
+                let power = recordingSamples.reduce(Float(0)) { $0 + $1 * $1 } / Float(length)
                 self.level = min(1, max(0, (20 * log10(max(sqrt(power), 0.00001)) + 60) / 60))
-            } catch { self.failure = "錄音無法寫入磁碟：\(error.localizedDescription)" }
+            } catch {
+                self.failure = "錄音無法寫入磁碟：\(error.localizedDescription)"
+            }
         }
         do { engine.prepare(); try engine.start() }
         catch { stop(); throw error }
     }
+
     func stop() {
         if let engine {
             engine.inputNode.removeTap(onBus: 0)
@@ -78,12 +106,19 @@ final class PCMRecorder: @unchecked Sendable {
         catch { failure = "錄音儲存失敗：\(error.localizedDescription)" }
         writer = nil
         lock.unlock()
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+
+        AudioSessionCoordinator.shared.deactivateMicrophoneCapture()
     }
+
     static func read(_ url: URL, from start: Int, count: Int) throws -> [Float] {
         try StoredAudio.read(url, from: start, count: count)
     }
+
     static func archive(_ source: URL, samples: Int, bitRate: Int) throws -> URL {
         try StoredAudio.archive(source, samples: samples, bitRate: bitRate)
+    }
+
+    static func archive(source: URL, samples: Int, quality: RecordingQuality) throws -> URL {
+        try StoredAudio.archive(source: source, samples: samples, quality: quality)
     }
 }

@@ -59,6 +59,14 @@ final class LectureAudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegat
     func seek(to time: Double) {
         let clamped = max(0, min(duration, time))
         currentTime = clamped
+        if let player, let session, activePartIndex < session.parts.count {
+            let part = session.parts[activePartIndex]
+            let partDur = Double(part.sampleCount) / 16000.0
+            if clamped >= part.offset && clamped < part.offset + partDur {
+                player.currentTime = max(0, clamped - part.offset)
+                return
+            }
+        }
         prepareAndPlay(at: clamped, autoPlay: isPlaying)
     }
 
@@ -88,8 +96,7 @@ final class LectureAudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegat
             do {
                 let url = store.audioURL(session, part)
                 let playable = try StoredAudio.playable(url, samples: part.sampleCount)
-                try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-                try AVAudioSession.sharedInstance().setActive(true)
+                try AudioSessionCoordinator.shared.activatePlayback()
 
                 let nextPlayer = try AVAudioPlayer(contentsOf: playable)
                 nextPlayer.enableRate = true
@@ -173,12 +180,20 @@ struct LectureDetailView: View {
     @State private var editingLine: TranscriptLine?
     @State private var bookmarkingTime: Double?
     @State private var bookmarkNote = ""
+    @State private var isMigratingAudio = false
     @Environment(\.dismiss) private var dismiss
 
     private let paper = Color(red: 0.97, green: 0.95, blue: 0.90)
     private let ink = Color(red: 0.20, green: 0.19, blue: 0.16)
     private let gold = Color(red: 0.59, green: 0.40, blue: 0.08)
     private let red = Color(red: 0.69, green: 0.18, blue: 0.14)
+
+    private var hasLegacyAudio: Bool {
+        currentSession.parts.contains {
+            let ext = URL(fileURLWithPath: $0.fileName).pathExtension.lowercased()
+            return ext == "pcm" || ext == "pcm16"
+        }
+    }
 
     private var currentSession: LectureSession {
         controller.history.first(where: { $0.id == session.id }) ?? session
@@ -196,6 +211,10 @@ struct LectureDetailView: View {
             ScrollViewReader { scrollProxy in
                 VStack(spacing: 0) {
                     headerSection
+                    if hasLegacyAudio {
+                        Divider()
+                        legacyAudioBanner
+                    }
                     Divider()
                     playerSection
                     Divider()
@@ -702,6 +721,52 @@ struct LectureDetailView: View {
             sharedFile = SharedFile(url: playable)
         } catch {
             controller.errorMessage = "準備音訊分享失敗：\(error.localizedDescription)"
+        }
+    }
+
+    private var legacyAudioBanner: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "sparkles")
+                .foregroundColor(gold)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(L10n.tr("舊版錄音檔", "Legacy Audio Format"))
+                    .font(.caption.bold())
+                    .foregroundColor(ink)
+                Text(L10n.tr("可最佳化為標準音訊（M4A/WAV），大幅提升播放流暢度與分享速度。", "Optimize to standard audio (M4A/WAV) for faster playback and sharing."))
+                    .font(.caption2)
+                    .foregroundColor(ink.opacity(0.7))
+            }
+            Spacer()
+            if isMigratingAudio {
+                ProgressView()
+                    .scaleEffect(0.8)
+            } else {
+                Button(L10n.tr("最佳化", "Optimize")) {
+                    Task { await migrateLegacyAudio() }
+                }
+                .font(.caption.bold())
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(gold.opacity(0.2))
+                .foregroundColor(gold)
+                .clipShape(Capsule())
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(gold.opacity(0.08))
+    }
+
+    private func migrateLegacyAudio() async {
+        guard let store = controller.store else { return }
+        isMigratingAudio = true
+        defer { isMigratingAudio = false }
+        do {
+            let updated = try await StoredAudio.migrateLegacyAudio(lecture: currentSession, store: store)
+            controller.history = controller.history.map { $0.id == updated.id ? updated : $0 }
+            player.setup(session: updated, store: store)
+        } catch {
+            controller.errorMessage = "最佳化錄音失敗：\(error.localizedDescription)"
         }
     }
 }

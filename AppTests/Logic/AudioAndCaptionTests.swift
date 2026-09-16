@@ -755,5 +755,181 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertTrue(DeviceAudioSavePreference.askEveryTime.requiresDecision)
         XCTAssertFalse(DeviceAudioSavePreference.alwaysSave.requiresDecision)
     }
+
+    // MARK: - v1.9.1 Architecture Tests
+
+    func testSpeechDynamicsProcessorAdaptiveGainAndPeakLimiter() {
+        var processor = SpeechDynamicsProcessor()
+
+        // 1. Test quiet signal boost
+        let quietSamples: [Float] = (0..<1600).map { _ in 0.005 }
+        let (boosted, diag1) = processor.processWithDiagnostics(quietSamples)
+        XCTAssertEqual(boosted.count, quietSamples.count)
+        XCTAssertGreaterThan(diag1.postPeakDBFS, diag1.prePeakDBFS, "Quiet speech must be amplified")
+        XCTAssertGreaterThan(diag1.effectiveGainDB, 0.0)
+
+        // 2. Test peak limiter: loud input must NEVER exceed ceiling (-0.3 dBFS / ~0.965)
+        let loudSamples: [Float] = (0..<1600).map { i in (i % 2 == 0) ? 1.5 : -1.5 }
+        let (limited, diag2) = processor.processWithDiagnostics(loudSamples)
+        for sample in limited {
+            XCTAssertLessThanOrEqual(sample, 0.966, "Sample must not exceed peak limiter ceiling")
+            XCTAssertGreaterThanOrEqual(sample, -0.966, "Sample must not fall below peak limiter negative ceiling")
+        }
+        XCTAssertLessThanOrEqual(diag2.postPeakDBFS, -0.29)
+    }
+
+    func testStoredAudioPlayableDirectContainerAndWAVArchiving() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        // Test WAV archiving and direct playback
+        let wavFile = folder.appendingPathComponent("test.wav")
+        let sampleCount = 16000
+        let samples: [Float] = (0..<sampleCount).map { i in sin(Float(i) * 0.05) * 0.3 }
+        let archivedWAV = try StoredAudio.archiveWAV(source: wavFile, samples: samples)
+        XCTAssertEqual(archivedWAV.pathExtension.lowercased(), "wav")
+
+        // Read WAV header validation
+        let data = try Data(contentsOf: archivedWAV)
+        XCTAssertGreaterThan(data.count, 44)
+        let riffHeader = String(data: data.prefix(4), encoding: .ascii)
+        XCTAssertEqual(riffHeader, "RIFF")
+
+        // Playable should return the standard container directly (no temporary copy!)
+        let playableURL = try StoredAudio.playable(archivedWAV, samples: sampleCount)
+        XCTAssertEqual(playableURL.path, archivedWAV.path, "Standard audio container must be played directly without temporary conversion")
+    }
+
+    func testCaptionTimelineWatermarksAndSyncState() {
+        let timeline = CaptionTimeline()
+        timeline.reset()
+
+        // Watermarks initially zero
+        XCTAssertEqual(timeline.audioCapturedPTS, 0)
+        XCTAssertEqual(timeline.audioFedToASRPTS, 0)
+        XCTAssertEqual(timeline.asrFinalizedPTS, 0)
+
+        // Record progression
+        timeline.recordAudioCaptured(duration: 5.0, pts: 5.0)
+        XCTAssertEqual(timeline.audioCapturedPTS, 5.0)
+
+        timeline.recordAudioFedToASR(samplesCount: 80_000, pts: 5.0)
+        XCTAssertEqual(timeline.audioFedToASRPTS, 5.0)
+
+        timeline.recordASRFinalized(throughPTS: 4.8)
+        XCTAssertEqual(timeline.asrFinalizedPTS, 4.8)
+
+        let snapshot = timeline.snapshot()
+        XCTAssertEqual(snapshot.syncState, .normal)
+        XCTAssertEqual(snapshot.captureToASRLag, 0.0, accuracy: 0.01)
+    }
+
+    func testPiPCaptionLayoutEngineRollingWindow() {
+        let engine = PiPCaptionLayoutEngine()
+        let metrics = PiPLayoutMetrics(
+            horizontalPadding: 12,
+            verticalPadding: 8,
+            originalFont: 16,
+            translationFont: 14,
+            blockGap: 6,
+            lineSpacing: 4,
+            maxLines: 2
+        )
+
+        // Test very long sentence that exceeds max lines
+        let longSentence = "This is a very long transcription segment produced by the lecturer during the advanced control systems course discussing state space models and Lyapunov stability criteria."
+        let model = CaptionPresentationModel(
+            originalText: longSentence,
+            translatedText: "",
+            displayMode: .originalOnly,
+            aspectRatio: .bar,
+            alignment: .left,
+            verticalPosition: .center
+        )
+
+        let layout = engine.layout(model: model, canvasSize: CGSize(width: 400, height: 80), metrics: metrics)
+        XCTAssertNotNil(layout.originalRect)
+        XCTAssertFalse(layout.originalTextToDraw.isEmpty)
+        // Rolling tail window ensures the newest part of the sentence remains visible
+        XCTAssertTrue(layout.originalTextToDraw.contains("stability criteria") || layout.originalTextToDraw.contains("Lyapunov"))
+
+        // Rect must fit within available canvas height
+        if let rect = layout.originalRect {
+            XCTAssertLessThanOrEqual(rect.maxY, 80)
+            XCTAssertGreaterThanOrEqual(rect.minY, 0)
+        }
+    }
+
+    func testPiPCaptionLayoutEngineBilingualAllocation() {
+        let engine = PiPCaptionLayoutEngine()
+        let metrics = PiPLayoutMetrics(
+            horizontalPadding: 12,
+            verticalPadding: 8,
+            originalFont: 14,
+            translationFont: 14,
+            blockGap: 4,
+            lineSpacing: 3,
+            maxLines: 3
+        )
+
+        let model = CaptionPresentationModel(
+            originalText: "The system is asymptotically stable.",
+            translatedText: "這個系統是漸近穩定的。",
+            displayMode: .bilingual,
+            aspectRatio: .bar,
+            alignment: .left,
+            verticalPosition: .center
+        )
+
+        let layout = engine.layout(model: model, canvasSize: CGSize(width: 400, height: 100), metrics: metrics)
+        XCTAssertNotNil(layout.originalRect)
+        XCTAssertNotNil(layout.translationRect)
+        XCTAssertEqual(layout.originalTextToDraw, "The system is asymptotically stable.")
+        XCTAssertEqual(layout.translationTextToDraw, "這個系統是漸近穩定的。")
+
+        if let orig = layout.originalRect, let trans = layout.translationRect {
+            XCTAssertLessThan(orig.maxY, trans.minY + 5, "Original text and translated text must not overlap")
+            XCTAssertLessThanOrEqual(trans.maxY, 100, "Translated text must not be clipped past canvas bottom")
+        }
+    }
+
+    @MainActor
+    func testModelCenterManifestAndCapabilities() {
+        let center = ModelCenter.shared
+        XCTAssertFalse(center.manifest.isEmpty)
+
+        // Verify Apple Speech item
+        let apple = center.manifest.first(where: { $0.id == "apple" })
+        XCTAssertNotNil(apple)
+        XCTAssertTrue(apple?.isBuiltIn == true)
+        XCTAssertTrue(apple?.supportsVocabularyBias == true)
+
+        // Verify SenseVoice Small item
+        let senseVoice = center.manifest.first(where: { $0.id == "sensevoice-small" })
+        XCTAssertNotNil(senseVoice)
+        XCTAssertEqual(senseVoice?.engineType, .sensevoice)
+
+        // Verify WhisperKit Turbo item
+        let whisperTurbo = center.manifest.first(where: { $0.id == "openai_whisper-large-v3-v20240930_626MB" })
+        XCTAssertNotNil(whisperTurbo)
+        XCTAssertEqual(whisperTurbo?.engineType, .whisper)
+        XCTAssertTrue(whisperTurbo?.supportsVocabularyBias == true)
+
+        // Verify Zipformer item
+        let zipformer = center.manifest.first(where: { $0.id == "zipformer-bilingual" })
+        XCTAssertNotNil(zipformer)
+        XCTAssertEqual(zipformer?.engineType, .zipformer)
+
+        // Verify Paraformer item
+        let paraformer = center.manifest.first(where: { $0.id == "paraformer-bilingual" })
+        XCTAssertNotNil(paraformer)
+        XCTAssertEqual(paraformer?.engineType, .paraformer)
+
+        // Verify Qwen3-ASR unsupported status on standard mobile profile
+        let qwen3 = center.manifest.first(where: { $0.id == "qwen3-asr" })
+        XCTAssertNotNil(qwen3)
+        XCTAssertFalse(qwen3?.isSupportedOnCurrentDevice == true)
+    }
 }
 
