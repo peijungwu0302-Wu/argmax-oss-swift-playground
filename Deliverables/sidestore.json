@@ -17,7 +17,7 @@
           "date": "2026-09-16T00:00:00Z",
           "localizedDescription": "改善裝置聲音診斷與儲存流程、Live Activity 暫停計時與低延遲字幕、獨立字幕字級與彈性 PiP 比例、ASR 熱切換、中文定稿分段及翻譯自動恢復。",
           "downloadURL": "https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/download/v1.9.0/LectureTranscriber-v1.9.0.ipa",
-          "size": 0,
+          "size": 4328303,
           "minOSVersion": "16.1"
         },
         {
