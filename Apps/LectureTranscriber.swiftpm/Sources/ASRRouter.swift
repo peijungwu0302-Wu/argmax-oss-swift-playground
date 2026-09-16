@@ -220,6 +220,7 @@ public final class ASRRouter: ObservableObject {
                 successful: false,
                 note: error.localizedDescription
             )
+            self.lastSwitchEvent = failureEvent
             self.switchHistory.append(failureEvent)
             throw error
         }

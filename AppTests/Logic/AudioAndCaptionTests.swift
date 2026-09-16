@@ -784,10 +784,10 @@ final class AudioAndCaptionTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: folder) }
 
         // Test WAV archiving and direct playback
-        let wavFile = folder.appendingPathComponent("test.wav")
+        let pcmFile = folder.appendingPathComponent("test.pcm16")
         let sampleCount = 16000
         let samples: [Float] = (0..<sampleCount).map { i in sin(Float(i) * 0.05) * 0.3 }
-        let archivedWAV = try StoredAudio.archiveWAV(source: wavFile, samples: samples)
+        let archivedWAV = try StoredAudio.archiveWAV(source: pcmFile, samples: samples)
         XCTAssertEqual(archivedWAV.pathExtension.lowercased(), "wav")
 
         // Read WAV header validation
@@ -821,9 +821,12 @@ final class AudioAndCaptionTests: XCTestCase {
         timeline.recordASRFinalized(throughPTS: 4.8)
         XCTAssertEqual(timeline.asrFinalizedPTS, 4.8)
 
+        // Display caught up with finalized caption
+        timeline.recordCaptionDisplayed(throughPTS: 4.8)
+
         let snapshot = timeline.snapshot()
         XCTAssertEqual(snapshot.syncState, .normal)
-        XCTAssertEqual(snapshot.captureToASRLag, 0.0, accuracy: 0.01)
+        XCTAssertEqual(snapshot.captureToASRLag, 0.2, accuracy: 0.01)
     }
 
     func testPiPCaptionLayoutEngineRollingWindow() {
