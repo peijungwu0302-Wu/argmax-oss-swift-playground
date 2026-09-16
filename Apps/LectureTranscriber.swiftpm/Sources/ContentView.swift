@@ -512,7 +512,7 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func displayScaleControl(_ title: String, value: Binding<Double>) -> some View {
+    private func displayScaleControl(_ title: String, value: Binding<Double>, identifier: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(title)
@@ -523,6 +523,7 @@ struct ContentView: View {
                 Button(L10n.tr("重設", "Reset")) { value.wrappedValue = 1 }.font(.caption)
             }
             Slider(value: value, in: 0.3...3, step: 0.1)
+                .accessibilityIdentifier(identifier ?? "displayScale-\(title)")
         }
     }
 
@@ -702,7 +703,8 @@ struct ContentView: View {
                     VStack(alignment: .leading) {
                         displayScaleControl(L10n.tr("應用即時原文", "App Live Original"), value: $displaySettings.appOriginalScale)
                         displayScaleControl(L10n.tr("應用即時翻譯", "App Live Translation"), value: $displaySettings.appTranslationScale)
-                        displayScaleControl(L10n.tr("PiP 原文", "PiP Original"), value: $displaySettings.pipOriginalScale)
+                        displayScaleControl(L10n.tr("PiP 原文", "PiP Original"), value: $displaySettings.pipOriginalScale,
+                                            identifier: "pipFontScale")
                         displayScaleControl(L10n.tr("PiP 翻譯", "PiP Translation"), value: $displaySettings.pipTranslationScale)
                         displayScaleControl(L10n.tr("歷史／逐字稿", "History / Transcript"), value: $displaySettings.historyScale)
                     }
