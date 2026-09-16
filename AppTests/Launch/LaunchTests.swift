@@ -36,7 +36,19 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["字幕模式"].exists)
         XCTAssertTrue(app.buttons["openPiPCaptions"].exists)
         app.buttons["錄音設定"].tap()
+
         for _ in 0..<8 {
+            if app.descendants(matching: .any)["recordingQuality"].firstMatch.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(app.descendants(matching: .any)["recordingQuality"].firstMatch.exists,
+                      "Recording settings must expose storage quality")
+        for _ in 0..<10 {
+            if app.buttons["prepareSpeechResource"].isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(app.buttons["prepareSpeechResource"].waitForExistence(timeout: 5))
+        for _ in 0..<12 {
             if app.sliders["pipFontScale"].isHittable { break }
             app.swipeUp()
         }
@@ -48,18 +60,7 @@ final class LaunchTests: XCTestCase {
         }
         XCTAssertTrue(app.buttons["previewPiP"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["resetPiP"].exists)
-        for _ in 0..<10 {
-            if app.buttons["prepareSpeechResource"].isHittable { break }
-            app.swipeUp()
-        }
-        XCTAssertTrue(app.buttons["prepareSpeechResource"].waitForExistence(timeout: 5))
-        for _ in 0..<10 {
-            if app.descendants(matching: .any)["recordingQuality"].firstMatch.isHittable { break }
-            app.swipeUp()
-        }
-        XCTAssertTrue(app.descendants(matching: .any)["recordingQuality"].firstMatch.exists,
-                      "Recording settings must expose storage quality")
-        for _ in 0..<8 {
+        for _ in 0..<24 {
             if app.buttons["檢查更新"].isHittable { break }
             app.swipeUp()
         }
