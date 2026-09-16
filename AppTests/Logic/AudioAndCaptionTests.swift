@@ -917,19 +917,111 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertTrue(whisperTurbo?.supportsVocabularyBias == true)
 
         // Verify Zipformer item
+        // Verify Zipformer & Paraformer truthful unavailable status in v1.9.1
         let zipformer = center.manifest.first(where: { $0.id == "zipformer-bilingual" })
         XCTAssertNotNil(zipformer)
         XCTAssertEqual(zipformer?.engineType, .zipformer)
+        XCTAssertFalse(zipformer?.isSupportedOnCurrentDevice == true, "Zipformer must be unavailable in v1.9.1 without sherpa-onnx runtime")
+        XCTAssertFalse(center.isModelDownloaded("zipformer-bilingual"))
 
-        // Verify Paraformer item
         let paraformer = center.manifest.first(where: { $0.id == "paraformer-bilingual" })
         XCTAssertNotNil(paraformer)
         XCTAssertEqual(paraformer?.engineType, .paraformer)
+        XCTAssertFalse(paraformer?.isSupportedOnCurrentDevice == true, "Paraformer must be unavailable in v1.9.1 without sherpa-onnx runtime")
+        XCTAssertFalse(center.isModelDownloaded("paraformer-bilingual"))
 
         // Verify Qwen3-ASR unsupported status on standard mobile profile
         let qwen3 = center.manifest.first(where: { $0.id == "qwen3-asr" })
         XCTAssertNotNil(qwen3)
         XCTAssertFalse(qwen3?.isSupportedOnCurrentDevice == true)
+    }
+
+    @MainActor
+    func testAudioSessionCoordinatorPolicies() throws {
+        let coordinator = AudioSessionCoordinator.shared
+
+        // 1. Device Audio isolation: owns NO active audio session
+        coordinator.activateDeviceAudioCapture()
+        XCTAssertEqual(coordinator.currentState, .deviceAudioCapture)
+
+        // PiP with requiresAudioSession == false must be a NO-OP and must NOT activate AVAudioSession
+        coordinator.beginPiPPresentation(requiresAudioSession: false)
+        XCTAssertEqual(coordinator.currentState, .deviceAudioCapture, "PiP must not override device audio capture state")
+
+        coordinator.deactivateDeviceAudioCapture()
+        XCTAssertEqual(coordinator.currentState, .idle)
+
+        // 2. Microphone Capture: Baseline mode must be .default, NOT .spokenAudio and NOT .measurement
+        try coordinator.activateMicrophoneCapture(allowsPlayback: true)
+        XCTAssertEqual(coordinator.currentState, .microphoneCapture)
+        XCTAssertEqual(AVAudioSession.sharedInstance().category, .playAndRecord)
+        XCTAssertEqual(AVAudioSession.sharedInstance().mode, .default, "Microphone capture must use .default mode")
+        XCTAssertTrue(AVAudioSession.sharedInstance().categoryOptions.contains(.mixWithOthers), "Must preserve .mixWithOthers")
+
+        coordinator.deactivateMicrophoneCapture()
+        XCTAssertEqual(coordinator.currentState, .idle)
+    }
+
+    @MainActor
+    func testCaptionTimelineSingleMediaTimelineAndNoNegativeLag() {
+        let timeline = CaptionTimeline()
+        timeline.reset()
+
+        // Test epoch normalization: absolute PTS e.g. 54321.0
+        timeline.recordAudioCaptured(duration: 2.0, pts: 54321.0)
+        XCTAssertEqual(timeline.capturedThrough, 0.0) // Epoch normalized to 0
+
+        timeline.recordAudioCaptured(duration: 3.0, pts: 54324.0)
+        XCTAssertEqual(timeline.capturedThrough, 3.0)
+
+        timeline.recordAudioFedToASR(samplesCount: 48000, pts: 54324.0)
+        XCTAssertEqual(timeline.fedThrough, 3.0)
+
+        timeline.recordASRFinalized(throughPTS: 54323.5, wallClockDuration: 0.12)
+        XCTAssertEqual(timeline.recognizedThrough, 2.5)
+        XCTAssertEqual(timeline.lastASRProcessingDuration, 0.12)
+
+        // Media lag is strictly in the media domain: captured - recognized
+        XCTAssertEqual(timeline.recognitionMediaLag, 0.5, accuracy: 0.001)
+        XCTAssertGreaterThanOrEqual(timeline.recognitionMediaLag, 0.0)
+
+        // Wall-clock translation latency tracked separately
+        timeline.recordTranslationComplete(throughPTS: 54323.5, wallClockDuration: 0.08)
+        XCTAssertEqual(timeline.translatedThrough, 2.5)
+        XCTAssertEqual(timeline.lastTranslationProcessingDuration, 0.08)
+        XCTAssertEqual(timeline.translationMediaLag, 0.0)
+
+        // Display lag
+        timeline.recordCaptionDisplayed(throughPTS: 54323.5)
+        XCTAssertEqual(timeline.displayedThrough, 2.5)
+        XCTAssertEqual(timeline.displayMediaLag, 0.0)
+
+        // Backlog drain restores to normal
+        timeline.drainBacklog()
+        XCTAssertEqual(timeline.syncState, .normal)
+    }
+
+    @MainActor
+    func testASRRouterTruthfulUnavailableEngineFallback() async {
+        let router = ASRRouter.shared
+        await router.reset()
+        XCTAssertEqual(router.currentEngine, .apple)
+
+        // Attempting to switch to Zipformer (planned for v1.9.2) must throw and keep active engine running
+        do {
+            try await router.hotSwitch(
+                to: .zipformer,
+                targetLanguage: "zh",
+                currentSampleOffset: 16000,
+                currentPTS: 1.0,
+                onResult: { _ in }
+            )
+            XCTFail("Should throw for deferred runtime")
+        } catch {
+            // Active engine must REMAIN Apple Speech!
+            XCTAssertEqual(router.currentEngine, .apple, "Fallback invariant: active engine must remain unchanged on failure")
+            XCTAssertEqual(router.lastSwitchEvent?.successful, false)
+        }
     }
 }
 
