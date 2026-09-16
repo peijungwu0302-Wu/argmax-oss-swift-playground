@@ -467,7 +467,7 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
         active = true
         lifecycleState = .active
         status = L10n.tr("子母畫面字幕已啟動", "PiP captions active")
-        AudioSessionCoordinator.shared.beginPiPPresentation()
+        AudioSessionCoordinator.shared.beginPiPPresentation(requiresAudioSession: pendingRequiresAudioSession)
         render(force: true)
     }
 

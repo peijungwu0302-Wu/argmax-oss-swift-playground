@@ -5,7 +5,7 @@ import Combine
 
 // MARK: - Audio Session State
 
-public enum AudioSessionState: String, Sendable, Codable {
+public enum AudioSessionState: String, Sendable, Codable, Equatable {
     case idle
     case microphoneCapture
     case recordedFilePlayback
@@ -25,6 +25,7 @@ public struct AudioSessionDiagnostics: Sendable, Codable {
     public var currentOutputs: [String]
     public var availableInputs: [String]
     public var preferredInput: String?
+    public var selectedMicrophoneType: String
     public var sampleRate: Double
     public var ioBufferDuration: Double
     public var outputVolume: Float
@@ -44,6 +45,7 @@ public struct AudioSessionDiagnostics: Sendable, Codable {
         currentOutputs: [String] = [],
         availableInputs: [String] = [],
         preferredInput: String? = nil,
+        selectedMicrophoneType: String = "Built-in Mic",
         sampleRate: Double = 0,
         ioBufferDuration: Double = 0,
         outputVolume: Float = 0,
@@ -62,6 +64,7 @@ public struct AudioSessionDiagnostics: Sendable, Codable {
         self.currentOutputs = currentOutputs
         self.availableInputs = availableInputs
         self.preferredInput = preferredInput
+        self.selectedMicrophoneType = selectedMicrophoneType
         self.sampleRate = sampleRate
         self.ioBufferDuration = ioBufferDuration
         self.outputVolume = outputVolume
@@ -80,6 +83,7 @@ public struct AudioSessionDiagnostics: Sendable, Codable {
         Category: \(category)
         Mode: \(mode)
         Options: \(categoryOptions)
+        Microphone Target: \(selectedMicrophoneType)
         Current Inputs: \(currentInputs.isEmpty ? "None" : currentInputs.joined(separator: ", "))
         Current Outputs: \(currentOutputs.isEmpty ? "None" : currentOutputs.joined(separator: ", "))
         Available Inputs: \(availableInputs.isEmpty ? "None" : availableInputs.joined(separator: ", "))
@@ -117,37 +121,74 @@ public final class AudioSessionCoordinator: ObservableObject {
         observers.forEach { NotificationCenter.default.removeObserver($0) }
     }
 
-    // MARK: - State Management
+    // MARK: - Microphone Route Policy
 
-    /// Configures audio session for microphone recording.
-    /// Uses .playAndRecord with .spokenAudio mode (or .default), avoiding .measurement (which turns off AGC/tuning)
-    /// and avoiding forcing unwanted Bluetooth HFP telephone quality.
-    public func activateMicrophoneCapture(allowsPlayback: Bool = true) throws {
+    /// Configures audio session for normal microphone recording.
+    /// Baseline policy:
+    /// - Category: .playAndRecord
+    /// - Mode: .default (NOT .spokenAudio, NOT .measurement)
+    /// - Option: .mixWithOthers preserved so other-app media is not silenced.
+    /// Route-specific options:
+    /// 1. Built-in mic + Bluetooth media: [.mixWithOthers, .allowBluetoothA2DP].
+    ///    Request built-in mic input so Bluetooth output stays on high-quality A2DP.
+    ///    Does NOT enable HFP.
+    /// 2. Built-in mic + speaker: [.mixWithOthers, .defaultToSpeaker].
+    /// 3. Bluetooth microphone: [.mixWithOthers, .allowBluetooth] only when user/system intentionally selects Bluetooth mic.
+    public func activateMicrophoneCapture(allowsPlayback: Bool = true, preferBluetoothMic: Bool = false) throws {
+        // Invariant: If device audio capture is running, microphone capture cannot overlap
+        if currentState == .deviceAudioCapture {
+            deactivateDeviceAudioCapture()
+        }
+
         let session = AVAudioSession.sharedInstance()
         currentState = .microphoneCapture
 
-        var options: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .mixWithOthers]
-        if allowsPlayback {
-            options.insert(.allowBluetoothA2DP)
-            options.insert(.allowBluetooth)
+        let mode: AVAudioSession.Mode = .default
+        let available = session.availableInputs ?? []
+        let hasBluetoothInput = available.contains { $0.portType == .bluetoothHFP }
+        let hasBluetoothOutput = session.currentRoute.outputs.contains {
+            $0.portType == .bluetoothA2DP || $0.portType == .bluetoothHFP || $0.portType == .bluetoothLE
         }
 
-        // Use .spokenAudio for speech-oriented capture
-        let mode: AVAudioSession.Mode = .spokenAudio
+        var options: AVAudioSession.CategoryOptions = [.mixWithOthers]
+        var targetMicType = "Built-in Mic"
+
+        if preferBluetoothMic && hasBluetoothInput {
+            // User explicitly requested Bluetooth microphone -> HFP mode
+            options.insert(.allowBluetooth)
+            targetMicType = "Bluetooth Mic (HFP)"
+        } else if hasBluetoothOutput || hasBluetoothInput {
+            // Bluetooth device connected, but user wants built-in mic capture + Bluetooth media output
+            options.insert(.allowBluetoothA2DP)
+            targetMicType = "Built-in Mic + Bluetooth A2DP Output"
+        } else {
+            // Built-in mic + iPhone speaker
+            options.insert(.defaultToSpeaker)
+            targetMicType = "Built-in Mic + Speaker"
+        }
 
         do {
             try session.setCategory(.playAndRecord, mode: mode, options: options)
-            optimizeMicrophoneRoute(session: session)
+
+            // Select preferred input without fighting route in an infinite loop
+            if !(preferBluetoothMic && hasBluetoothInput) {
+                if let builtIn = available.first(where: { $0.portType == .builtInMic }) {
+                    try? session.setPreferredInput(builtIn)
+                }
+            } else if let btInput = available.first(where: { $0.portType == .bluetoothHFP }) {
+                try? session.setPreferredInput(btInput)
+            }
+
             try session.setActive(true)
-            refreshDiagnostics()
+            refreshDiagnostics(selectedMicrophoneType: targetMicType)
         } catch {
             diagnostics.lastError = error.localizedDescription
-            refreshDiagnostics()
+            refreshDiagnostics(selectedMicrophoneType: targetMicType)
             throw error
         }
     }
 
-    /// Deactivates microphone audio session.
+    /// Deactivates microphone audio session with notifyOthersOnDeactivation.
     public func deactivateMicrophoneCapture() {
         let session = AVAudioSession.sharedInstance()
         currentState = .idle
@@ -159,14 +200,15 @@ public final class AudioSessionCoordinator: ObservableObject {
         refreshDiagnostics()
     }
 
-    /// Prepares for Device Audio capture:
-    /// Invariant: Device Audio MUST NOT acquire or retain an app-owned AVAudioSession!
-    /// We proactively release any active app-owned session before ScreenCaptureKit starts.
+    // MARK: - Device Audio Policy (Zero Owned Session)
+
+    /// Invariant: Device Audio MUST OWN NO AVAudioSession!
+    /// Releases any app-owned session proactively before ScreenCaptureKit starts.
     public func activateDeviceAudioCapture() {
         currentState = .deviceAudioCapture
         let session = AVAudioSession.sharedInstance()
         try? session.setActive(false, options: .notifyOthersOnDeactivation)
-        refreshDiagnostics()
+        refreshDiagnostics(selectedMicrophoneType: "None (Device Audio ScreenCaptureKit)")
     }
 
     public func deactivateDeviceAudioCapture() {
@@ -174,12 +216,18 @@ public final class AudioSessionCoordinator: ObservableObject {
         refreshDiagnostics()
     }
 
+    // MARK: - Playback Policy
+
     /// Configures audio session for recorded file playback.
     public func activatePlayback() throws {
+        guard currentState != .deviceAudioCapture else {
+            // Device audio active; do not interrupt
+            return
+        }
         let session = AVAudioSession.sharedInstance()
         currentState = .recordedFilePlayback
         do {
-            try session.setCategory(.playback, mode: .spokenAudio, options: [.mixWithOthers])
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
             try session.setActive(true)
             refreshDiagnostics()
         } catch {
@@ -190,19 +238,26 @@ public final class AudioSessionCoordinator: ObservableObject {
     }
 
     public func deactivatePlayback() {
+        guard currentState == .recordedFilePlayback else { return }
         let session = AVAudioSession.sharedInstance()
         currentState = .idle
         try? session.setActive(false, options: .notifyOthersOnDeactivation)
         refreshDiagnostics()
     }
 
-    /// Invariant: PiP in Device Audio mode must NOT activate an app-owned audio session.
-    public func prepareForPiP(isDeviceAudio: Bool) {
-        if isDeviceAudio {
-            // No-op; preserve ScreenCaptureKit system audio routing
+    // MARK: - Picture-in-Picture Policy
+
+    /// Invariant: PiP during Device Audio must NOT activate an app-owned audio session.
+    public func beginPiPPresentation(requiresAudioSession: Bool = false) {
+        guard requiresAudioSession else {
+            // Device Audio or video-only: do not activate AVAudioSession!
             return
         }
-        if currentState != .microphoneCapture && currentState != .recordedFilePlayback {
+        guard currentState != .deviceAudioCapture else {
+            // Strict guard: Device Audio owns NO audio session!
+            return
+        }
+        if currentState == .idle {
             currentState = .pipPresentation
             let session = AVAudioSession.sharedInstance()
             try? session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
@@ -211,27 +266,22 @@ public final class AudioSessionCoordinator: ObservableObject {
         }
     }
 
-    // MARK: - Route Optimization
-
-    private func optimizeMicrophoneRoute(session: AVAudioSession) {
-        // Preferred behavior: Input = built-in iPhone microphone, Output = Bluetooth A2DP if connected.
-        guard let available = session.availableInputs else { return }
-
-        let hasBluetoothOutput = session.currentRoute.outputs.contains {
-            $0.portType == .bluetoothA2DP || $0.portType == .bluetoothHFP || $0.portType == .bluetoothLE
-        }
-
-        if hasBluetoothOutput {
-            // Find built-in mic to keep Bluetooth on high-quality A2DP rather than forcing low-bandwidth HFP
-            if let builtInMic = available.first(where: { $0.portType == .builtInMic }) {
-                try? session.setPreferredInput(builtInMic)
-            }
+    public func endPiPPresentation() {
+        if currentState == .pipPresentation {
+            currentState = .idle
+            let session = AVAudioSession.sharedInstance()
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            refreshDiagnostics()
         }
     }
 
     // MARK: - Diagnostics
 
-    public func refreshDiagnostics(reason: String? = nil, interruption: String? = nil) {
+    public func refreshDiagnostics(
+        reason: String? = nil,
+        interruption: String? = nil,
+        selectedMicrophoneType: String? = nil
+    ) {
         let session = AVAudioSession.sharedInstance()
         let inPorts = session.currentRoute.inputs.map { "\($0.portType.rawValue): \($0.portName)" }
         let outPorts = session.currentRoute.outputs.map { "\($0.portType.rawValue): \($0.portName)" }
@@ -246,6 +296,7 @@ public final class AudioSessionCoordinator: ObservableObject {
             currentOutputs: outPorts,
             availableInputs: avail,
             preferredInput: session.preferredInput.map { "\($0.portType.rawValue): \($0.portName)" },
+            selectedMicrophoneType: selectedMicrophoneType ?? diagnostics.selectedMicrophoneType,
             sampleRate: session.sampleRate,
             ioBufferDuration: session.ioBufferDuration,
             outputVolume: session.outputVolume,
