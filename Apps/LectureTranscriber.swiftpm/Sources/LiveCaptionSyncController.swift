@@ -46,7 +46,7 @@ public final class LiveCaptionSyncController: ObservableObject {
         } else {
             resolvedTranslation = nil
         }
-        emit(id: cue.id, original: text, translation: resolvedTranslation, cueEndTime: end)
+        emit(id: cue.id, finalID: nil, original: text, translation: resolvedTranslation, cueEndTime: end)
         return cue
     }
 
@@ -71,7 +71,7 @@ public final class LiveCaptionSyncController: ObservableObject {
             resolvedTranslation = nil
         }
         // Finals are always emitted to display latest confirmed text with authoritative cue ID
-        emit(id: cue.id, original: text, translation: resolvedTranslation, cueEndTime: end)
+        emit(id: cue.id, finalID: cue.id, original: text, translation: resolvedTranslation, cueEndTime: end)
         return cue
     }
 
@@ -86,12 +86,15 @@ public final class LiveCaptionSyncController: ObservableObject {
             timeline.recordTranslationComplete(forLine: id, throughPTS: pts)
         }
         // Delayed translation policy:
-        // Always surface latest available translation to CaptionFeed so completed translations
-        // are never dropped when subsequent speech partials have already begun.
-        CaptionFeed.shared.update(
-            translation: translation,
-            cueEndTime: throughPTS ?? CaptionFeed.shared.latestCueEndTime
-        )
+        // Update visible translation if id matches latest displayed cue, OR if it matches latest finalized cue
+        // (so that ongoing subsequent partials do not drop the completed sentence's translation).
+        // If id is for an older finalized line when a newer finalized line is already active, do not overwrite.
+        if id == nil || id == CaptionFeed.shared.latestCueID || id == CaptionFeed.shared.latestFinalCueID {
+            CaptionFeed.shared.update(
+                translation: translation,
+                cueEndTime: throughPTS ?? CaptionFeed.shared.latestCueEndTime
+            )
+        }
     }
 
     public func reset() {
@@ -99,12 +102,13 @@ public final class LiveCaptionSyncController: ObservableObject {
         timeline.reset()
     }
 
-    private func emit(id: UUID? = nil, original: String, translation: String?, cueEndTime: Double?) {
+    private func emit(id: UUID? = nil, finalID: UUID? = nil, original: String, translation: String?, cueEndTime: Double?) {
         let currentTranslation = translation ?? CaptionFeed.shared.latestTranslation
         CaptionFeed.shared.update(
             original: original,
             translation: currentTranslation,
             latestCueID: id,
+            latestFinalCueID: finalID,
             cueEndTime: cueEndTime
         )
         // Presentation acknowledgement rule:
