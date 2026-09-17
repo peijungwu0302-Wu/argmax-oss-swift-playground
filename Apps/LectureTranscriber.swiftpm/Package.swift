@@ -20,7 +20,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground.git", exact: "1.1.4"),
-        .package(url: "https://github.com/k2-fsa/sherpa-onnx", exact: "1.13.8")
+        .package(url: "https://github.com/k2-fsa/sherpa-onnx", exact: "1.13.7")
     ],
     targets: [
         .executableTarget(

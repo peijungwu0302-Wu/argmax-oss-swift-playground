@@ -9,7 +9,7 @@ packages:
     exactVersion: 1.1.4
   SherpaOnnxLibrary:
     url: https://github.com/k2-fsa/sherpa-onnx
-    exactVersion: 1.13.8
+    exactVersion: 1.13.7
 targets:
   LectureTranscriber:
     type: application

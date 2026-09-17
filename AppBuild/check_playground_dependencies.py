@@ -8,7 +8,7 @@ manifest = (root / "Apps/LectureTranscriber.swiftpm/Package.swift").read_text(en
 assert "binaryTarget" not in manifest
 assert manifest.count(".package(") == 2
 assert 'exact: "1.1.4"' in manifest
-assert 'exact: "1.13.8"' in manifest
+assert 'exact: "1.13.7"' in manifest
 sdk = (root / "Package@swift-6.2.swift").read_text(encoding="utf-8")
 assert '.library(name: "SpeakerKit", targets: ["SpeakerKit"])' in sdk
 assert 'binaryTarget' not in sdk
