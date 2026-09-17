@@ -1664,6 +1664,21 @@ final class AudioAndCaptionTests: XCTestCase {
 
     @MainActor
     func testDeviceAudioHandoffGatePreventsOldEngineLeakAndReplaysBacklog() async throws {
+        let previousSource = UserDefaults.standard.string(forKey: "audioInputSource")
+        let previousEngine = UserDefaults.standard.string(forKey: "recognitionEngine")
+        defer {
+            if let previousSource {
+                UserDefaults.standard.set(previousSource, forKey: "audioInputSource")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "audioInputSource")
+            }
+            if let previousEngine {
+                UserDefaults.standard.set(previousEngine, forKey: "recognitionEngine")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "recognitionEngine")
+            }
+        }
+
         let controller = LectureController()
         controller.audioSource = .deviceAudio
         controller.isRecording = true
@@ -1762,6 +1777,21 @@ final class AudioAndCaptionTests: XCTestCase {
 
     @MainActor
     func testDeviceAudioHandoffGateRollbackReplaysGatedAudio() async throws {
+        let previousSource = UserDefaults.standard.string(forKey: "audioInputSource")
+        let previousEngine = UserDefaults.standard.string(forKey: "recognitionEngine")
+        defer {
+            if let previousSource {
+                UserDefaults.standard.set(previousSource, forKey: "audioInputSource")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "audioInputSource")
+            }
+            if let previousEngine {
+                UserDefaults.standard.set(previousEngine, forKey: "recognitionEngine")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "recognitionEngine")
+            }
+        }
+
         let controller = LectureController()
         controller.audioSource = .deviceAudio
         controller.isRecording = true

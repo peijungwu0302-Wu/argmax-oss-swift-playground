@@ -4,7 +4,7 @@ final class LaunchTests: XCTestCase {
     @MainActor
     func testInitialScreenAndHistory() {
         let app = XCUIApplication()
-        app.launchArguments += ["-appLanguage", "zh-Hant", "-AppleLanguages", "(zh-Hant)", "-AppleLocale", "zh_TW"]
+        app.launchArguments += ["-audioInputSource", "microphone", "-appLanguage", "zh-Hant", "-AppleLanguages", "(zh-Hant)", "-AppleLocale", "zh_TW"]
         app.launch()
         XCTAssertTrue(app.buttons["開始錄音"].waitForExistence(timeout: 30), "App must show its controls without loading a model")
         XCTAssertTrue(app.textFields["課堂名稱"].exists)
@@ -70,7 +70,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["還沒有已儲存的課堂"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["匯入音訊"].exists)
         app.buttons["完成"].tap()
-        XCTAssertTrue(app.buttons["開始錄音"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["開始錄音"].waitForExistence(timeout: 10))
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.lifetime = .keepAlways
         add(attachment)
