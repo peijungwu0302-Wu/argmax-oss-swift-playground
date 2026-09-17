@@ -41,8 +41,8 @@ public final class LiveCaptionSyncController: ObservableObject {
         let resolvedTranslation: String?
         if let translation, !translation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             resolvedTranslation = translation
-        } else if let cueTrans = cue.translatedText, !cueTrans.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            resolvedTranslation = cueTrans
+        } else if !cue.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            resolvedTranslation = cue.translatedText
         } else {
             resolvedTranslation = nil
         }
@@ -65,8 +65,8 @@ public final class LiveCaptionSyncController: ObservableObject {
         let resolvedTranslation: String?
         if let translation, !translation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             resolvedTranslation = translation
-        } else if let cueTrans = cue.translatedText, !cueTrans.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            resolvedTranslation = cueTrans
+        } else if !cue.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            resolvedTranslation = cue.translatedText
         } else {
             resolvedTranslation = nil
         }
