@@ -30,7 +30,7 @@ final class PCMRecorder: @unchecked Sendable {
             samples: Int,
             level: Float,
             error: String? = nil,
-            dynamics: AudioDynamicsDiagnostics = AudioDynamicsDiagnostics(preRMSDBFS: -60, postRMSDBFS: -60, prePeakDBFS: -60, postPeakDBFS: -60, appliedGainLinear: 1.0, limiterEngaged: false),
+            dynamics: AudioDynamicsDiagnostics = AudioDynamicsDiagnostics(),
             isMasterActive: Bool = false,
             masterError: String? = nil
         ) {

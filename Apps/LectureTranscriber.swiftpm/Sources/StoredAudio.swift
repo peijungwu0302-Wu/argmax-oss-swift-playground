@@ -293,7 +293,7 @@ enum StoredAudio {
         var destDisposed = false
         defer { if !destDisposed { ExtAudioFileDispose(destFile) } }
 
-        guard let clientFormat = AVAudioFormat(
+        guard let destClientFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: targetSampleRate,
             channels: 1,
@@ -301,7 +301,7 @@ enum StoredAudio {
         ) else {
             throw LectureError.message("無法建立 AAC 客戶端音訊格式。")
         }
-        var client = clientFormat.streamDescription.pointee
+        var client = destClientFormat.streamDescription.pointee
         try checked(ExtAudioFileSetProperty(destFile, kExtAudioFileProperty_ClientDataFormat, size, &client), "設定 AAC 寫入格式")
 
         var converter: AudioConverterRef?
@@ -317,7 +317,7 @@ enum StoredAudio {
             // Source is standard audio file (e.g. master.caf)
             try checked(ExtAudioFileSetProperty(sourceFile, kExtAudioFileProperty_ClientDataFormat, size, &client), "設定來源音訊格式")
             let frameChunk: AVAudioFrameCount = 16384
-            guard let buffer = AVAudioPCMBuffer(pcmFormat: clientFormat, frameCapacity: frameChunk) else {
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: destClientFormat, frameCapacity: frameChunk) else {
                 throw LectureError.message("無法配置音訊緩衝區。")
             }
             while true {
@@ -331,7 +331,7 @@ enum StoredAudio {
             }
         } else {
             // Source is raw PCM16: read chunks, convert to Float32 at 16000
-            let format16k = try clientFormat()
+            let format16k = try Self.clientFormat()
             var client16k = format16k.streamDescription.pointee
             try checked(ExtAudioFileSetProperty(destFile, kExtAudioFileProperty_ClientDataFormat, size, &client16k), "設定辨識音訊格式")
             for start in stride(from: 0, to: samples, by: 16000) {
