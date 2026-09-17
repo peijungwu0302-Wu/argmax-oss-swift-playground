@@ -77,6 +77,16 @@ actor SherpaOnnxRuntime {
             throw LectureError.message("Zipformer 模型檔案缺失，請重新檢查模型路徑。")
         }
 
+        for path in [encoder, decoder, joiner] {
+            let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber)?.intValue ?? 0
+            guard size > 1024 else {
+                throw LectureError.message("ONNX 模型檔案無效或大小不足：\(URL(fileURLWithPath: path).lastPathComponent)")
+            }
+        }
+        guard let tokenContent = try? String(contentsOfFile: tokens), !tokenContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw LectureError.message("tokens.txt 為空或無效")
+        }
+
         let transducer = sherpaOnnxOnlineTransducerModelConfig(
             encoder: encoder,
             decoder: decoder,
@@ -125,6 +135,16 @@ actor SherpaOnnxRuntime {
               FileManager.default.fileExists(atPath: decoder),
               FileManager.default.fileExists(atPath: tokens) else {
             throw LectureError.message("Paraformer 模型檔案缺失，請重新檢查模型路徑。")
+        }
+
+        for path in [encoder, decoder] {
+            let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber)?.intValue ?? 0
+            guard size > 1024 else {
+                throw LectureError.message("ONNX 模型檔案無效或大小不足：\(URL(fileURLWithPath: path).lastPathComponent)")
+            }
+        }
+        guard let tokenContent = try? String(contentsOfFile: tokens), !tokenContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw LectureError.message("tokens.txt 為空或無效")
         }
 
         let paraformer = sherpaOnnxOnlineParaformerModelConfig(

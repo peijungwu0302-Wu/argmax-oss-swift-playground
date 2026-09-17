@@ -51,6 +51,8 @@ public final class ModelCenter: ObservableObject {
 
     @Published public private(set) var manifest: [ModelManifestItem] = []
     @Published public private(set) var modelStates: [String: ResourceState] = [:]
+    public typealias RuntimeValidator = @Sendable (String, URL) async throws -> Void
+    public var runtimeValidator: RuntimeValidator?
 
     private init() {
         populateManifest()
@@ -234,7 +236,7 @@ public final class ModelCenter: ObservableObject {
         }
     }
 
-    public func installModel(modelId: String, from stagingDir: URL) throws {
+    public func installModel(modelId: String, from stagingDir: URL) async throws {
         guard let item = manifest.first(where: { $0.id == modelId }), !item.isBuiltIn, item.isSupportedOnCurrentDevice else {
             throw LectureError.message("此模型不支援安裝。")
         }
@@ -249,10 +251,10 @@ public final class ModelCenter: ObservableObject {
         let targetFolderName: String
         let requiredFiles: [String]
         if modelId == "zipformer-bilingual" {
-            targetFolderName = "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20"
+            targetFolderName = "sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16"
             requiredFiles = [
                 "encoder-epoch-99-avg-1.int8.onnx",
-                "decoder-epoch-99-avg-1.int8.onnx",
+                "decoder-epoch-99-avg-1.onnx",
                 "joiner-epoch-99-avg-1.int8.onnx",
                 "tokens.txt"
             ]
@@ -267,7 +269,7 @@ public final class ModelCenter: ObservableObject {
             throw LectureError.message("暫不支援安裝此模型：\(modelId)")
         }
 
-        // Verify required filenames and non-empty sizes in stagingDir
+        // 1. Verify required filenames and non-empty sizes in stagingDir
         for fileName in requiredFiles {
             let fileURL = stagingDir.appendingPathComponent(fileName)
             guard FileManager.default.fileExists(atPath: fileURL.path) else {
@@ -279,7 +281,7 @@ public final class ModelCenter: ObservableObject {
             }
         }
 
-        // Atomic placement
+        // 2. Atomic placement & runtime verification
         let targetDir = base.appendingPathComponent(targetFolderName, isDirectory: true)
         let backupDir = base.appendingPathComponent("\(targetFolderName).old-\(UUID().uuidString)")
         var didBackup = false
@@ -290,13 +292,44 @@ public final class ModelCenter: ObservableObject {
 
         do {
             try FileManager.default.moveItem(at: stagingDir, to: targetDir)
+
+            // 3. Runtime initialization validation
+            if let customValidator = runtimeValidator {
+                try await customValidator(modelId, targetDir)
+            } else if SherpaOnnxRuntime.isSupported {
+                let validator = SherpaOnnxRuntime()
+                defer { Task { await validator.unload() } }
+
+                if modelId == "zipformer-bilingual" {
+                    let enc = targetDir.appendingPathComponent("encoder-epoch-99-avg-1.int8.onnx").path
+                    let dec = targetDir.appendingPathComponent(ZipformerStreamingEngine.resolvedDecoderName(in: targetDir)).path
+                    let joi = targetDir.appendingPathComponent("joiner-epoch-99-avg-1.int8.onnx").path
+                    let tok = targetDir.appendingPathComponent("tokens.txt").path
+                    try await validator.initZipformer(encoder: enc, decoder: dec, joiner: joi, tokens: tok)
+                } else if modelId == "paraformer-bilingual" {
+                    let enc = targetDir.appendingPathComponent("encoder.int8.onnx").path
+                    let dec = targetDir.appendingPathComponent("decoder.int8.onnx").path
+                    let tok = targetDir.appendingPathComponent("tokens.txt").path
+                    try await validator.initParaformer(encoder: enc, decoder: dec, tokens: tok)
+                }
+                await validator.unload()
+            }
+
+            // Success: remove backup directory and assign .ready
             if didBackup {
                 try? FileManager.default.removeItem(at: backupDir)
             }
             modelStates[modelId] = .ready
         } catch {
+            // Failure: remove bad target directory, restore backup if it existed
+            if FileManager.default.fileExists(atPath: targetDir.path) {
+                try? FileManager.default.removeItem(at: targetDir)
+            }
             if didBackup {
                 try? FileManager.default.moveItem(at: backupDir, to: targetDir)
+                modelStates[modelId] = .ready
+            } else {
+                modelStates[modelId] = .notDownloaded
             }
             throw error
         }
@@ -319,10 +352,10 @@ public final class ModelCenter: ObservableObject {
         let files: [(String, String)]
         if modelId == "zipformer-bilingual" {
             files = [
-                ("encoder-epoch-99-avg-1.int8.onnx", "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/encoder-epoch-99-avg-1.int8.onnx"),
-                ("decoder-epoch-99-avg-1.int8.onnx", "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/decoder-epoch-99-avg-1.int8.onnx"),
-                ("joiner-epoch-99-avg-1.int8.onnx", "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/joiner-epoch-99-avg-1.int8.onnx"),
-                ("tokens.txt", "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/tokens.txt")
+                ("encoder-epoch-99-avg-1.int8.onnx", "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16/resolve/main/encoder-epoch-99-avg-1.int8.onnx"),
+                ("decoder-epoch-99-avg-1.onnx", "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16/resolve/main/decoder-epoch-99-avg-1.onnx"),
+                ("joiner-epoch-99-avg-1.int8.onnx", "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16/resolve/main/joiner-epoch-99-avg-1.int8.onnx"),
+                ("tokens.txt", "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16/resolve/main/tokens.txt")
             ]
         } else if modelId == "paraformer-bilingual" {
             files = [
@@ -356,7 +389,7 @@ public final class ModelCenter: ObservableObject {
             modelStates[modelId] = .downloading(bytesReceived: Int64(completed), totalBytes: Int64(total), progress: fraction)
         }
 
-        try installModel(modelId: modelId, from: stagingDir)
+        try await installModel(modelId: modelId, from: stagingDir)
     }
 
     public func deleteModel(_ modelId: String) throws {

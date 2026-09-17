@@ -31,9 +31,14 @@ final class ParaformerStreamingEngine: LiveSpeechEngine {
         let enc = dir.appendingPathComponent(encoderName)
         let dec = dir.appendingPathComponent(decoderName)
         let tok = dir.appendingPathComponent(tokensName)
-        return FileManager.default.fileExists(atPath: enc.path) &&
-               FileManager.default.fileExists(atPath: dec.path) &&
-               FileManager.default.fileExists(atPath: tok.path)
+        guard FileManager.default.fileExists(atPath: enc.path) &&
+              FileManager.default.fileExists(atPath: dec.path) &&
+              FileManager.default.fileExists(atPath: tok.path) else { return false }
+
+        let encSize = (try? FileManager.default.attributesOfItem(atPath: enc.path)[.size] as? NSNumber)?.intValue ?? 0
+        let decSize = (try? FileManager.default.attributesOfItem(atPath: dec.path)[.size] as? NSNumber)?.intValue ?? 0
+        let tokSize = (try? FileManager.default.attributesOfItem(atPath: tok.path)[.size] as? NSNumber)?.intValue ?? 0
+        return encSize > 1024 && decSize > 1024 && tokSize > 0
     }
 
     func prepare(language: String, onProgress: @escaping @MainActor (Double?) -> Void) async throws {

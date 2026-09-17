@@ -1663,19 +1663,173 @@ final class AudioAndCaptionTests: XCTestCase {
     }
 
     @MainActor
-    func testModelCenterAtomicInstallAndCleanDelete() throws {
+    func testDeviceAudioHandoffGatePreventsOldEngineLeakAndReplaysBacklog() async throws {
+        let controller = LectureController()
+        controller.audioSource = .deviceAudio
+        controller.isRecording = true
+        controller.recognitionEngine = "apple"
+
+        let oldEngine = MockLiveSpeechEngine()
+        controller.setAppleSpeechForTesting(oldEngine)
+
+        // Baseline: fed 100,000 samples, buffer offset 0 with 100,000 samples
+        controller.setDeviceAudioFedSampleIndexForTesting(100_000)
+        controller.setDeviceAudioBufferStartOffsetForTesting(0)
+        controller.appendDeviceAudioBufferForTesting([Float](repeating: 0.1, count: 100_000))
+
+        // Enter handoff gate (as when taking snapshot during switchRecognitionEngine)
+        controller.enterASRHandoffGateForTesting()
+        XCTAssertTrue(controller.isASRHandoffInProgress)
+
+        // Chunks arrive while inside the handoff gate
+        let chunk1 = TimedAudioChunk(
+            samples: [Float](repeating: 0.2, count: 4000),
+            sampleRate: 16000,
+            channelCount: 1,
+            level: 0.5,
+            startMediaTime: 6.25,
+            endMediaTime: 6.5,
+            startSampleIndex: 100_000,
+            endSampleIndex: 104_000,
+            sourcePTS: 6.25
+        )
+        controller.deviceAudioDidOutput(chunk: chunk1)
+
+        let chunk2 = TimedAudioChunk(
+            samples: [Float](repeating: 0.3, count: 4000),
+            sampleRate: 16000,
+            channelCount: 1,
+            level: 0.5,
+            startMediaTime: 6.5,
+            endMediaTime: 6.75,
+            startSampleIndex: 104_000,
+            endSampleIndex: 108_000,
+            sourcePTS: 6.5
+        )
+        controller.deviceAudioDidOutput(chunk: chunk2)
+
+        // Yield to let any async tasks settle
+        await Task.yield()
+
+        // Invariant: old engine must NOT have received any chunks arriving after gate was entered
+        XCTAssertEqual(oldEngine.appendedSamples.count, 0, "Old engine must NEVER receive chunks during handoff gate")
+        XCTAssertEqual(controller.deviceAudioFedSampleIndexForTesting, 100_000, "Fed cursor must not advance during gate")
+        XCTAssertEqual(controller.deviceAudioBufferCountForTesting, 108_000, "All chunks must be retained in rolling buffer")
+
+        // Simulate handoff completion to new engine:
+        // New engine starts at unfinalized cursor (e.g. 96,000)
+        let newEngine = MockLiveSpeechEngine()
+        let newEngineStartCursor = 96_000
+        let currentBufferedEnd = controller.deviceAudioBufferStartOffsetForTesting + controller.deviceAudioBufferCountForTesting
+        XCTAssertEqual(currentBufferedEnd, 108_000)
+
+        // Slices [newEngineStartCursor ..< currentBufferedEnd]
+        let bufferSnapshot = controller.getDeviceAudioBufferSnapshotForTesting()
+        let localStart = newEngineStartCursor - controller.deviceAudioBufferStartOffsetForTesting
+        let localEnd = currentBufferedEnd - controller.deviceAudioBufferStartOffsetForTesting
+        let backlog = Array(bufferSnapshot[localStart..<localEnd])
+        try await newEngine.append(backlog)
+
+        // Backlog received by new engine is exactly 12,000 samples (4000 unfinalized + 8000 gated)
+        XCTAssertEqual(newEngine.appendedSamples.count, 12_000)
+        controller.setDeviceAudioFedSampleIndexForTesting(currentBufferedEnd)
+        controller.setAppleSpeechForTesting(newEngine)
+
+        // Exit gate
+        controller.leaveASRHandoffGateForTesting()
+        XCTAssertFalse(controller.isASRHandoffInProgress)
+
+        // Next chunk arrives after handoff gate is open
+        let chunk3 = TimedAudioChunk(
+            samples: [Float](repeating: 0.4, count: 4000),
+            sampleRate: 16000,
+            channelCount: 1,
+            level: 0.5,
+            startMediaTime: 6.75,
+            endMediaTime: 7.0,
+            startSampleIndex: 108_000,
+            endSampleIndex: 112_000,
+            sourcePTS: 6.75
+        )
+        controller.deviceAudioDidOutput(chunk: chunk3)
+        // Wait for async task inside deviceAudioDidOutput
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        // Invariant: New engine received entire stream without gap or duplicate!
+        XCTAssertEqual(newEngine.appendedSamples.count, 16_000, "New engine receives backlog + new live chunks")
+        XCTAssertEqual(oldEngine.appendedSamples.count, 0, "Old engine remains completely uncorrupted")
+    }
+
+    @MainActor
+    func testDeviceAudioHandoffGateRollbackReplaysGatedAudio() async throws {
+        let controller = LectureController()
+        controller.audioSource = .deviceAudio
+        controller.isRecording = true
+        controller.recognitionEngine = "apple"
+
+        let oldEngine = MockLiveSpeechEngine()
+        controller.setAppleSpeechForTesting(oldEngine)
+
+        // Baseline: fed 100,000 samples, buffer offset 0 with 100,000 samples
+        controller.setDeviceAudioFedSampleIndexForTesting(100_000)
+        controller.setDeviceAudioBufferStartOffsetForTesting(0)
+        controller.appendDeviceAudioBufferForTesting([Float](repeating: 0.1, count: 100_000))
+
+        // Enter handoff gate
+        controller.enterASRHandoffGateForTesting()
+
+        // 4000 samples arrive while gate is closed
+        let gatedChunk = TimedAudioChunk(
+            samples: [Float](repeating: 0.5, count: 4000),
+            sampleRate: 16000,
+            channelCount: 1,
+            level: 0.5,
+            startMediaTime: 6.25,
+            endMediaTime: 6.5,
+            startSampleIndex: 100_000,
+            endSampleIndex: 104_000,
+            sourcePTS: 6.25
+        )
+        controller.deviceAudioDidOutput(chunk: gatedChunk)
+        await Task.yield()
+
+        XCTAssertEqual(oldEngine.appendedSamples.count, 0, "Old engine received nothing during gate")
+        XCTAssertEqual(controller.deviceAudioBufferCountForTesting, 104_000)
+
+        // Simulate failed switch -> trigger rollback to old engine
+        let session = LectureSession(title: "Rollback Test", language: "zh")
+        controller.session = session
+        await controller.rollbackGatedDeviceAudio(
+            oldEngine: "apple",
+            fromSample: 100_000,
+            committedBoundary: 100_000,
+            current: session
+        )
+        controller.leaveASRHandoffGateForTesting()
+
+        // Gated audio was safely replayed to old engine on rollback
+        XCTAssertEqual(oldEngine.appendedSamples.count, 4000, "Rollback must replay all audio gated during handoff")
+        XCTAssertEqual(controller.deviceAudioFedSampleIndexForTesting, 104_000, "Fed cursor updated to current buffer end")
+        XCTAssertFalse(controller.isASRHandoffInProgress)
+    }
+
+    @MainActor
+    func testModelCenterAtomicInstallAndCleanDelete() async throws {
         let center = ModelCenter.shared
         let stagingDir = FileManager.default.temporaryDirectory.appendingPathComponent("test-staging-" + UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: stagingDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: stagingDir) }
 
         // Attempting to install when files are missing must fail
-        XCTAssertThrowsError(try center.installModel(modelId: "zipformer-bilingual", from: stagingDir))
+        do {
+            try await center.installModel(modelId: "zipformer-bilingual", from: stagingDir)
+            XCTFail("Missing files must throw")
+        } catch {}
 
-        // Create the 4 required Zipformer files
+        // Create the 4 required Zipformer files with 4-byte data (fake files)
         let requiredFiles = [
             "encoder-epoch-99-avg-1.int8.onnx",
-            "decoder-epoch-99-avg-1.int8.onnx",
+            "decoder-epoch-99-avg-1.onnx",
             "joiner-epoch-99-avg-1.int8.onnx",
             "tokens.txt"
         ]
@@ -1684,15 +1838,92 @@ final class AudioAndCaptionTests: XCTestCase {
             try data.write(to: stagingDir.appendingPathComponent(f))
         }
 
-        // Install succeeds atomically
-        try center.installModel(modelId: "zipformer-bilingual", from: stagingDir)
+        // Test 1: Fake 4-byte model files MUST FAIL validation
+        do {
+            try await center.installModel(modelId: "zipformer-bilingual", from: stagingDir)
+            XCTFail("4-byte fake model files must fail runtime validation")
+        } catch {
+            // Expected failure: state must NOT be .ready
+            XCTAssertNotEqual(center.state(for: "zipformer-bilingual"), .ready)
+            XCTAssertFalse(center.isModelDownloaded("zipformer-bilingual"))
+        }
+
+        // Test 2: Atomic install with injected mock validator succeeds
+        let validStaging = FileManager.default.temporaryDirectory.appendingPathComponent("test-valid-staging-" + UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: validStaging, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: validStaging) }
+
+        for f in requiredFiles {
+            let data = Data(repeating: 0x42, count: 2048)
+            try data.write(to: validStaging.appendingPathComponent(f))
+        }
+        try "token1 1\ntoken2 2\n".write(to: validStaging.appendingPathComponent("tokens.txt"), atomically: true, encoding: .utf8)
+
+        var mockValidatorCalled = false
+        center.runtimeValidator = { modelId, targetDir in
+            mockValidatorCalled = true
+            XCTAssertEqual(modelId, "zipformer-bilingual")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: targetDir.path))
+        }
+
+        try await center.installModel(modelId: "zipformer-bilingual", from: validStaging)
+        XCTAssertTrue(mockValidatorCalled)
         XCTAssertTrue(center.isModelDownloaded("zipformer-bilingual"))
         XCTAssertEqual(center.state(for: "zipformer-bilingual"), .ready)
+
+        // Test 3: Update failure restores backup
+        let failingStaging = FileManager.default.temporaryDirectory.appendingPathComponent("test-failing-staging-" + UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: failingStaging, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: failingStaging) }
+
+        for f in requiredFiles {
+            let data = Data(repeating: 0x99, count: 2048)
+            try data.write(to: failingStaging.appendingPathComponent(f))
+        }
+        try "bad token\n".write(to: failingStaging.appendingPathComponent("tokens.txt"), atomically: true, encoding: .utf8)
+
+        struct SimulatedInstallError: Error {}
+        center.runtimeValidator = { _, _ in
+            throw SimulatedInstallError()
+        }
+
+        do {
+            try await center.installModel(modelId: "zipformer-bilingual", from: failingStaging)
+            XCTFail("Should throw on mock validation failure")
+        } catch {
+            // Target was restored from backup! Model must still be installed and .ready!
+            XCTAssertTrue(center.isModelDownloaded("zipformer-bilingual"))
+            XCTAssertEqual(center.state(for: "zipformer-bilingual"), .ready)
+        }
+
+        center.runtimeValidator = nil
 
         // Clean delete removes files and resets state
         try center.deleteModel("zipformer-bilingual")
         XCTAssertFalse(center.isModelDownloaded("zipformer-bilingual"))
         XCTAssertEqual(center.state(for: "zipformer-bilingual"), .notDownloaded)
+    }
+}
+
+@MainActor
+final class MockLiveSpeechEngine: LiveSpeechEngine {
+    var appendedSamples: [Float] = []
+    var isCancelled = false
+    var isFinished = false
+    var isStarted = false
+
+    func prepare(language: String, onProgress: @escaping @MainActor (Double?) -> Void) async throws {}
+    func start(language: String, onResult: @escaping @MainActor (SpeechUpdate) -> Void) async throws {
+        isStarted = true
+    }
+    func append(_ samples: [Float]) async throws {
+        appendedSamples.append(contentsOf: samples)
+    }
+    func finish() async throws {
+        isFinished = true
+    }
+    func cancel() async {
+        isCancelled = true
     }
 }
 

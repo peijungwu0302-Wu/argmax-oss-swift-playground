@@ -25,14 +25,18 @@ final class ZipformerStreamingEngine: LiveSpeechEngine {
         ).appendingPathComponent("SpeechModels", isDirectory: true) else {
             return nil
         }
-        let dir1 = base.appendingPathComponent("sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20", isDirectory: true)
-        if FileManager.default.fileExists(atPath: dir1.path) { return dir1 }
-        let dir2 = base.appendingPathComponent(modelFolder, isDirectory: true)
-        if FileManager.default.fileExists(atPath: dir2.path) { return dir2 }
-        return dir1
+        let canonical = base.appendingPathComponent(modelFolder, isDirectory: true)
+        if FileManager.default.fileExists(atPath: canonical.path) { return canonical }
+        let legacy = base.appendingPathComponent("sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20", isDirectory: true)
+        if FileManager.default.fileExists(atPath: legacy.path) { return legacy }
+        return canonical
     }
 
     static func resolvedDecoderName(in dir: URL) -> String {
+        let canonicalDec = dir.appendingPathComponent(decoderName)
+        if FileManager.default.fileExists(atPath: canonicalDec.path) {
+            return decoderName
+        }
         let decInt8 = dir.appendingPathComponent("decoder-epoch-99-avg-1.int8.onnx")
         if FileManager.default.fileExists(atPath: decInt8.path) {
             return "decoder-epoch-99-avg-1.int8.onnx"
@@ -46,10 +50,16 @@ final class ZipformerStreamingEngine: LiveSpeechEngine {
         let dec = dir.appendingPathComponent(resolvedDecoderName(in: dir))
         let joi = dir.appendingPathComponent(joinerName)
         let tok = dir.appendingPathComponent(tokensName)
-        return FileManager.default.fileExists(atPath: enc.path) &&
-               FileManager.default.fileExists(atPath: dec.path) &&
-               FileManager.default.fileExists(atPath: joi.path) &&
-               FileManager.default.fileExists(atPath: tok.path)
+        guard FileManager.default.fileExists(atPath: enc.path) &&
+              FileManager.default.fileExists(atPath: dec.path) &&
+              FileManager.default.fileExists(atPath: joi.path) &&
+              FileManager.default.fileExists(atPath: tok.path) else { return false }
+
+        let encSize = (try? FileManager.default.attributesOfItem(atPath: enc.path)[.size] as? NSNumber)?.intValue ?? 0
+        let decSize = (try? FileManager.default.attributesOfItem(atPath: dec.path)[.size] as? NSNumber)?.intValue ?? 0
+        let joiSize = (try? FileManager.default.attributesOfItem(atPath: joi.path)[.size] as? NSNumber)?.intValue ?? 0
+        let tokSize = (try? FileManager.default.attributesOfItem(atPath: tok.path)[.size] as? NSNumber)?.intValue ?? 0
+        return encSize > 1024 && decSize > 1024 && joiSize > 1024 && tokSize > 0
     }
 
     func prepare(language: String, onProgress: @escaping @MainActor (Double?) -> Void) async throws {
