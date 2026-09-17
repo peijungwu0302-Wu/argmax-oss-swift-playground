@@ -3,15 +3,15 @@ import Foundation
 import SherpaOnnx
 #endif
 
-public struct SherpaStreamResult: Sendable, Equatable {
-    public let text: String
-    public let tokens: [String]
-    public let timestamps: [Float]
-    public let isEndpoint: Bool
-    public let startSampleIndex: Int
-    public let endSampleIndex: Int
+struct SherpaStreamResult: Sendable, Equatable {
+    let text: String
+    let tokens: [String]
+    let timestamps: [Float]
+    let isEndpoint: Bool
+    let startSampleIndex: Int
+    let endSampleIndex: Int
 
-    public init(
+    init(
         text: String,
         tokens: [String] = [],
         timestamps: [Float] = [],
@@ -30,8 +30,8 @@ public struct SherpaStreamResult: Sendable, Equatable {
 
 /// Thread-safe streaming actor wrapping sherpa-onnx online recognizer.
 /// Guarantee: Never blocks audio capture callbacks or MainActor.
-public actor SherpaOnnxRuntime {
-    public static var isSupported: Bool {
+actor SherpaOnnxRuntime {
+    static var isSupported: Bool {
         #if canImport(SherpaOnnx)
         return true
         #else
@@ -48,18 +48,18 @@ public actor SherpaOnnxRuntime {
     private var isInitialized: Bool = false
     private var activeModelId: String = ""
 
-    public init() {}
+    init() {}
 
-    public var isReady: Bool {
+    var isReady: Bool {
         isInitialized
     }
 
-    public var currentModelId: String {
+    var currentModelId: String {
         activeModelId
     }
 
     /// Initializes a Zipformer transducer streaming recognizer.
-    public func initZipformer(
+    func initZipformer(
         encoder: String,
         decoder: String,
         joiner: String,
@@ -111,7 +111,7 @@ public actor SherpaOnnxRuntime {
     }
 
     /// Initializes a Paraformer streaming recognizer.
-    public func initParaformer(
+    func initParaformer(
         encoder: String,
         decoder: String,
         tokens: String,
@@ -160,7 +160,7 @@ public actor SherpaOnnxRuntime {
     }
 
     /// Accepts 16 kHz Float samples, runs online decoding, and returns stream updates if ready.
-    public func acceptWaveform(samples: [Float], sampleRate: Int = 16000) -> SherpaStreamResult? {
+    func acceptWaveform(samples: [Float], sampleRate: Int = 16000) -> SherpaStreamResult? {
         guard !samples.isEmpty else { return nil }
         #if canImport(SherpaOnnx)
         guard let recognizer else { return nil }
@@ -197,7 +197,7 @@ public actor SherpaOnnxRuntime {
     }
 
     /// Flushes remaining audio at the end of recording.
-    public func finishStream() -> SherpaStreamResult? {
+    func finishStream() -> SherpaStreamResult? {
         #if canImport(SherpaOnnx)
         guard let recognizer else { return nil }
         recognizer.inputFinished()
@@ -223,7 +223,7 @@ public actor SherpaOnnxRuntime {
     }
 
     /// Resets the stream state without destroying the loaded recognizer.
-    public func resetStream() {
+    func resetStream() {
         #if canImport(SherpaOnnx)
         recognizer?.reset()
         #endif
@@ -231,7 +231,7 @@ public actor SherpaOnnxRuntime {
     }
 
     /// Releases recognizer resources and clears memory.
-    public func unload() {
+    func unload() {
         #if canImport(SherpaOnnx)
         recognizer = nil
         #endif
