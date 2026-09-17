@@ -62,9 +62,6 @@ struct PiPMeasuredLayout {
 final class PiPCaptionLayoutEngine {
     static let shared = PiPCaptionLayoutEngine()
 
-    // Smooth moving average for bilingual allocation ratio to prevent bouncing
-    private var lastAllocatedOrigRatio: CGFloat = 0.46
-
     init() {}
 
     func layout(
@@ -100,9 +97,8 @@ final class PiPCaptionLayoutEngine {
                 maxHeight: availableHeight,
                 paragraphStyle: paragraph
             )
-            let measuredSize = measureText(rollingText, font: origFont, maxWidth: textWidth, paragraphStyle: paragraph)
             let rect = alignBlock(
-                height: min(availableHeight, measuredSize.height),
+                height: availableHeight,
                 canvasHeight: height,
                 metrics: metrics,
                 position: model.verticalPosition,
@@ -133,9 +129,8 @@ final class PiPCaptionLayoutEngine {
                 maxHeight: availableHeight,
                 paragraphStyle: paragraph
             )
-            let measuredSize = measureText(rollingText, font: fontToUse, maxWidth: textWidth, paragraphStyle: paragraph)
             let rect = alignBlock(
-                height: min(availableHeight, measuredSize.height),
+                height: availableHeight,
                 canvasHeight: height,
                 metrics: metrics,
                 position: model.verticalPosition,
@@ -155,101 +150,52 @@ final class PiPCaptionLayoutEngine {
             )
 
         case .bilingual:
-            if transText.isEmpty {
-                // No translation yet; display original cleanly centered
-                let availableHeight = max(20, height - metrics.verticalPadding * 2)
-                let rollingOrig = tailWindow(
-                    for: origText,
-                    font: origFont,
-                    maxWidth: textWidth,
-                    maxHeight: availableHeight,
-                    paragraphStyle: paragraph
-                )
-                let measured = measureText(rollingOrig, font: origFont, maxWidth: textWidth, paragraphStyle: paragraph)
-                let rect = alignBlock(
-                    height: min(availableHeight, measured.height),
-                    canvasHeight: height,
-                    metrics: metrics,
-                    position: model.verticalPosition,
-                    hPadding: hPadding,
-                    textWidth: textWidth
-                )
-                return PiPMeasuredLayout(
-                    originalRect: rect,
-                    originalTextToDraw: rollingOrig,
-                    originalFont: origFont,
-                    originalColor: origColor,
-                    translationRect: nil,
-                    translationTextToDraw: "",
-                    translationFont: transFont,
-                    translationColor: transColor,
-                    paragraphStyle: paragraph
-                )
-            } else {
-                // Adaptive height allocation
-                let totalAvail = max(30, height - metrics.verticalPadding * 2 - metrics.blockGap)
-                let unconstrainedOrig = measureText(origText, font: origFont, maxWidth: textWidth, paragraphStyle: paragraph).height
-                let unconstrainedTrans = measureText(transText, font: transFont, maxWidth: textWidth, paragraphStyle: paragraph).height
+            let totalAvail = max(30, height - metrics.verticalPadding * 2 - metrics.blockGap)
+            let origHeight = totalAvail * 0.46
+            let transHeight = totalAvail * 0.54
+            let totalHeight = origHeight + metrics.blockGap + transHeight
 
-                let origRatio: CGFloat
-                if unconstrainedOrig + unconstrainedTrans <= totalAvail {
-                    origRatio = unconstrainedOrig / max(1, unconstrainedOrig + unconstrainedTrans)
-                } else {
-                    // Bounded adaptive allocation: guarantee at least 30% for original, 30% for translation
-                    let rawRatio = unconstrainedOrig / max(1, unconstrainedOrig + unconstrainedTrans)
-                    origRatio = min(0.65, max(0.35, rawRatio))
-                }
+            let block = alignBlock(
+                height: totalHeight,
+                canvasHeight: height,
+                metrics: metrics,
+                position: model.verticalPosition,
+                hPadding: hPadding,
+                textWidth: textWidth
+            )
 
-                // Low-pass filter to prevent layout jitter on partial tokens
-                let smoothedRatio = lastAllocatedOrigRatio * 0.7 + origRatio * 0.3
-                lastAllocatedOrigRatio = smoothedRatio
+            let origY = block.minY
+            let transY = origY + origHeight + metrics.blockGap
 
-                let origHeight = totalAvail * smoothedRatio
-                let transHeight = totalAvail - origHeight
+            let rollingOrig = tailWindow(
+                for: origText,
+                font: origFont,
+                maxWidth: textWidth,
+                maxHeight: origHeight,
+                paragraphStyle: paragraph
+            )
+            let rollingTrans = tailWindow(
+                for: transText,
+                font: transFont,
+                maxWidth: textWidth,
+                maxHeight: transHeight,
+                paragraphStyle: paragraph
+            )
 
-                let rollingOrig = tailWindow(
-                    for: origText,
-                    font: origFont,
-                    maxWidth: textWidth,
-                    maxHeight: origHeight,
-                    paragraphStyle: paragraph
-                )
-                let rollingTrans = tailWindow(
-                    for: transText,
-                    font: transFont,
-                    maxWidth: textWidth,
-                    maxHeight: transHeight,
-                    paragraphStyle: paragraph
-                )
+            let origRect = CGRect(x: hPadding, y: origY, width: textWidth, height: origHeight)
+            let transRect = CGRect(x: hPadding, y: transY, width: textWidth, height: transHeight)
 
-                let measuredOrigH = min(origHeight, measureText(rollingOrig, font: origFont, maxWidth: textWidth, paragraphStyle: paragraph).height)
-                let measuredTransH = min(transHeight, measureText(rollingTrans, font: transFont, maxWidth: textWidth, paragraphStyle: paragraph).height)
-                let combinedH = measuredOrigH + metrics.blockGap + measuredTransH
-
-                let block = alignBlock(
-                    height: combinedH,
-                    canvasHeight: height,
-                    metrics: metrics,
-                    position: model.verticalPosition,
-                    hPadding: hPadding,
-                    textWidth: textWidth
-                )
-
-                let origRect = CGRect(x: hPadding, y: block.minY, width: textWidth, height: measuredOrigH)
-                let transRect = CGRect(x: hPadding, y: origRect.maxY + metrics.blockGap, width: textWidth, height: measuredTransH)
-
-                return PiPMeasuredLayout(
-                    originalRect: origRect,
-                    originalTextToDraw: rollingOrig,
-                    originalFont: origFont,
-                    originalColor: origColor,
-                    translationRect: transRect,
-                    translationTextToDraw: rollingTrans,
-                    translationFont: transFont,
-                    translationColor: transColor,
-                    paragraphStyle: paragraph
-                )
-            }
+            return PiPMeasuredLayout(
+                originalRect: origRect,
+                originalTextToDraw: rollingOrig,
+                originalFont: origFont,
+                originalColor: origColor,
+                translationRect: transRect,
+                translationTextToDraw: rollingTrans,
+                translationFont: transFont,
+                translationColor: transColor,
+                paragraphStyle: paragraph
+            )
         }
     }
 

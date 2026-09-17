@@ -22,12 +22,14 @@ final class LectureController: ObservableObject {
     @Published var provisional: [TranscriptLine] = []
     @Published var liveDraft = "" {
         didSet {
+            let activeTranslation = validTranslatedDraft.isEmpty ? (translationCaption.isEmpty ? nil : translationCaption) : validTranslatedDraft
+            CaptionFeed.shared.update(original: caption, translation: activeTranslation)
             if !liveDraft.isEmpty {
                 captionRevisionCounter += 1
                 print("CaptionLatency speech_partial=\(Date().timeIntervalSince1970) revision=\(captionRevisionCounter)")
                 LiveActivityCoordinator.shared.updatePartial(
                     original: caption,
-                    translation: validTranslatedDraft,
+                    translation: activeTranslation ?? "",
                     revision: captionRevisionCounter
                 )
             }
@@ -44,6 +46,8 @@ final class LectureController: ObservableObject {
     @Published var translationStatus = "開啟後，英語內容會分段翻成繁體中文"
     @Published var translatedDraft = "" {
         didSet {
+            let activeTranslation = validTranslatedDraft.isEmpty ? (translationCaption.isEmpty ? nil : translationCaption) : validTranslatedDraft
+            CaptionFeed.shared.update(original: caption, translation: activeTranslation)
             LiveCaptionSyncController.shared.updateTranslation(translation: validTranslatedDraft)
         }
     }
@@ -2080,30 +2084,30 @@ final class LectureController: ObservableObject {
         guard session?.id == sessionID else { return }
         let targetID = versionID ?? session?.preferredVersionID
         let idx = (targetID != nil ? session?.transcriptVersions.firstIndex(where: { $0.id == targetID }) : nil) ?? session?.preferredVersionIndex ?? -1
-        guard idx >= 0, let currentVersions = session?.transcriptVersions, idx < currentVersions.count else {
+        if idx >= 0, let currentVersions = session?.transcriptVersions, idx < currentVersions.count {
+            var values = session?.transcriptVersions[idx].translations ?? []
+            values.removeAll { $0.id == line.id }
+            values.append(TranslatedLine(id: line.id, source: line.text, text: text))
+            session?.transcriptVersions[idx].translations = values
+            if let tvID = session?.transcriptVersions[idx].preferredTranslationVersionID,
+               let tvIndex = session?.transcriptVersions[idx].translationVersions?.firstIndex(where: { $0.id == tvID }) {
+                session?.transcriptVersions[idx].translationVersions?[tvIndex].provider = translationProvider
+                session?.transcriptVersions[idx].translationVersions?[tvIndex].sourceLocale = translationSource
+                session?.transcriptVersions[idx].translationVersions?[tvIndex].targetLocale = translationTarget
+                session?.transcriptVersions[idx].translationVersions?[tvIndex].strategy = translationStrategy.rawValue
+                session?.transcriptVersions[idx].translationVersions?[tvIndex].recognitionEngine = recognitionEngine
+                session?.transcriptVersions[idx].translationVersions?[tvIndex].recognitionLanguage = language
+            }
+        } else {
             var values = session?.translations ?? []
             values.removeAll { $0.id == line.id }
             values.append(TranslatedLine(id: line.id, source: line.text, text: text))
             session?.translations = values
-            persist()
-            return
-        }
-        var values = session?.transcriptVersions[idx].translations ?? []
-        values.removeAll { $0.id == line.id }
-        values.append(TranslatedLine(id: line.id, source: line.text, text: text))
-        session?.transcriptVersions[idx].translations = values
-        if let tvID = session?.transcriptVersions[idx].preferredTranslationVersionID,
-           let tvIndex = session?.transcriptVersions[idx].translationVersions?.firstIndex(where: { $0.id == tvID }) {
-            session?.transcriptVersions[idx].translationVersions?[tvIndex].provider = translationProvider
-            session?.transcriptVersions[idx].translationVersions?[tvIndex].sourceLocale = translationSource
-            session?.transcriptVersions[idx].translationVersions?[tvIndex].targetLocale = translationTarget
-            session?.transcriptVersions[idx].translationVersions?[tvIndex].strategy = translationStrategy.rawValue
-            session?.transcriptVersions[idx].translationVersions?[tvIndex].recognitionEngine = recognitionEngine
-            session?.transcriptVersions[idx].translationVersions?[tvIndex].recognitionLanguage = language
         }
         persist()
         CaptionTimeline.shared.recordTranslationComplete(forLine: line.id, throughPTS: line.end)
         LiveActivityCoordinator.shared.updateTranscript(original: line.text, translation: text)
+        CaptionFeed.shared.update(original: caption, translation: text)
         LiveCaptionSyncController.shared.updateTranslation(forCueID: line.id, throughPTS: line.end, translation: text)
     }
     func generateMinutes() async {

@@ -898,6 +898,55 @@ final class AudioAndCaptionTests: XCTestCase {
         }
     }
 
+    func testPiPCaptionLayoutEngineFixedSlotCoordinatesDoNotJitter() {
+        let engine = PiPCaptionLayoutEngine()
+        let metrics = PiPLayoutMetrics(
+            horizontalPadding: 12,
+            verticalPadding: 8,
+            originalFont: 14,
+            translationFont: 14,
+            blockGap: 4,
+            lineSpacing: 3,
+            maxLines: 3
+        )
+        let canvas = CGSize(width: 400, height: 120)
+
+        let tokens = [
+            "The",
+            "The system",
+            "The system is",
+            "The system is asymptotically",
+            "The system is asymptotically stable under arbitrary perturbations."
+        ]
+
+        var origYValues: [CGFloat] = []
+        var transYValues: [CGFloat] = []
+
+        for token in tokens {
+            let model = CaptionPresentationModel(
+                originalText: token,
+                translatedText: "系統在任意擾動下漸近穩定。",
+                displayMode: .bilingual,
+                aspectRatio: .bar,
+                alignment: .left,
+                verticalPosition: .bottom
+            )
+            let layout = engine.layout(model: model, canvasSize: canvas, metrics: metrics)
+            if let origRect = layout.originalRect, let transRect = layout.translationRect {
+                origYValues.append(origRect.origin.y)
+                transYValues.append(transRect.origin.y)
+            }
+        }
+
+        XCTAssertEqual(origYValues.count, tokens.count)
+        XCTAssertEqual(transYValues.count, tokens.count)
+        // All Y coordinates must be completely identical (zero jitter)
+        for i in 1..<origYValues.count {
+            XCTAssertEqual(origYValues[i], origYValues[0], accuracy: 0.0001, "Original text vertical position must remain anchored")
+            XCTAssertEqual(transYValues[i], transYValues[0], accuracy: 0.0001, "Translation vertical position must remain anchored")
+        }
+    }
+
     @MainActor
     func testModelCenterManifestAndCapabilities() {
         let center = ModelCenter.shared
@@ -1127,6 +1176,13 @@ final class AudioAndCaptionTests: XCTestCase {
         controller.updateTranslation(forCueID: cueFinal.id, throughPTS: 1.5, translation: "你好世界。")
         XCTAssertEqual(CaptionFeed.shared.latestTranslation, "你好世界。")
         XCTAssertEqual(timeline.translatedThrough, 1.5)
+
+        // Delayed translation arrival after subsequent speech partial has already started:
+        // Must NOT be dropped, even though latestCueID has advanced!
+        let cueNext = controller.receivePartial(start: 1.5, end: 2.0, text: "Next line", engine: "apple", language: "en")
+        XCTAssertEqual(CaptionFeed.shared.latestCueID, cueNext.id)
+        controller.updateTranslation(forCueID: cueFinal.id, throughPTS: 1.5, translation: "你好世界（更新）。")
+        XCTAssertEqual(CaptionFeed.shared.latestTranslation, "你好世界（更新）。", "Completed translation must never be dropped when subsequent speech begins")
     }
 
     @MainActor
@@ -1427,7 +1483,7 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertEqual(zipformerItem?.isSupportedOnCurrentDevice, true)
         XCTAssertNil(zipformerItem?.unsupportedReason)
         XCTAssertEqual(zipformerItem?.engineType, .zipformer)
-        XCTAssertEqual(zipformerItem?.downloadSizeMB, 48)
+        XCTAssertEqual(zipformerItem?.downloadSizeMB, 88)
 
         let paraformerItem = center.manifest.first(where: { $0.id == "paraformer-bilingual" })
         XCTAssertNotNil(paraformerItem)

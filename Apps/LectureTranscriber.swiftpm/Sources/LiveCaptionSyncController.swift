@@ -37,27 +37,16 @@ public final class LiveCaptionSyncController: ObservableObject {
         translation: String? = nil
     ) -> CaptionCue {
         let cue = timeline.receivePartial(start: start, end: end, text: text, engine: engine, language: language)
-        let state = timeline.syncState
-        let now = Date()
-
-        switch state {
-        case .normal:
-            emit(id: cue.id, original: text, translation: translation ?? cue.translatedText, cueEndTime: end)
-
-        case .catchingUp:
-            // Coalesce / rate limit partial updates (latest-state-wins)
-            if now.timeIntervalSince(lastPartialEmitTime) >= catchUpThrottleInterval {
-                lastPartialEmitTime = now
-                emit(id: cue.id, original: text, translation: translation ?? cue.translatedText, cueEndTime: end)
-            }
-
-        case .stale:
-            // In STALE: Skip intermediate partials unless sufficiently spaced for a fresh leap
-            if now.timeIntervalSince(lastPartialEmitTime) >= staleThrottleInterval {
-                lastPartialEmitTime = now
-                emit(id: cue.id, original: text, translation: translation ?? cue.translatedText, cueEndTime: end)
-            }
+        lastPartialEmitTime = Date()
+        let resolvedTranslation: String?
+        if let translation, !translation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            resolvedTranslation = translation
+        } else if let cueTrans = cue.translatedText, !cueTrans.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            resolvedTranslation = cueTrans
+        } else {
+            resolvedTranslation = nil
         }
+        emit(id: cue.id, original: text, translation: resolvedTranslation, cueEndTime: end)
         return cue
     }
 
@@ -73,8 +62,16 @@ public final class LiveCaptionSyncController: ObservableObject {
         translation: String? = nil
     ) -> CaptionCue {
         let cue = timeline.receiveFinal(id: id, start: start, end: end, text: text, engine: engine, language: language)
+        let resolvedTranslation: String?
+        if let translation, !translation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            resolvedTranslation = translation
+        } else if let cueTrans = cue.translatedText, !cueTrans.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            resolvedTranslation = cueTrans
+        } else {
+            resolvedTranslation = nil
+        }
         // Finals are always emitted to display latest confirmed text with authoritative cue ID
-        emit(id: cue.id, original: text, translation: translation ?? cue.translatedText, cueEndTime: end)
+        emit(id: cue.id, original: text, translation: resolvedTranslation, cueEndTime: end)
         return cue
     }
 
@@ -89,14 +86,12 @@ public final class LiveCaptionSyncController: ObservableObject {
             timeline.recordTranslationComplete(forLine: id, throughPTS: pts)
         }
         // Delayed translation policy:
-        // If cue A is still the currently displayed cue (or id is nil), update visible translation
-        // If cue A is no longer the visible cue: do NOT overwrite current cue B's displayed translation!
-        if id == nil || id == CaptionFeed.shared.latestCueID {
-            CaptionFeed.shared.update(
-                translation: translation,
-                cueEndTime: throughPTS ?? CaptionFeed.shared.latestCueEndTime
-            )
-        }
+        // Always surface latest available translation to CaptionFeed so completed translations
+        // are never dropped when subsequent speech partials have already begun.
+        CaptionFeed.shared.update(
+            translation: translation,
+            cueEndTime: throughPTS ?? CaptionFeed.shared.latestCueEndTime
+        )
     }
 
     public func reset() {

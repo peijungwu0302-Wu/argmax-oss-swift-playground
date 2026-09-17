@@ -131,7 +131,7 @@ public final class ModelCenter: ObservableObject {
                 id: "zipformer-bilingual",
                 name: "Zipformer Bilingual",
                 engineType: .zipformer,
-                downloadSizeMB: 48,
+                downloadSizeMB: 88,
                 memoryEstimateMB: 150,
                 supportedLanguages: ["zh", "en"],
                 supportsVocabularyBias: false,
@@ -253,7 +253,7 @@ public final class ModelCenter: ObservableObject {
         let targetFolderName: String
         let requiredFiles: [String]
         if modelId == "zipformer-bilingual" {
-            targetFolderName = "sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16"
+            targetFolderName = "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20"
             requiredFiles = [
                 "encoder-epoch-99-avg-1.int8.onnx",
                 "decoder-epoch-99-avg-1.onnx",
@@ -361,10 +361,10 @@ public final class ModelCenter: ObservableObject {
         let files: [(String, String)]
         if modelId == "zipformer-bilingual" {
             files = [
-                ("encoder-epoch-99-avg-1.int8.onnx", "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16/resolve/main/encoder-epoch-99-avg-1.int8.onnx"),
-                ("decoder-epoch-99-avg-1.onnx", "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16/resolve/main/decoder-epoch-99-avg-1.onnx"),
-                ("joiner-epoch-99-avg-1.int8.onnx", "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16/resolve/main/joiner-epoch-99-avg-1.int8.onnx"),
-                ("tokens.txt", "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16/resolve/main/tokens.txt")
+                ("encoder-epoch-99-avg-1.int8.onnx", "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/encoder-epoch-99-avg-1.int8.onnx"),
+                ("decoder-epoch-99-avg-1.onnx", "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/decoder-epoch-99-avg-1.onnx"),
+                ("joiner-epoch-99-avg-1.int8.onnx", "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/joiner-epoch-99-avg-1.int8.onnx"),
+                ("tokens.txt", "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/tokens.txt")
             ]
         } else if modelId == "paraformer-bilingual" {
             files = [

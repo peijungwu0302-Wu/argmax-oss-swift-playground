@@ -3,7 +3,7 @@ import AVFoundation
 
 @MainActor
 final class ZipformerStreamingEngine: LiveSpeechEngine {
-    static let modelFolder = "sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16"
+    static let modelFolder = "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20"
     static let encoderName = "encoder-epoch-99-avg-1.int8.onnx"
     static let decoderName = "decoder-epoch-99-avg-1.onnx"
     static let joinerName = "joiner-epoch-99-avg-1.int8.onnx"
@@ -28,7 +28,7 @@ final class ZipformerStreamingEngine: LiveSpeechEngine {
         }
         let canonical = base.appendingPathComponent(modelFolder, isDirectory: true)
         if FileManager.default.fileExists(atPath: canonical.path) { return canonical }
-        let legacy = base.appendingPathComponent("sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20", isDirectory: true)
+        let legacy = base.appendingPathComponent("sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16", isDirectory: true)
         if FileManager.default.fileExists(atPath: legacy.path) { return legacy }
         return canonical
     }
