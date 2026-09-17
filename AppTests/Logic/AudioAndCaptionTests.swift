@@ -921,17 +921,18 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertTrue(whisperTurbo?.supportsVocabularyBias == true)
 
         // Verify Zipformer item
-        // Verify Zipformer & Paraformer truthful unavailable status in v1.9.1
         let zipformer = center.manifest.first(where: { $0.id == "zipformer-bilingual" })
         XCTAssertNotNil(zipformer)
         XCTAssertEqual(zipformer?.engineType, .zipformer)
-        XCTAssertFalse(zipformer?.isSupportedOnCurrentDevice == true, "Zipformer must be unavailable in v1.9.1 without sherpa-onnx runtime")
+        XCTAssertTrue(zipformer?.isSupportedOnCurrentDevice == true, "Zipformer is supported in v1.9.1 with sherpa-onnx runtime")
+        XCTAssertNil(zipformer?.unsupportedReason)
         XCTAssertFalse(center.isModelDownloaded("zipformer-bilingual"))
 
         let paraformer = center.manifest.first(where: { $0.id == "paraformer-bilingual" })
         XCTAssertNotNil(paraformer)
         XCTAssertEqual(paraformer?.engineType, .paraformer)
-        XCTAssertFalse(paraformer?.isSupportedOnCurrentDevice == true, "Paraformer must be unavailable in v1.9.1 without sherpa-onnx runtime")
+        XCTAssertTrue(paraformer?.isSupportedOnCurrentDevice == true, "Paraformer is supported in v1.9.1 with sherpa-onnx runtime")
+        XCTAssertNil(paraformer?.unsupportedReason)
         XCTAssertFalse(center.isModelDownloaded("paraformer-bilingual"))
 
         // Verify Qwen3-ASR unsupported status on standard mobile profile and truthful wording
@@ -1041,6 +1042,7 @@ final class AudioAndCaptionTests: XCTestCase {
     func testFactualWatermarksNeverFabricateOnPauseOrStale() {
         let timeline = CaptionTimeline()
         timeline.reset()
+        timeline.setPresentationSurfaceActive(true)
 
         timeline.recordAudioCaptured(duration: 10.0, pts: 10.0)
         timeline.recordAudioFedToASR(samplesCount: 160_000, pts: 10.0)
@@ -1117,7 +1119,9 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertEqual(timeline.cues.count, 1, "Finalized cue must be preserved in storage")
         XCTAssertEqual(timeline.hypothesisThrough, 1.5, "Final line must advance hypothesisThrough")
         XCTAssertEqual(timeline.recognizedThrough, 1.5, "Final line must advance recognizedThrough")
-        XCTAssertEqual(timeline.displayedThrough, 1.5, "Display watermark must advance when caption is emitted")
+        XCTAssertEqual(timeline.displayedThrough, 0.0, "Display watermark must not advance before actual presentation")
+        timeline.recordCaptionDisplayed(throughPTS: 1.5)
+        XCTAssertEqual(timeline.displayedThrough, 1.5, "Display watermark advances upon presentation acknowledgement")
 
         // Translation update
         controller.updateTranslation(forCueID: cueFinal.id, throughPTS: 1.5, translation: "你好世界。")
@@ -1191,7 +1195,7 @@ final class AudioAndCaptionTests: XCTestCase {
         try file.write(from: buffer)
 
         // Archive to AAC (Standard 64 kbps)
-        let aacURL = try StoredAudio.archive(source: masterURL, samples: 48000, quality: .standard)
+        let aacURL = try StoredAudio.archive(source: masterURL, samples: 16000, quality: .standard)
         XCTAssertEqual(aacURL.pathExtension.lowercased(), "m4a")
 
         var opened: ExtAudioFileRef?
@@ -1205,7 +1209,7 @@ final class AudioAndCaptionTests: XCTestCase {
         }
 
         // Archive to Uncompressed WAV
-        let wavURL = try StoredAudio.archive(source: masterURL, samples: 48000, quality: .uncompressed)
+        let wavURL = try StoredAudio.archive(source: masterURL, samples: 16000, quality: .uncompressed)
         XCTAssertEqual(wavURL.pathExtension.lowercased(), "wav")
         var openedWAV: ExtAudioFileRef?
         XCTAssertEqual(ExtAudioFileOpenURL(wavURL as CFURL, &openedWAV), noErr)
@@ -1304,25 +1308,25 @@ final class AudioAndCaptionTests: XCTestCase {
     func testPresentationSurfaceActivePreventsFalseStaleSyncState() {
         let timeline = CaptionTimeline.shared
         timeline.reset()
-        // Feed audio up to 10.0s
-        timeline.recordAudioCaptured(duration: 10.0, pts: 10.0)
-        timeline.recordAudioFedToASR(samplesCount: 160000, pts: 10.0)
-        _ = timeline.receiveFinal(id: UUID(), start: 0.0, end: 2.0, text: "Old cue", engine: "apple", language: "en")
+        // Feed audio up to 6.0s
+        timeline.recordAudioCaptured(duration: 6.0, pts: 6.0)
+        timeline.recordAudioFedToASR(samplesCount: 96000, pts: 6.0)
+        _ = timeline.receiveFinal(id: UUID(), start: 0.0, end: 6.0, text: "Old cue", engine: "apple", language: "en")
 
-        // Surface inactive: even if display lag is huge (10.0 - 0.0 = 10.0s), sync state must NOT be .stale
+        // Surface inactive: even if display lag is huge (6.0 - 0.0 = 6.0s > 3.5s), sync state must NOT be .stale
         timeline.setPresentationSurfaceActive(false)
         let inactiveSnapshot = timeline.snapshot()
         XCTAssertFalse(inactiveSnapshot.presentationSurfaceActive)
         XCTAssertNotEqual(inactiveSnapshot.syncState, .stale, "Inactive presentation surface must not declare stale sync state")
 
-        // Surface active: display lag (10.0 - 0.0 = 10.0s > 2.0s) triggers .stale
+        // Surface active: display lag (6.0 - 0.0 = 6.0s > 3.5s) triggers .stale
         timeline.setPresentationSurfaceActive(true)
         let activeSnapshot = timeline.snapshot()
         XCTAssertTrue(activeSnapshot.presentationSurfaceActive)
-        XCTAssertEqual(activeSnapshot.syncState, .stale, "Active presentation surface with displayMediaLag > 2.0s must be stale")
+        XCTAssertEqual(activeSnapshot.syncState, .stale, "Active presentation surface with displayMediaLag > 3.5s must be stale")
 
-        // Acknowledge display up to 9.5s
-        timeline.recordCaptionDisplayed(throughPTS: 9.5)
+        // Acknowledge display up to 6.0s: recLag = 0.0, dispLag = 0.0 -> returns to .normal
+        timeline.recordCaptionDisplayed(throughPTS: 6.0)
         let caughtUpSnapshot = timeline.snapshot()
         XCTAssertEqual(caughtUpSnapshot.syncState, .normal)
     }
