@@ -7,6 +7,7 @@ final class ParaformerStreamingEngine: LiveSpeechEngine {
     static let encoderName = "encoder.int8.onnx"
     static let decoderName = "decoder.int8.onnx"
     static let tokensName = "tokens.txt"
+    static var mockPrepareHandler: (@MainActor (String, @escaping @MainActor (Double?) -> Void) async throws -> Void)?
 
     private let runtime = SherpaOnnxRuntime()
     private var onResult: (@MainActor (SpeechUpdate) -> Void)?
@@ -42,11 +43,16 @@ final class ParaformerStreamingEngine: LiveSpeechEngine {
     }
 
     func prepare(language: String, onProgress: @escaping @MainActor (Double?) -> Void) async throws {
-        guard SherpaOnnxRuntime.isSupported else {
-            throw LectureError.message("此系統平台尚未支援 sherpa-onnx 執行環境。")
-        }
         guard let dir = Self.modelDirectory(), Self.isModelInstalled() else {
             throw LectureError.message("Streaming Paraformer 模型尚未下載，請至模型中心下載後再使用。")
+        }
+        if let mock = Self.mockPrepareHandler {
+            try await mock(language, onProgress)
+            isPrepared = true
+            return
+        }
+        guard SherpaOnnxRuntime.isSupported else {
+            throw LectureError.message("此系統平台尚未支援 sherpa-onnx 執行環境。")
         }
 
         onProgress(0.2)

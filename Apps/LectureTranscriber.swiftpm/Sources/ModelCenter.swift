@@ -53,6 +53,8 @@ public final class ModelCenter: ObservableObject {
     @Published public private(set) var modelStates: [String: ResourceState] = [:]
     public typealias RuntimeValidator = @Sendable (String, URL) async throws -> Void
     public var runtimeValidator: RuntimeValidator?
+    public typealias ModelDownloader = @Sendable (String, @escaping @Sendable (Double?) -> Void) async throws -> Void
+    public var customDownloader: ModelDownloader?
 
     private init() {
         populateManifest()
@@ -344,6 +346,13 @@ public final class ModelCenter: ObservableObject {
         }
 
         modelStates[modelId] = .downloading(bytesReceived: 0, totalBytes: 0, progress: 0)
+        if let customDownloader {
+            try await customDownloader(modelId, progress)
+            if modelStates[modelId] == nil || !modelStates[modelId]!.isReady {
+                modelStates[modelId] = .ready
+            }
+            return
+        }
 
         let stagingDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: stagingDir, withIntermediateDirectories: true)

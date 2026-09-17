@@ -1933,6 +1933,378 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertFalse(center.isModelDownloaded("zipformer-bilingual"))
         XCTAssertEqual(center.state(for: "zipformer-bilingual"), .notDownloaded)
     }
+
+    @MainActor
+    func testDeviceAudioHandoffDrainUntilStableDuringReplaySuspension() async throws {
+        let previousSource = UserDefaults.standard.string(forKey: "audioInputSource")
+        let previousEngine = UserDefaults.standard.string(forKey: "recognitionEngine")
+        defer {
+            if let previousSource {
+                UserDefaults.standard.set(previousSource, forKey: "audioInputSource")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "audioInputSource")
+            }
+            if let previousEngine {
+                UserDefaults.standard.set(previousEngine, forKey: "recognitionEngine")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "recognitionEngine")
+            }
+        }
+
+        let controller = LectureController()
+        controller.audioSource = .deviceAudio
+        controller.isRecording = true
+        controller.recognitionEngine = "apple"
+
+        controller.setDeviceAudioFedSampleIndexForTesting(100_000)
+        controller.setDeviceAudioBufferStartOffsetForTesting(0)
+        controller.appendDeviceAudioBufferForTesting([Float](repeating: 0.1, count: 100_000))
+
+        controller.enterASRHandoffGateForTesting()
+        XCTAssertTrue(controller.isASRHandoffInProgress)
+
+        let candidateEngine = MockLiveSpeechEngine()
+        var chunkInjected = false
+        candidateEngine.onAppend = { [weak controller] _ in
+            guard let controller, !chunkInjected else { return }
+            chunkInjected = true
+            let chunk = TimedAudioChunk(
+                samples: [Float](repeating: 0.2, count: 4000),
+                sampleRate: 16000,
+                channelCount: 1,
+                level: 0.5,
+                startMediaTime: 6.25,
+                endMediaTime: 6.5,
+                startSampleIndex: 100_000,
+                endSampleIndex: 104_000,
+                sourcePTS: 6.25
+            )
+            controller.deviceAudioDidOutput(chunk: chunk)
+        }
+
+        let finalCursor = try await controller.drainDeviceAudioBacklog(from: 100_000) { chunk in
+            try await candidateEngine.append(chunk)
+        }
+
+        XCTAssertTrue(chunkInjected)
+        XCTAssertEqual(finalCursor, 104_000)
+        XCTAssertEqual(controller.deviceAudioFedSampleIndexForTesting, 104_000)
+        XCTAssertEqual(candidateEngine.appendedSamples.count, 4000)
+        XCTAssertEqual(controller.deviceAudioBufferCountForTesting, 104_000)
+    }
+
+    @MainActor
+    func testDeviceAudioHandoffMultipleArrivalsDuringRepeatedDrains() async throws {
+        let previousSource = UserDefaults.standard.string(forKey: "audioInputSource")
+        let previousEngine = UserDefaults.standard.string(forKey: "recognitionEngine")
+        defer {
+            if let previousSource {
+                UserDefaults.standard.set(previousSource, forKey: "audioInputSource")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "audioInputSource")
+            }
+            if let previousEngine {
+                UserDefaults.standard.set(previousEngine, forKey: "recognitionEngine")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "recognitionEngine")
+            }
+        }
+
+        let controller = LectureController()
+        controller.audioSource = .deviceAudio
+        controller.isRecording = true
+        controller.recognitionEngine = "apple"
+
+        controller.setDeviceAudioFedSampleIndexForTesting(50_000)
+        controller.setDeviceAudioBufferStartOffsetForTesting(0)
+        controller.appendDeviceAudioBufferForTesting([Float](repeating: 0.1, count: 50_000))
+
+        controller.enterASRHandoffGateForTesting()
+
+        let candidateEngine = MockLiveSpeechEngine()
+        var drainCount = 0
+        candidateEngine.onAppend = { [weak controller] _ in
+            guard let controller else { return }
+            drainCount += 1
+            if drainCount == 1 {
+                let chunk1 = TimedAudioChunk(
+                    samples: [Float](repeating: 0.2, count: 3000),
+                    sampleRate: 16000,
+                    channelCount: 1,
+                    level: 0.5,
+                    startMediaTime: 3.125,
+                    endMediaTime: 3.3125,
+                    startSampleIndex: 50_000,
+                    endSampleIndex: 53_000,
+                    sourcePTS: 3.125
+                )
+                controller.deviceAudioDidOutput(chunk: chunk1)
+            } else if drainCount == 2 {
+                let chunk2 = TimedAudioChunk(
+                    samples: [Float](repeating: 0.3, count: 2000),
+                    sampleRate: 16000,
+                    channelCount: 1,
+                    level: 0.5,
+                    startMediaTime: 3.3125,
+                    endMediaTime: 3.4375,
+                    startSampleIndex: 53_000,
+                    endSampleIndex: 55_000,
+                    sourcePTS: 3.3125
+                )
+                controller.deviceAudioDidOutput(chunk: chunk2)
+            }
+        }
+
+        // Prime 1000 samples of backlog to kick off drain loop
+        controller.appendDeviceAudioBufferForTesting([Float](repeating: 0.15, count: 1000))
+        let finalCursor = try await controller.drainDeviceAudioBacklog(from: 50_000) { chunk in
+            try await candidateEngine.append(chunk)
+        }
+
+        XCTAssertEqual(drainCount, 3)
+        XCTAssertEqual(candidateEngine.appendedSamples.count, 6000)
+        XCTAssertEqual(finalCursor, 56_000)
+        XCTAssertEqual(controller.deviceAudioFedSampleIndexForTesting, 56_000)
+        XCTAssertEqual(controller.deviceAudioBufferCountForTesting, 56_000)
+    }
+
+    @MainActor
+    func testDeviceAudioHandoffGateRollbackDrainsBacklogUntilStable() async throws {
+        let previousSource = UserDefaults.standard.string(forKey: "audioInputSource")
+        let previousEngine = UserDefaults.standard.string(forKey: "recognitionEngine")
+        defer {
+            if let previousSource {
+                UserDefaults.standard.set(previousSource, forKey: "audioInputSource")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "audioInputSource")
+            }
+            if let previousEngine {
+                UserDefaults.standard.set(previousEngine, forKey: "recognitionEngine")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "recognitionEngine")
+            }
+        }
+
+        let controller = LectureController()
+        controller.audioSource = .deviceAudio
+        controller.isRecording = true
+        controller.recognitionEngine = "apple"
+
+        let oldEngine = MockLiveSpeechEngine()
+        controller.setAppleSpeechForTesting(oldEngine)
+
+        controller.setDeviceAudioFedSampleIndexForTesting(100_000)
+        controller.setDeviceAudioBufferStartOffsetForTesting(0)
+        controller.appendDeviceAudioBufferForTesting([Float](repeating: 0.1, count: 100_000))
+
+        controller.enterASRHandoffGateForTesting()
+
+        // 4000 samples arrive while gate is in progress
+        let gatedChunk = TimedAudioChunk(
+            samples: [Float](repeating: 0.5, count: 4000),
+            sampleRate: 16000,
+            channelCount: 1,
+            level: 0.5,
+            startMediaTime: 6.25,
+            endMediaTime: 6.5,
+            startSampleIndex: 100_000,
+            endSampleIndex: 104_000,
+            sourcePTS: 6.25
+        )
+        controller.deviceAudioDidOutput(chunk: gatedChunk)
+
+        // Configure old engine to receive another chunk while rollback replay is in flight
+        var rollbackArrivalInjected = false
+        oldEngine.onAppend = { [weak controller] _ in
+            guard let controller, !rollbackArrivalInjected else { return }
+            rollbackArrivalInjected = true
+            let extraChunk = TimedAudioChunk(
+                samples: [Float](repeating: 0.6, count: 3000),
+                sampleRate: 16000,
+                channelCount: 1,
+                level: 0.5,
+                startMediaTime: 6.5,
+                endMediaTime: 6.6875,
+                startSampleIndex: 104_000,
+                endSampleIndex: 107_000,
+                sourcePTS: 6.5
+            )
+            controller.deviceAudioDidOutput(chunk: extraChunk)
+        }
+
+        let session = LectureSession(title: "Rollback Test", language: "zh")
+        controller.session = session
+
+        await controller.rollbackGatedDeviceAudio(
+            oldEngine: "apple",
+            fromSample: 100_000,
+            committedBoundary: 100_000,
+            current: session
+        )
+        controller.leaveASRHandoffGateForTesting()
+
+        XCTAssertTrue(rollbackArrivalInjected)
+        XCTAssertEqual(oldEngine.appendedSamples.count, 7000)
+        XCTAssertEqual(controller.deviceAudioFedSampleIndexForTesting, 107_000)
+        XCTAssertEqual(controller.deviceAudioBufferCountForTesting, 107_000)
+        XCTAssertFalse(controller.isASRHandoffInProgress)
+    }
+
+    @MainActor
+    func testModelCenterDownloaderWiringZipformerAndParaformer() async throws {
+        let previousEngine = UserDefaults.standard.string(forKey: "recognitionEngine")
+        defer {
+            if let previousEngine {
+                UserDefaults.standard.set(previousEngine, forKey: "recognitionEngine")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "recognitionEngine")
+            }
+            ModelCenter.shared.customDownloader = nil
+            ZipformerStreamingEngine.mockPrepareHandler = nil
+            try? ModelCenter.shared.deleteModel("zipformer-bilingual")
+        }
+
+        try? ModelCenter.shared.deleteModel("zipformer-bilingual")
+        XCTAssertFalse(ZipformerStreamingEngine.isModelInstalled())
+
+        var downloadedModels: [String] = []
+        var progressValues: [Double] = []
+        ModelCenter.shared.customDownloader = { modelId, progress in
+            downloadedModels.append(modelId)
+            progress(0.4)
+            progressValues.append(0.4)
+            progress(0.8)
+            progressValues.append(0.8)
+
+            // Stage mock files to satisfy isModelInstalled()
+            let base = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+                .appendingPathComponent("SpeechModels", isDirectory: true)
+            let target = base.appendingPathComponent(ZipformerStreamingEngine.modelFolder, isDirectory: true)
+            try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+            let data = Data(repeating: 0x42, count: 2048)
+            try data.write(to: target.appendingPathComponent(ZipformerStreamingEngine.encoderName))
+            try data.write(to: target.appendingPathComponent(ZipformerStreamingEngine.decoderName))
+            try data.write(to: target.appendingPathComponent(ZipformerStreamingEngine.joinerName))
+            try "token 1\n".write(to: target.appendingPathComponent(ZipformerStreamingEngine.tokensName), atomically: true, encoding: .utf8)
+            progress(1.0)
+            progressValues.append(1.0)
+        }
+
+        var prepareInvoked = false
+        ZipformerStreamingEngine.mockPrepareHandler = { _, onProgress in
+            prepareInvoked = true
+            onProgress(1.0)
+        }
+
+        let controller = LectureController()
+        controller.isRecording = false
+        controller.setRecognitionEngine("zipformer")
+
+        await controller.prepareModel()
+
+        XCTAssertEqual(downloadedModels, ["zipformer-bilingual"])
+        XCTAssertTrue(prepareInvoked)
+        XCTAssertEqual(controller.resourceState, .ready)
+        XCTAssertEqual(controller.loadedModel, "zipformer")
+        XCTAssertTrue(ZipformerStreamingEngine.isModelInstalled())
+    }
+
+    @MainActor
+    func testModelCenterDownloaderSkipIfAlreadyInstalled() async throws {
+        let previousEngine = UserDefaults.standard.string(forKey: "recognitionEngine")
+        defer {
+            if let previousEngine {
+                UserDefaults.standard.set(previousEngine, forKey: "recognitionEngine")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "recognitionEngine")
+            }
+            ModelCenter.shared.customDownloader = nil
+            ZipformerStreamingEngine.mockPrepareHandler = nil
+            try? ModelCenter.shared.deleteModel("zipformer-bilingual")
+        }
+
+        // Install model beforehand
+        let base = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            .appendingPathComponent("SpeechModels", isDirectory: true)
+        let target = base.appendingPathComponent(ZipformerStreamingEngine.modelFolder, isDirectory: true)
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        let data = Data(repeating: 0x42, count: 2048)
+        try data.write(to: target.appendingPathComponent(ZipformerStreamingEngine.encoderName))
+        try data.write(to: target.appendingPathComponent(ZipformerStreamingEngine.decoderName))
+        try data.write(to: target.appendingPathComponent(ZipformerStreamingEngine.joinerName))
+        try "token 1\n".write(to: target.appendingPathComponent(ZipformerStreamingEngine.tokensName), atomically: true, encoding: .utf8)
+        XCTAssertTrue(ZipformerStreamingEngine.isModelInstalled())
+
+        var downloadCalled = false
+        ModelCenter.shared.customDownloader = { _, _ in
+            downloadCalled = true
+            XCTFail("Must NOT be invoked when model is already installed")
+        }
+
+        var prepareInvoked = false
+        ZipformerStreamingEngine.mockPrepareHandler = { _, onProgress in
+            prepareInvoked = true
+            onProgress(1.0)
+        }
+
+        let controller = LectureController()
+        controller.isRecording = false
+        controller.setRecognitionEngine("zipformer")
+
+        await controller.prepareModel()
+
+        XCTAssertFalse(downloadCalled)
+        XCTAssertTrue(prepareInvoked)
+        XCTAssertEqual(controller.resourceState, .ready)
+        XCTAssertEqual(controller.loadedModel, "zipformer")
+    }
+
+    @MainActor
+    func testHotSwitchDuringRecordingDoesNotTriggerDownloadWhenModelMissing() async throws {
+        let previousSource = UserDefaults.standard.string(forKey: "audioInputSource")
+        let previousEngine = UserDefaults.standard.string(forKey: "recognitionEngine")
+        defer {
+            if let previousSource {
+                UserDefaults.standard.set(previousSource, forKey: "audioInputSource")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "audioInputSource")
+            }
+            if let previousEngine {
+                UserDefaults.standard.set(previousEngine, forKey: "recognitionEngine")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "recognitionEngine")
+            }
+            ModelCenter.shared.customDownloader = nil
+            try? ModelCenter.shared.deleteModel("zipformer-bilingual")
+        }
+
+        try? ModelCenter.shared.deleteModel("zipformer-bilingual")
+        XCTAssertFalse(ZipformerStreamingEngine.isModelInstalled())
+
+        var downloadCalled = false
+        ModelCenter.shared.customDownloader = { _, _ in
+            downloadCalled = true
+            XCTFail("Hot-switch during recording must NEVER trigger automated download")
+        }
+
+        let controller = LectureController()
+        controller.audioSource = .deviceAudio
+        controller.isRecording = true
+        controller.recognitionEngine = "apple"
+        let activeEngine = MockLiveSpeechEngine()
+        controller.setAppleSpeechForTesting(activeEngine)
+
+        let session = LectureSession(title: "Recording Session", language: "zh")
+        controller.session = session
+
+        await controller.switchRecognitionEngine(to: "zipformer")
+
+        XCTAssertFalse(downloadCalled)
+        XCTAssertEqual(controller.recognitionEngine, "apple")
+        XCTAssertTrue(controller.isRecording)
+        XCTAssertNotNil(controller.errorMessage)
+        XCTAssertFalse(controller.isASRHandoffInProgress)
+    }
 }
 
 @MainActor
@@ -1941,6 +2313,7 @@ final class MockLiveSpeechEngine: LiveSpeechEngine {
     var isCancelled = false
     var isFinished = false
     var isStarted = false
+    var onAppend: (([Float]) async throws -> Void)?
 
     func prepare(language: String, onProgress: @escaping @MainActor (Double?) -> Void) async throws {}
     func start(language: String, onResult: @escaping @MainActor (SpeechUpdate) -> Void) async throws {
@@ -1948,6 +2321,9 @@ final class MockLiveSpeechEngine: LiveSpeechEngine {
     }
     func append(_ samples: [Float]) async throws {
         appendedSamples.append(contentsOf: samples)
+        if let onAppend {
+            try await onAppend(samples)
+        }
     }
     func finish() async throws {
         isFinished = true
