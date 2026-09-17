@@ -1982,14 +1982,14 @@ final class AudioAndCaptionTests: XCTestCase {
             controller.deviceAudioDidOutput(chunk: chunk)
         }
 
-        let finalCursor = try await controller.drainDeviceAudioBacklog(from: 100_000) { chunk in
+        let finalCursor = try await controller.drainDeviceAudioBacklog(from: 96_000) { chunk in
             try await candidateEngine.append(chunk)
         }
 
         XCTAssertTrue(chunkInjected)
         XCTAssertEqual(finalCursor, 104_000)
         XCTAssertEqual(controller.deviceAudioFedSampleIndexForTesting, 104_000)
-        XCTAssertEqual(candidateEngine.appendedSamples.count, 4000)
+        XCTAssertEqual(candidateEngine.appendedSamples.count, 8000)
         XCTAssertEqual(controller.deviceAudioBufferCountForTesting, 104_000)
     }
 
