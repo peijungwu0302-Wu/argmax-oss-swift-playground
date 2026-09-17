@@ -1000,16 +1000,18 @@ final class AudioAndCaptionTests: XCTestCase {
 
         timeline.recordAudioCaptured(duration: chunk1.duration, pts: chunk1.endMediaTime)
         XCTAssertEqual(timeline.capturedThrough, 2.0)
+        timeline.recordCaptionDisplayed(throughPTS: chunk1.endMediaTime)
+        XCTAssertEqual(timeline.displayedThrough, 2.0)
 
-        // Second chunk: from 2.0 to 5.0
-        timeline.recordAudioCaptured(duration: 3.0, pts: 5.0)
-        XCTAssertEqual(timeline.capturedThrough, 5.0)
+        // Second chunk: from 2.0 to 3.0
+        timeline.recordAudioCaptured(duration: 1.0, pts: 3.0)
+        XCTAssertEqual(timeline.capturedThrough, 3.0)
 
-        timeline.recordAudioFedToASR(samplesCount: 48000, pts: 5.0)
-        XCTAssertEqual(timeline.fedThrough, 5.0)
+        timeline.recordAudioFedToASR(samplesCount: 16000, pts: 3.0)
+        XCTAssertEqual(timeline.fedThrough, 3.0)
 
-        timeline.recordASRFinalized(throughPTS: 4.5, wallClockDuration: 0.12)
-        XCTAssertEqual(timeline.recognizedThrough, 4.5)
+        timeline.recordASRFinalized(throughPTS: 2.5, wallClockDuration: 0.12)
+        XCTAssertEqual(timeline.recognizedThrough, 2.5)
         XCTAssertEqual(timeline.lastASRProcessingDuration, 0.12)
 
         // Media lag is strictly in the media domain: captured - recognized
@@ -1017,14 +1019,14 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(timeline.recognitionMediaLag, 0.0)
 
         // Wall-clock translation latency tracked separately
-        timeline.recordTranslationComplete(throughPTS: 4.5, wallClockDuration: 0.08)
-        XCTAssertEqual(timeline.translatedThrough, 4.5)
+        timeline.recordTranslationComplete(throughPTS: 2.5, wallClockDuration: 0.08)
+        XCTAssertEqual(timeline.translatedThrough, 2.5)
         XCTAssertEqual(timeline.lastTranslationProcessingDuration, 0.08)
         XCTAssertEqual(timeline.translationMediaLag, 0.0)
 
         // Display lag
-        timeline.recordCaptionDisplayed(throughPTS: 4.5)
-        XCTAssertEqual(timeline.displayedThrough, 4.5)
+        timeline.recordCaptionDisplayed(throughPTS: 2.5)
+        XCTAssertEqual(timeline.displayedThrough, 2.5)
         XCTAssertEqual(timeline.displayMediaLag, 0.0)
         XCTAssertEqual(timeline.syncState, .normal)
     }
@@ -1050,6 +1052,18 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertEqual(timeline.recognizedThrough, 6.0, "Pause must not fabricate recognition progress")
         XCTAssertEqual(timeline.translatedThrough, 6.0, "Pause must not fabricate translation progress")
         XCTAssertEqual(timeline.displayedThrough, 2.0, "Pause must not fabricate display progress")
+
+        // Rendering newest cue resolves stale state into catchingUp
+        timeline.recordCaptionDisplayed(throughPTS: 6.0)
+        XCTAssertEqual(timeline.displayedThrough, 6.0)
+        XCTAssertEqual(timeline.displayMediaLag, 0.0)
+        XCTAssertEqual(timeline.syncState, .catchingUp)
+
+        // When ASR and display fully catch up, state transitions to normal
+        timeline.recordASRFinalized(throughPTS: 10.0)
+        timeline.recordCaptionDisplayed(throughPTS: 10.0)
+        XCTAssertEqual(timeline.recognitionMediaLag, 0.0)
+        XCTAssertEqual(timeline.syncState, .normal)
     }
 
     @MainActor

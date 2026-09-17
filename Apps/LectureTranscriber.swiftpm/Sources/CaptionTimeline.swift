@@ -313,6 +313,9 @@ public final class CaptionTimeline: ObservableObject {
             syncState = .catchingUp
         } else if recLag <= catchUpExitThreshold && dispLag <= catchUpExitThreshold {
             syncState = .normal
+        } else if syncState == .stale {
+            // Once dispLag drops below staleThreshold, timeline is no longer stale
+            syncState = .catchingUp
         }
     }
 
