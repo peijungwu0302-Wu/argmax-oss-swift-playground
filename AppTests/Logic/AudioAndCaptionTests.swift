@@ -1394,8 +1394,7 @@ final class AudioAndCaptionTests: XCTestCase {
     }
 
     func testASRSwitchPlanContinuityAndBoundaries() {
-        let router = ASRRouter.shared
-        let plan = router.planSwitch(
+        let plan = ASRRouter.planSwitch(
             from: "apple",
             to: "sensevoice",
             capturedSamples: 160000,
