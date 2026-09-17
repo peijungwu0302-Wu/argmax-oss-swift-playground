@@ -22,7 +22,6 @@ final class LectureController: ObservableObject {
     @Published var provisional: [TranscriptLine] = []
     @Published var liveDraft = "" {
         didSet {
-            CaptionFeed.shared.update(original: caption, translation: validTranslatedDraft, cueEndTime: draftAudioEnd > 0 ? draftAudioEnd : nil)
             if !liveDraft.isEmpty {
                 captionRevisionCounter += 1
                 print("CaptionLatency speech_partial=\(Date().timeIntervalSince1970) revision=\(captionRevisionCounter)")
@@ -45,7 +44,7 @@ final class LectureController: ObservableObject {
     @Published var translationStatus = "開啟後，英語內容會分段翻成繁體中文"
     @Published var translatedDraft = "" {
         didSet {
-            CaptionFeed.shared.update(original: caption, translation: validTranslatedDraft)
+            LiveCaptionSyncController.shared.updateTranslation(translation: validTranslatedDraft)
         }
     }
     @Published var translationDraftSource = ""
@@ -129,6 +128,8 @@ final class LectureController: ObservableObject {
     private var deviceAudioBufferLock = NSLock()
     private var deviceAudioBufferStartOffset = 0
     private var deviceAudioProcessedSamples = 0
+    private var deviceAudioFedSampleIndex = 0
+    private var deviceAudioFinalizedSampleIndex = 0
 
     @Published var notesPrompt = UserDefaults.standard.string(forKey: "notesPrompt") ?? "以繁體中文整理重點、決議、待辦；保留英文術語和來源時間戳。"
     @Published var translationSource = UserDefaults.standard.string(forKey: "translationSource") ?? "en"
@@ -598,6 +599,7 @@ final class LectureController: ObservableObject {
         liveDraftStart = cursorTime
         let started = Date()
         defer { isDecoding = false; activeDecodeID = nil; liveDraft = "" }
+        CaptionTimeline.shared.recordAudioFedToASR(samplesCount: count, pts: offset + Double(count) / 16000)
         let decoded = try await engine.transcribe(file: store.audioURL(current, part), start: part.processedSamples - overlap,
             count: count, offset: offset, language: current.language,
             vocabulary: current.vocabulary ?? "", final: final) { [weak self] text, revision in
@@ -606,6 +608,14 @@ final class LectureController: ObservableObject {
                           revision > self.draftRevision else { return }
                     self.draftRevision = revision; self.liveDraft = text
                     self.draftAudioEnd = offset + Double(count) / 16000
+                    LiveCaptionSyncController.shared.receivePartial(
+                        start: offset,
+                        end: self.draftAudioEnd,
+                        text: text,
+                        engine: "whisper",
+                        language: current.language,
+                        translation: self.validTranslatedDraft
+                    )
                 }
             }
         guard session?.id == current.id, let index = session?.parts.firstIndex(where: { $0.id == id }) else { return }
@@ -618,11 +628,23 @@ final class LectureController: ObservableObject {
         previousHypothesis = decision.provisional
         if decision.consumed > overlap {
             // Audio count may have increased while decoding; mutate the live session.
-            session?.appendConfirmed(decision.confirmed)
+            let corrected = decision.confirmed.map { TranscriptLine(start: $0.start, end: $0.end, text: CourseVocabulary.shared.correctFinalText($0.text)) }
+            session?.appendConfirmed(corrected)
             session?.parts[index].processedSamples += decision.consumed - overlap
             guard let updated = session else { return }
             try store.save(updated)
             lastSaved = Date()
+            if let lastLine = corrected.last {
+                LiveActivityCoordinator.shared.updateTranscript(original: lastLine.text, translation: validTranslatedDraft)
+                LiveCaptionSyncController.shared.receiveFinal(
+                    start: lastLine.start,
+                    end: lastLine.end,
+                    text: lastLine.text,
+                    engine: "whisper",
+                    language: current.language,
+                    translation: validTranslatedDraft
+                )
+            }
         }
     }
 
@@ -645,6 +667,8 @@ final class LectureController: ObservableObject {
             : SenseVoiceContext.choose(samples, left: left, atEnd: atEnd)
         guard !window.owned.isEmpty else { return }
         let started = Date()
+        let fedPTS = part.offset + Double(readStart + window.inputCount) / 16000
+        CaptionTimeline.shared.recordAudioFedToASR(samplesCount: window.inputCount, pts: fedPTS)
         // Low-volume speech must reach the model too; VAD only chooses boundaries.
         let decoded = try await senseVoice.transcribeDetailed(Array(samples.prefix(window.inputCount)), owned: window.owned)
         let text = decoded.text
@@ -669,7 +693,30 @@ final class LectureController: ObservableObject {
             try store.save(updated)
             session = updated; lastSaved = Date()
             provisional = []; previousHypothesis = []
-        } else { provisional = lines }
+            if let line = corrected.first {
+                LiveActivityCoordinator.shared.updateTranscript(original: line.text, translation: validTranslatedDraft)
+                LiveCaptionSyncController.shared.receiveFinal(
+                    start: line.start,
+                    end: line.end,
+                    text: line.text,
+                    engine: "sensevoice",
+                    language: current.language,
+                    translation: validTranslatedDraft
+                )
+            }
+        } else {
+            provisional = lines
+            if let line = lines.first {
+                LiveCaptionSyncController.shared.receivePartial(
+                    start: line.start,
+                    end: line.end,
+                    text: line.text,
+                    engine: "sensevoice",
+                    language: current.language,
+                    translation: validTranslatedDraft
+                )
+            }
+        }
     }
 
     private func stopCapture(endLiveActivity: Bool = true) {
@@ -748,16 +795,38 @@ final class LectureController: ObservableObject {
         let oldEngine = recognitionEngine
         status = L10n.tr("正在準備新辨識引擎；目前引擎繼續運作…", "Preparing the new recognizer while the current engine continues…")
 
-        let boundarySamples: Int
         let boundaryTime: TimeInterval
+        let plan: ASRSwitchPlan
         if audioSource == .deviceAudio {
-            boundarySamples = Int(deviceAudioDuration * 16_000)
+            deviceAudioBufferLock.lock()
+            let captured = deviceAudioBufferStartOffset + deviceAudioBuffer.count
+            deviceAudioBufferLock.unlock()
             boundaryTime = deviceAudioDuration
+            plan = ASRRouter.planSwitch(
+                from: oldEngine,
+                to: value,
+                capturedSamples: captured,
+                fedCursor: deviceAudioFedSampleIndex,
+                finalizedCursor: deviceAudioFinalizedSampleIndex
+            )
         } else if let part = current.parts.last {
             updateAudioCount()
-            boundarySamples = session?.parts.last?.sampleCount ?? part.sampleCount
-            boundaryTime = part.offset + Double(boundarySamples) / 16_000
-        } else { boundarySamples = 0; boundaryTime = duration }
+            let captured = session?.parts.last?.sampleCount ?? part.sampleCount
+            let finalized = session?.parts.last?.processedSamples ?? part.processedSamples
+            let fed = oldEngine == "apple" ? appleCursor : finalized
+            boundaryTime = part.offset + Double(captured) / 16_000
+            plan = ASRRouter.planSwitch(
+                from: oldEngine,
+                to: value,
+                capturedSamples: captured,
+                fedCursor: fed,
+                finalizedCursor: finalized
+            )
+        } else {
+            boundaryTime = duration
+            plan = ASRRouter.planSwitch(from: oldEngine, to: value, capturedSamples: 0, fedCursor: 0, finalizedCursor: 0)
+        }
+        let boundarySamples = plan.switchBoundary
 
         do {
             var preparedApple: (any LiveSpeechEngine)?
@@ -794,12 +863,13 @@ final class LectureController: ObservableObject {
                     let bufferStart = deviceAudioBufferStartOffset
                     let buffer = deviceAudioBuffer
                     deviceAudioBufferLock.unlock()
-                    let localStart = max(0, deviceAudioProcessedSamples - bufferStart)
-                    if localStart < buffer.count {
-                        let backlog = Array(buffer[localStart...])
+                    let localStart = max(0, plan.newEngineStartCursor - bufferStart)
+                    let localEnd = max(localStart, min(buffer.count, plan.switchBoundary - bufferStart))
+                    if localStart < localEnd {
+                        let backlog = Array(buffer[localStart..<localEnd])
                         if !backlog.isEmpty {
                             try? await preparedApple.append(backlog)
-                            deviceAudioProcessedSamples += backlog.count
+                            deviceAudioFedSampleIndex = plan.switchBoundary
                         }
                     }
                 }
@@ -807,17 +877,17 @@ final class LectureController: ObservableObject {
                 // and streamLoop will naturally decode the backlog.
             } else if let index = session?.parts.indices.last, let part = session?.parts[index], let store {
                 // Backlog preservation for Microphone: do NOT skip unprocessed samples.
-                let unconsumedCount = part.sampleCount - part.processedSamples
                 if value == "apple", let preparedApple {
                     appleSpeech = preparedApple
                     try await startApple(part, current: session ?? current)
-                    if unconsumedCount > 0 {
-                        let unconsumed = (try? PCMRecorder.read(store.audioURL(current, part), from: part.processedSamples, count: unconsumedCount)) ?? []
+                    let backlogCount = plan.handoffBacklogRange.count
+                    if backlogCount > 0 {
+                        let unconsumed = (try? PCMRecorder.read(store.audioURL(current, part), from: plan.newEngineStartCursor, count: backlogCount)) ?? []
                         if !unconsumed.isEmpty {
                             try? await preparedApple.append(unconsumed)
-                            session?.parts[index].processedSamples += unconsumed.count
                         }
                     }
+                    appleCursor = plan.switchBoundary
                 }
             }
 
@@ -834,6 +904,8 @@ final class LectureController: ObservableObject {
             status = L10n.tr("辨識引擎已切換，擷取與翻譯持續", "Recognizer switched; capture and translation continue")
         } catch {
             recognitionEngine = oldEngine
+            UserDefaults.standard.set(oldEngine, forKey: "recognitionEngine")
+            session?.recognitionEngine = oldEngine
             ASRRouter.shared.recordSwitch(
                 from: oldEngine,
                 to: value,
@@ -842,6 +914,14 @@ final class LectureController: ObservableObject {
                 successful: false,
                 note: error.localizedDescription
             )
+            if oldEngine == "apple" {
+                if audioSource == .deviceAudio {
+                    try? await startAppleDeviceAudio(current: session ?? current)
+                } else if let part = session?.parts.last {
+                    try? await startApple(part, current: session ?? current)
+                }
+            }
+            worker = Task { [weak self] in await self?.streamLoop() }
             status = L10n.tr("新引擎尚未就緒，目前辨識繼續運作", "New model not ready; current recognizer continues")
             errorMessage = error.localizedDescription
         }
@@ -1305,18 +1385,37 @@ final class LectureController: ObservableObject {
             guard AudioStorage.bytesPerSample(fileName: part.fileName) != nil else { continue }
             let quality = part.recordingQuality ?? .standard
             let original = store.audioURL(current, part)
+            let master = PCMRecorder.masterURL(for: original)
             status = L10n.tr("正在封裝保存錄音，請保持 App 開啟…", "Packaging audio, please keep app open…")
+            var destinationURL: URL?
             do {
                 let archived = try await Task.detached(priority: .utility) {
                     try PCMRecorder.archive(source: original, samples: part.sampleCount, quality: quality)
                 }.value
+                destinationURL = archived
+
+                let attributes = try FileManager.default.attributesOfItem(atPath: archived.path)
+                guard (attributes[.size] as? NSNumber)?.intValue ?? 0 > 0 else {
+                    throw LectureError.message("封裝音訊檔案為空")
+                }
+
                 guard var updated = session, updated.id == current.id,
                       let index = updated.parts.firstIndex(where: { $0.id == part.id }) else { return }
                 updated.parts[index].fileName = archived.lastPathComponent
                 try store.save(updated) // A failed metadata commit must leave the PCM untouched.
                 session = updated; lastSaved = Date()
-                try FileManager.default.removeItem(at: original)
+
+                // Safe atomic cleanup: only remove temporary master and recovery PCM AFTER successful metadata commit
+                if FileManager.default.fileExists(atPath: master.path) {
+                    try? FileManager.default.removeItem(at: master)
+                }
+                if FileManager.default.fileExists(atPath: original.path) {
+                    try? FileManager.default.removeItem(at: original)
+                }
             } catch {
+                if let destinationURL, FileManager.default.fileExists(atPath: destinationURL.path) {
+                    try? FileManager.default.removeItem(at: destinationURL)
+                }
                 errorMessage = "錄音已保存，但封裝尚未完成：\(error.localizedDescription)。原始聲音不會因封裝失敗被刪除。"
             }
         }
@@ -1530,8 +1629,14 @@ final class LectureController: ObservableObject {
                     self.session?.lines.append(newLine)
                     print("CaptionLatency final_transcript=\(Date().timeIntervalSince1970)")
                     LiveActivityCoordinator.shared.updateTranscript(original: corrected, translation: self.validTranslatedDraft)
-                    CaptionFeed.shared.update(original: self.caption, translation: self.validTranslatedDraft)
-                    CaptionTimeline.shared.recordASRFinalized(throughPTS: offset + confirmed.end)
+                    LiveCaptionSyncController.shared.receiveFinal(
+                        start: offset + confirmed.start,
+                        end: offset + confirmed.end,
+                        text: corrected,
+                        engine: "apple",
+                        language: self.language,
+                        translation: self.validTranslatedDraft
+                    )
                 }
                 let through = result.finalizedThrough.isFinite ? result.finalizedThrough : result.end
                 let durable = from + Int(max(0, through) * 16000)
@@ -1539,6 +1644,20 @@ final class LectureController: ObservableObject {
                 let previous = self.session?.parts[index].processedSamples ?? 0
                 self.session?.parts[index].processedSamples = min(count, max(previous, durable))
                 self.persist()
+            } else {
+                let draftText = self.appleCaptions.draft?.text ?? ""
+                if !draftText.isEmpty {
+                    let draftStart = offset + (self.appleCaptions.draft?.start ?? result.start)
+                    let draftEnd = offset + (self.appleCaptions.draft?.end ?? result.end)
+                    LiveCaptionSyncController.shared.receivePartial(
+                        start: draftStart,
+                        end: draftEnd,
+                        text: draftText,
+                        engine: "apple",
+                        language: self.language,
+                        translation: self.validTranslatedDraft
+                    )
+                }
             }
             self.liveDraftStart = offset + (self.appleCaptions.draft?.start ?? result.end)
             self.liveDraft = self.appleCaptions.draft?.text ?? ""
@@ -1553,6 +1672,8 @@ final class LectureController: ObservableObject {
             guard appleCursor < end else { break }
             let count = min(4000, end - appleCursor)
             let samples = try PCMRecorder.read(store.audioURL(current, part), from: appleCursor, count: count)
+            let fedPTS = part.offset + Double(appleCursor + count) / 16000
+            CaptionTimeline.shared.recordAudioFedToASR(samplesCount: count, pts: fedPTS)
             try await appleSpeech.append(samples)
             appleCursor += count
         }
@@ -1682,11 +1803,32 @@ final class LectureController: ObservableObject {
                     self.session?.lines.append(newLine)
                     print("CaptionLatency final_transcript=\(Date().timeIntervalSince1970)")
                     LiveActivityCoordinator.shared.updateTranscript(original: corrected, translation: self.validTranslatedDraft)
-                    CaptionFeed.shared.update(original: self.caption, translation: self.validTranslatedDraft, cueEndTime: offset + confirmed.end)
-                    CaptionTimeline.shared.recordASRFinalized(throughPTS: offset + confirmed.end)
+                    LiveCaptionSyncController.shared.receiveFinal(
+                        start: offset + confirmed.start,
+                        end: offset + confirmed.end,
+                        text: corrected,
+                        engine: "apple",
+                        language: self.language,
+                        translation: self.validTranslatedDraft
+                    )
+                    self.deviceAudioFinalizedSampleIndex = max(self.deviceAudioFinalizedSampleIndex, Int((offset + confirmed.end) * 16000))
                 }
                 if self.sessionStorageMode == .saveTranscript {
                     self.persist()
+                }
+            } else {
+                let draftText = self.appleCaptions.draft?.text ?? ""
+                if !draftText.isEmpty {
+                    let draftStart = offset + (self.appleCaptions.draft?.start ?? result.start)
+                    let draftEnd = offset + (self.appleCaptions.draft?.end ?? result.end)
+                    LiveCaptionSyncController.shared.receivePartial(
+                        start: draftStart,
+                        end: draftEnd,
+                        text: draftText,
+                        engine: "apple",
+                        language: self.language,
+                        translation: self.validTranslatedDraft
+                    )
                 }
             }
             self.liveDraftStart = offset + (self.appleCaptions.draft?.start ?? result.end)
@@ -1713,6 +1855,9 @@ final class LectureController: ObservableObject {
         guard !window.owned.isEmpty else { return }
 
         let started = Date()
+        let fedPTS = Double(startSampleIndex + localReadStart + window.inputCount) / 16000
+        CaptionTimeline.shared.recordAudioFedToASR(samplesCount: window.inputCount, pts: fedPTS)
+        deviceAudioFedSampleIndex = max(deviceAudioFedSampleIndex, startSampleIndex + localReadStart + window.inputCount)
         let decoded = try await senseVoice.transcribeDetailed(Array(localSamples.prefix(window.inputCount)), owned: window.owned)
         let text = decoded.text
         try Task.checkCancellation()
@@ -1728,17 +1873,34 @@ final class LectureController: ObservableObject {
             let correctedLines = lines.map { TranscriptLine(start: $0.start, end: $0.end, text: CourseVocabulary.shared.correctFinalText($0.text)) }
             session?.appendConfirmed(correctedLines)
             deviceAudioProcessedSamples += window.owned.count
+            deviceAudioFinalizedSampleIndex = max(deviceAudioFinalizedSampleIndex, deviceAudioProcessedSamples)
             if sessionStorageMode == .saveTranscript {
                 persist()
             }
             provisional = []; previousHypothesis = []
             if let line = correctedLines.first {
-                CaptionFeed.shared.update(original: caption, translation: validTranslatedDraft, cueEndTime: line.end)
-                CaptionTimeline.shared.recordASRFinalized(throughPTS: line.end)
                 LiveActivityCoordinator.shared.updateTranscript(original: line.text, translation: validTranslatedDraft)
+                LiveCaptionSyncController.shared.receiveFinal(
+                    start: line.start,
+                    end: line.end,
+                    text: line.text,
+                    engine: "sensevoice",
+                    language: language,
+                    translation: validTranslatedDraft
+                )
             }
         } else {
             provisional = lines
+            if let line = lines.first {
+                LiveCaptionSyncController.shared.receivePartial(
+                    start: line.start,
+                    end: line.end,
+                    text: line.text,
+                    engine: "sensevoice",
+                    language: language,
+                    translation: validTranslatedDraft
+                )
+            }
         }
     }
 
@@ -1753,9 +1915,22 @@ final class LectureController: ObservableObject {
         let count = min(128_000, available)
         let input = Array(samples[localStart..<(localStart + count)])
         let offset = Double(deviceAudioProcessedSamples) / 16_000
+        let fedPTS = offset + Double(count) / 16_000
+        CaptionTimeline.shared.recordAudioFedToASR(samplesCount: count, pts: fedPTS)
+        deviceAudioFedSampleIndex = max(deviceAudioFedSampleIndex, localStart + bufferStart + count)
         let decoded = try await engine.transcribe(samples: input, offset: offset, language: language,
             vocabulary: vocabulary, final: true) { [weak self] text, _ in
-                Task { @MainActor in self?.liveDraft = text }
+                Task { @MainActor in
+                    self?.liveDraft = text
+                    LiveCaptionSyncController.shared.receivePartial(
+                        start: offset,
+                        end: offset + Double(count) / 16_000,
+                        text: text,
+                        engine: "whisper",
+                        language: self?.language ?? "en",
+                        translation: self?.validTranslatedDraft
+                    )
+                }
             }
         try Task.checkCancellation()
         guard isRecording, usesWhisper else { return }
@@ -1763,11 +1938,18 @@ final class LectureController: ObservableObject {
             text: CourseVocabulary.shared.correctFinalText($0.text), words: $0.words) }
         session?.appendConfirmed(corrected)
         deviceAudioProcessedSamples += count
+        deviceAudioFinalizedSampleIndex = max(deviceAudioFinalizedSampleIndex, deviceAudioProcessedSamples)
         liveDraft = ""; provisional = []
         if let line = corrected.last {
-            CaptionFeed.shared.update(original: caption, translation: validTranslatedDraft, cueEndTime: line.end)
-            CaptionTimeline.shared.recordASRFinalized(throughPTS: line.end)
             LiveActivityCoordinator.shared.updateTranscript(original: line.text, translation: validTranslatedDraft)
+            LiveCaptionSyncController.shared.receiveFinal(
+                start: line.start,
+                end: line.end,
+                text: line.text,
+                engine: "whisper",
+                language: language,
+                translation: validTranslatedDraft
+            )
         }
     }
 
@@ -1786,6 +1968,7 @@ extension LectureController: DeviceAudioCaptureDelegate {
 
         if usesAppleSpeech {
             let pts = chunk.endMediaTime
+            deviceAudioFedSampleIndex += chunk.samples.count
             Task { [weak self] in
                 CaptionTimeline.shared.recordAudioFedToASR(samplesCount: chunk.samples.count, pts: pts)
                 try? await self?.appleSpeech?.append(chunk.samples)

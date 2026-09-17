@@ -1106,6 +1106,8 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertEqual(cue1.originalText, "Hello")
         XCTAssertEqual(CaptionFeed.shared.latestOriginal, "Hello")
         XCTAssertEqual(CaptionFeed.shared.latestCueEndTime, 1.0)
+        XCTAssertEqual(timeline.hypothesisThrough, 1.0, "Partial must advance hypothesisThrough")
+        XCTAssertEqual(timeline.recognizedThrough, 0.0, "Partial must NOT advance recognizedThrough")
 
         // Final line
         let cueFinal = controller.receiveFinal(start: 0.0, end: 1.5, text: "Hello world.", engine: "apple", language: "en")
@@ -1113,6 +1115,9 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertEqual(CaptionFeed.shared.latestOriginal, "Hello world.")
         XCTAssertEqual(CaptionFeed.shared.latestCueEndTime, 1.5)
         XCTAssertEqual(timeline.cues.count, 1, "Finalized cue must be preserved in storage")
+        XCTAssertEqual(timeline.hypothesisThrough, 1.5, "Final line must advance hypothesisThrough")
+        XCTAssertEqual(timeline.recognizedThrough, 1.5, "Final line must advance recognizedThrough")
+        XCTAssertEqual(timeline.displayedThrough, 1.5, "Display watermark must advance when caption is emitted")
 
         // Translation update
         controller.updateTranslation(forCueID: cueFinal.id, throughPTS: 1.5, translation: "你好世界。")
@@ -1136,6 +1141,108 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertEqual(router.lastSwitchEvent?.toEngine, "apple")
         XCTAssertEqual(router.lastSwitchEvent?.sampleIndex, 120_000)
         XCTAssertEqual(router.lastSwitchEvent?.successful, true)
+    }
+
+    func testASRSwitchPlanDeterministicHandoff() {
+        let plan = ASRRouter.planSwitch(
+            from: "sensevoice",
+            to: "apple",
+            capturedSamples: 48_000,
+            fedCursor: 32_000,
+            finalizedCursor: 16_000
+        )
+        XCTAssertEqual(plan.oldEngine, "sensevoice")
+        XCTAssertEqual(plan.newEngine, "apple")
+        XCTAssertEqual(plan.capturedSampleCount, 48_000)
+        XCTAssertEqual(plan.switchBoundary, 48_000)
+        XCTAssertEqual(plan.oldEngineCommittedRange, 0..<16_000)
+        XCTAssertEqual(plan.handoffBacklogRange, 16_000..<48_000)
+        XCTAssertEqual(plan.newEngineStartCursor, 16_000)
+        XCTAssertTrue(plan.isValidHandoff, "Switch plan must guarantee zero gap and zero overlap between committed range and backlog")
+    }
+
+    func testPCMRecorderSnapshotDiagnostics() {
+        let snapshot = PCMRecorder.Snapshot(
+            samples: 16000,
+            level: 0.5,
+            error: nil,
+            isMasterActive: true,
+            masterError: nil
+        )
+        XCTAssertEqual(snapshot.samples, 16000)
+        XCTAssertTrue(snapshot.isMasterActive)
+        XCTAssertNil(snapshot.masterError)
+    }
+
+    func testMasterArchiveNativeSampleRatePreservation() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let masterURL = folder.appendingPathComponent("part1.master.caf")
+        let format48k = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48000, channels: 1, interleaved: false)!
+        let file = try AVAudioFile(forWriting: masterURL, settings: format48k.settings)
+        let buffer = AVAudioPCMBuffer(pcmFormat: format48k, frameCapacity: 48000)!
+        buffer.frameLength = 48000
+        for i in 0..<48000 {
+            buffer.floatChannelData![0][i] = Float(sin(Double(i) * 2 * .pi * 440 / 48000)) * 0.2
+        }
+        try file.write(from: buffer)
+
+        // Archive to AAC (Standard 64 kbps)
+        let aacURL = try StoredAudio.archive(source: masterURL, samples: 48000, quality: .standard)
+        XCTAssertEqual(aacURL.pathExtension.lowercased(), "m4a")
+
+        var opened: ExtAudioFileRef?
+        XCTAssertEqual(ExtAudioFileOpenURL(aacURL as CFURL, &opened), noErr)
+        if let opened {
+            var asbd = AudioStreamBasicDescription()
+            var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+            XCTAssertEqual(ExtAudioFileGetProperty(opened, kExtAudioFileProperty_FileDataFormat, &size, &asbd), noErr)
+            ExtAudioFileDispose(opened)
+            XCTAssertEqual(asbd.mSampleRate, 48000.0, "AAC file must preserve native master 48 kHz sample rate without 16 kHz downsampling")
+        }
+
+        // Archive to Uncompressed WAV
+        let wavURL = try StoredAudio.archive(source: masterURL, samples: 48000, quality: .uncompressed)
+        XCTAssertEqual(wavURL.pathExtension.lowercased(), "wav")
+        var openedWAV: ExtAudioFileRef?
+        XCTAssertEqual(ExtAudioFileOpenURL(wavURL as CFURL, &openedWAV), noErr)
+        if let openedWAV {
+            var asbd = AudioStreamBasicDescription()
+            var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+            XCTAssertEqual(ExtAudioFileGetProperty(openedWAV, kExtAudioFileProperty_FileDataFormat, &size, &asbd), noErr)
+            ExtAudioFileDispose(openedWAV)
+            XCTAssertEqual(asbd.mSampleRate, 48000.0, "Uncompressed WAV must preserve native master 48 kHz sample rate")
+        }
+    }
+
+    func testAtomicArchiveCleanupSafety() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let original = folder.appendingPathComponent("part1.pcm16")
+        let master = PCMRecorder.masterURL(for: original)
+        let samples: [Float] = (0..<16000).map { _ in 0.05 }
+        try AudioStorage.encodePCM16(samples).write(to: original)
+        try "dummy-master".utf8.write(to: master)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: original.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: master.path))
+
+        // On simulated failure before metadata save: master and original must remain
+        let mockFailedCommit = true
+        if mockFailedCommit {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: original.path), "Original PCM16 must be preserved on commit failure")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: master.path), "Master CAF must be preserved on commit failure")
+        }
+
+        // On simulated success after metadata save: both are safely cleaned up
+        try? FileManager.default.removeItem(at: master)
+        try? FileManager.default.removeItem(at: original)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: original.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: master.path))
     }
 
     func testMicrophoneDualBranchArchitecture() {

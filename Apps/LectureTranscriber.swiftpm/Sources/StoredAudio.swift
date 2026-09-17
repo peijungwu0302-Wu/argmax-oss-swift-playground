@@ -165,56 +165,189 @@ enum StoredAudio {
     }
 
     private static func writeWAVFile(from source: URL, to destination: URL, samples: Int) throws {
-        var header = Data()
-        func ascii(_ text: String) { header.append(contentsOf: text.utf8) }
-        func u32(_ value: UInt32) { var v = value.littleEndian; withUnsafeBytes(of: &v) { header.append(contentsOf: $0) } }
-        func u16(_ value: UInt16) { var v = value.littleEndian; withUnsafeBytes(of: &v) { header.append(contentsOf: $0) } }
-
-        ascii("RIFF"); u32(UInt32(samples * 2 + 36)); ascii("WAVEfmt "); u32(16)
-        u16(1); u16(1); u32(16000); u32(32000); u16(2); u16(16); ascii("data"); u32(UInt32(samples * 2))
-
-        try header.write(to: destination, options: .atomic)
-        let file = try FileHandle(forWritingTo: destination); defer { try? file.close() }
-        try file.seekToEnd()
-        for start in stride(from: 0, to: samples, by: 16000) {
-            try file.write(contentsOf: AudioStorage.encodePCM16(read(source, from: start, count: min(16000, samples - start))))
+        let isStandardAudio = AudioStorage.bytesPerSample(fileName: source.lastPathComponent) == nil
+        var sourceRate: Double = 16000
+        var openedSource: ExtAudioFileRef?
+        if isStandardAudio {
+            try checked(ExtAudioFileOpenURL(source as CFURL, &openedSource), "開啟來源主音訊")
+            if let openedSource {
+                var sourceFormat = AudioStreamBasicDescription()
+                var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+                if ExtAudioFileGetProperty(openedSource, kExtAudioFileProperty_FileDataFormat, &size, &sourceFormat) == noErr,
+                   sourceFormat.mSampleRate > 0 {
+                    sourceRate = sourceFormat.mSampleRate
+                }
+            }
         }
-        try file.synchronize()
+        defer {
+            if let openedSource { ExtAudioFileDispose(openedSource) }
+        }
+
+        if let sourceFile = openedSource {
+            // Write standard WAV at native sourceRate
+            var totalFrames: Int64 = 0
+            var propSize = UInt32(MemoryLayout<Int64>.size)
+            _ = ExtAudioFileGetProperty(sourceFile, kExtAudioFileProperty_FileLengthFrames, &propSize, &totalFrames)
+            let framesCount = max(Int(totalFrames), Int((Double(samples) * sourceRate / 16000.0).rounded()))
+
+            var header = Data()
+            func ascii(_ text: String) { header.append(contentsOf: text.utf8) }
+            func u32(_ value: UInt32) { var v = value.littleEndian; withUnsafeBytes(of: &v) { header.append(contentsOf: $0) } }
+            func u16(_ value: UInt16) { var v = value.littleEndian; withUnsafeBytes(of: &v) { header.append(contentsOf: $0) } }
+
+            let rateU32 = UInt32(sourceRate)
+            let byteRate = rateU32 * 2
+            ascii("RIFF"); u32(UInt32(framesCount * 2 + 36)); ascii("WAVEfmt "); u32(16)
+            u16(1); u16(1); u32(rateU32); u32(byteRate); u16(2); u16(16); ascii("data"); u32(UInt32(framesCount * 2))
+
+            try header.write(to: destination, options: .atomic)
+            let file = try FileHandle(forWritingTo: destination); defer { try? file.close() }
+            try file.seekToEnd()
+
+            guard let clientFormat = AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: sourceRate,
+                channels: 1,
+                interleaved: false
+            ) else {
+                throw LectureError.message("無法建立音訊讀取格式")
+            }
+            var client = clientFormat.streamDescription.pointee
+            let size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+            try checked(ExtAudioFileSetProperty(sourceFile, kExtAudioFileProperty_ClientDataFormat, size, &client), "設定來源音訊格式")
+
+            let chunkCapacity: AVAudioFrameCount = 16384
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: clientFormat, frameCapacity: chunkCapacity),
+                  let channel = buffer.floatChannelData?[0] else {
+                throw LectureError.message("無法配置音訊緩衝區")
+            }
+
+            while true {
+                try Task.checkCancellation()
+                var frames: UInt32 = chunkCapacity
+                buffer.frameLength = chunkCapacity
+                try checked(ExtAudioFileRead(sourceFile, &frames, buffer.mutableAudioBufferList), "讀取主音訊")
+                if frames == 0 { break }
+                let floatSamples = Array(UnsafeBufferPointer(start: channel, count: Int(frames)))
+                try file.write(contentsOf: AudioStorage.encodePCM16(floatSamples))
+            }
+            try file.synchronize()
+        } else {
+            var header = Data()
+            func ascii(_ text: String) { header.append(contentsOf: text.utf8) }
+            func u32(_ value: UInt32) { var v = value.littleEndian; withUnsafeBytes(of: &v) { header.append(contentsOf: $0) } }
+            func u16(_ value: UInt16) { var v = value.littleEndian; withUnsafeBytes(of: &v) { header.append(contentsOf: $0) } }
+
+            ascii("RIFF"); u32(UInt32(samples * 2 + 36)); ascii("WAVEfmt "); u32(16)
+            u16(1); u16(1); u32(16000); u32(32000); u16(2); u16(16); ascii("data"); u32(UInt32(samples * 2))
+
+            try header.write(to: destination, options: .atomic)
+            let file = try FileHandle(forWritingTo: destination); defer { try? file.close() }
+            try file.seekToEnd()
+            for start in stride(from: 0, to: samples, by: 16000) {
+                try file.write(contentsOf: AudioStorage.encodePCM16(read(source, from: start, count: min(16000, samples - start))))
+            }
+            try file.synchronize()
+        }
     }
 
     private static func writeArchive(_ source: URL, destination: URL, samples: Int, bitRate: Int) throws {
+        let isStandardAudio = AudioStorage.bytesPerSample(fileName: source.lastPathComponent) == nil
+
+        var sourceRate: Double = 16000
+        var openedSource: ExtAudioFileRef?
+        if isStandardAudio {
+            try checked(ExtAudioFileOpenURL(source as CFURL, &openedSource), "開啟來源音訊")
+            if let openedSource {
+                var sourceFormat = AudioStreamBasicDescription()
+                var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+                if ExtAudioFileGetProperty(openedSource, kExtAudioFileProperty_FileDataFormat, &size, &sourceFormat) == noErr,
+                   sourceFormat.mSampleRate > 0 {
+                    sourceRate = sourceFormat.mSampleRate
+                }
+            }
+        }
+        defer {
+            if let openedSource { ExtAudioFileDispose(openedSource) }
+        }
+
+        // When source is native master (e.g. 48 kHz or 44.1 kHz), encode AAC at native rate
+        let targetSampleRate = isStandardAudio ? sourceRate : (bitRate == 32000 ? 32000.0 : 44100.0)
         var output = AudioStreamBasicDescription()
-        output.mFormatID = kAudioFormatMPEG4AAC; output.mSampleRate = 32000; output.mChannelsPerFrame = 1
+        output.mFormatID = kAudioFormatMPEG4AAC
+        output.mSampleRate = targetSampleRate
+        output.mChannelsPerFrame = 1
         var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
         try checked(AudioFormatGetProperty(kAudioFormatProperty_FormatInfo, 0, nil, &size, &output), "準備 AAC 格式")
-        var opened: ExtAudioFileRef?
-        try checked(ExtAudioFileCreateWithURL(destination as CFURL, kAudioFileM4AType, &output, nil,
-            AudioFileFlags.eraseFile.rawValue, &opened), "建立 AAC 檔案")
-        guard let file = opened else { throw LectureError.message("無法建立 AAC 檔案。") }
-        var disposed = false
-        defer { if !disposed { ExtAudioFileDispose(file) } }
-        let format = try clientFormat()
-        var client = format.streamDescription.pointee
-        try checked(ExtAudioFileSetProperty(file, kExtAudioFileProperty_ClientDataFormat, size, &client), "設定辨識音訊格式")
+
+        var openedDest: ExtAudioFileRef?
+        try checked(ExtAudioFileCreateWithURL(
+            destination as CFURL,
+            kAudioFileM4AType,
+            &output,
+            nil,
+            AudioFileFlags.eraseFile.rawValue,
+            &openedDest
+        ), "建立 AAC 檔案")
+        guard let destFile = openedDest else { throw LectureError.message("無法建立 AAC 檔案。") }
+        var destDisposed = false
+        defer { if !destDisposed { ExtAudioFileDispose(destFile) } }
+
+        guard let clientFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: targetSampleRate,
+            channels: 1,
+            interleaved: false
+        ) else {
+            throw LectureError.message("無法建立 AAC 客戶端音訊格式。")
+        }
+        var client = clientFormat.streamDescription.pointee
+        try checked(ExtAudioFileSetProperty(destFile, kExtAudioFileProperty_ClientDataFormat, size, &client), "設定 AAC 寫入格式")
+
         var converter: AudioConverterRef?
         var converterSize = UInt32(MemoryLayout<AudioConverterRef?>.size)
-        try checked(ExtAudioFileGetProperty(file, kExtAudioFileProperty_AudioConverter, &converterSize, &converter), "取得 AAC 編碼器")
+        try checked(ExtAudioFileGetProperty(destFile, kExtAudioFileProperty_AudioConverter, &converterSize, &converter), "取得 AAC 編碼器")
         guard let converter else { throw LectureError.message("AAC 編碼器不可用。") }
         var rate = UInt32(bitRate)
         try checked(AudioConverterSetProperty(converter, kAudioConverterEncodeBitRate, UInt32(MemoryLayout<UInt32>.size), &rate), "設定 AAC 品質")
         var configuration: CFArray? = nil
-        try checked(ExtAudioFileSetProperty(file, kExtAudioFileProperty_ConverterConfig,
-            UInt32(MemoryLayout<CFArray?>.size), &configuration), "套用 AAC 品質")
-        for start in stride(from: 0, to: samples, by: 16000) {
-            let count = min(16000, samples - start)
-            let values = try read(source, from: start, count: count)
-            guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(count)),
-                  let channel = buffer.floatChannelData?[0] else { throw LectureError.message("無法配置錄音壓縮緩衝區。") }
-            buffer.frameLength = AVAudioFrameCount(count)
-            values.withUnsafeBufferPointer { channel.update(from: $0.baseAddress!, count: count) }
-            try checked(ExtAudioFileWrite(file, AVAudioFrameCount(count), buffer.audioBufferList), "写入 AAC 音訊")
+        try checked(ExtAudioFileSetProperty(destFile, kExtAudioFileProperty_ConverterConfig, UInt32(MemoryLayout<CFArray?>.size), &configuration), "套用 AAC 品質")
+
+        if let sourceFile = openedSource {
+            // Source is standard audio file (e.g. master.caf)
+            try checked(ExtAudioFileSetProperty(sourceFile, kExtAudioFileProperty_ClientDataFormat, size, &client), "設定來源音訊格式")
+            let frameChunk: AVAudioFrameCount = 16384
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: clientFormat, frameCapacity: frameChunk) else {
+                throw LectureError.message("無法配置音訊緩衝區。")
+            }
+            while true {
+                try Task.checkCancellation()
+                var frames: UInt32 = frameChunk
+                buffer.frameLength = frameChunk
+                try checked(ExtAudioFileRead(sourceFile, &frames, buffer.mutableAudioBufferList), "讀取主音訊")
+                if frames == 0 { break }
+                buffer.frameLength = frames
+                try checked(ExtAudioFileWrite(destFile, frames, buffer.audioBufferList), "寫入 AAC 音訊")
+            }
+        } else {
+            // Source is raw PCM16: read chunks, convert to Float32 at 16000
+            let format16k = try clientFormat()
+            var client16k = format16k.streamDescription.pointee
+            try checked(ExtAudioFileSetProperty(destFile, kExtAudioFileProperty_ClientDataFormat, size, &client16k), "設定辨識音訊格式")
+            for start in stride(from: 0, to: samples, by: 16000) {
+                try Task.checkCancellation()
+                let count = min(16000, samples - start)
+                let values = try read(source, from: start, count: count)
+                guard let buffer = AVAudioPCMBuffer(pcmFormat: format16k, frameCapacity: AVAudioFrameCount(count)),
+                      let channel = buffer.floatChannelData?[0] else { throw LectureError.message("無法配置錄音壓縮緩衝區。") }
+                buffer.frameLength = AVAudioFrameCount(count)
+                values.withUnsafeBufferPointer { channel.update(from: $0.baseAddress!, count: count) }
+                try checked(ExtAudioFileWrite(destFile, AVAudioFrameCount(count), buffer.audioBufferList), "寫入 AAC 音訊")
+            }
         }
-        let result = ExtAudioFileDispose(file); disposed = true
+
+        let result = ExtAudioFileDispose(destFile)
+        destDisposed = true
         try checked(result, "完成 AAC 尾段")
     }
 

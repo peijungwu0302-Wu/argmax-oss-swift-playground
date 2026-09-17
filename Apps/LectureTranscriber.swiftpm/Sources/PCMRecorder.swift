@@ -16,11 +16,31 @@ final class PCMRecorder: @unchecked Sendable {
     /// Optional real-time callback delivering pristine 16 kHz mono Float32 audio to ASR router
     var onASRAudio: (@Sendable ([Float]) -> Void)?
 
+    private var masterCreationError: String?
+
     struct Snapshot: Sendable {
         var samples: Int
         var level: Float
         var error: String?
         var dynamics: AudioDynamicsDiagnostics
+        var isMasterActive: Bool
+        var masterError: String?
+
+        init(
+            samples: Int,
+            level: Float,
+            error: String? = nil,
+            dynamics: AudioDynamicsDiagnostics = AudioDynamicsDiagnostics(preRMSDBFS: -60, postRMSDBFS: -60, prePeakDBFS: -60, postPeakDBFS: -60, appliedGainLinear: 1.0, limiterEngaged: false),
+            isMasterActive: Bool = false,
+            masterError: String? = nil
+        ) {
+            self.samples = samples
+            self.level = level
+            self.error = error
+            self.dynamics = dynamics
+            self.isMasterActive = isMasterActive
+            self.masterError = masterError
+        }
     }
 
     func snapshot() -> Snapshot {
@@ -29,7 +49,9 @@ final class PCMRecorder: @unchecked Sendable {
             samples: count,
             level: level,
             error: failure,
-            dynamics: dynamicsProcessor.currentDiagnostics()
+            dynamics: dynamicsProcessor.currentDiagnostics(),
+            isMasterActive: masterAudioFile != nil,
+            masterError: masterCreationError
         )
     }
 
@@ -61,13 +83,23 @@ final class PCMRecorder: @unchecked Sendable {
         if FileManager.default.fileExists(atPath: master.path) {
             try? FileManager.default.removeItem(at: master)
         }
-        let masterFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: format.sampleRate, channels: 1, interleaved: false)!
-        let masterFile = try? AVAudioFile(forWriting: master, settings: masterFormat.settings)
+        var masterFile: AVAudioFile? = nil
+        var masterErr: String? = nil
+        if let masterFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: format.sampleRate, channels: 1, interleaved: false) {
+            do {
+                masterFile = try AVAudioFile(forWriting: master, settings: masterFormat.settings)
+            } catch {
+                masterErr = "建立主錄音檔失敗：\(error.localizedDescription)"
+            }
+        } else {
+            masterErr = "無法建立主錄音格式（取樣率：\(format.sampleRate)）"
+        }
 
         lock.lock()
         dynamicsProcessor = SpeechDynamicsProcessor(sampleRate: format.sampleRate)
         writer = file
         masterAudioFile = masterFile
+        masterCreationError = masterErr
         count = 0
         level = 0
         failure = nil
@@ -148,6 +180,7 @@ final class PCMRecorder: @unchecked Sendable {
         catch { failure = "錄音儲存失敗：\(error.localizedDescription)" }
         writer = nil
         masterAudioFile = nil
+        masterCreationError = nil
         lock.unlock()
 
         AudioSessionCoordinator.shared.deactivateMicrophoneCapture()
@@ -160,20 +193,12 @@ final class PCMRecorder: @unchecked Sendable {
     static func archive(_ source: URL, samples: Int, bitRate: Int) throws -> URL {
         let master = masterURL(for: source)
         let sourceToArchive = FileManager.default.fileExists(atPath: master.path) ? master : source
-        let result = try StoredAudio.archive(sourceToArchive, samples: samples, bitRate: bitRate)
-        if sourceToArchive == master {
-            try? FileManager.default.removeItem(at: master)
-        }
-        return result
+        return try StoredAudio.archive(sourceToArchive, samples: samples, bitRate: bitRate)
     }
 
     static func archive(source: URL, samples: Int, quality: RecordingQuality) throws -> URL {
         let master = masterURL(for: source)
         let sourceToArchive = FileManager.default.fileExists(atPath: master.path) ? master : source
-        let result = try StoredAudio.archive(source: sourceToArchive, samples: samples, quality: quality)
-        if sourceToArchive == master {
-            try? FileManager.default.removeItem(at: master)
-        }
-        return result
+        return try StoredAudio.archive(source: sourceToArchive, samples: samples, quality: quality)
     }
 }

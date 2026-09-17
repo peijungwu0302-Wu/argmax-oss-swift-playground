@@ -288,4 +288,69 @@ public final class ASRRouter: ObservableObject {
             self.currentEngine = type
         }
     }
+
+    // MARK: - Authoritative Switch & Cursor Planning
+
+    public static func planSwitch(
+        from oldEngine: String,
+        to newEngine: String,
+        capturedSamples: Int,
+        fedCursor: Int,
+        finalizedCursor: Int
+    ) -> ASRSwitchPlan {
+        ASRSwitchPlan(
+            oldEngine: oldEngine,
+            newEngine: newEngine,
+            capturedSampleCount: capturedSamples,
+            oldEngineFedCursor: fedCursor,
+            oldEngineFinalizedCursor: finalizedCursor,
+            switchBoundary: capturedSamples
+        )
+    }
+}
+
+// MARK: - Switch Plan Structure
+
+public struct ASRSwitchPlan: Equatable, Sendable {
+    public let oldEngine: String
+    public let newEngine: String
+    public let capturedSampleCount: Int
+    public let oldEngineFedCursor: Int
+    public let oldEngineFinalizedCursor: Int
+    public let switchBoundary: Int
+    public let oldEngineCommittedRange: Range<Int>
+    public let handoffBacklogRange: Range<Int>
+    public let newEngineStartCursor: Int
+
+    public init(
+        oldEngine: String,
+        newEngine: String,
+        capturedSampleCount: Int,
+        oldEngineFedCursor: Int,
+        oldEngineFinalizedCursor: Int,
+        switchBoundary: Int
+    ) {
+        self.oldEngine = oldEngine
+        self.newEngine = newEngine
+        self.capturedSampleCount = capturedSampleCount
+        self.oldEngineFedCursor = oldEngineFedCursor
+        self.oldEngineFinalizedCursor = oldEngineFinalizedCursor
+        self.switchBoundary = switchBoundary
+
+        // Audio already confirmed/finalized by old engine
+        let committedEnd = max(0, min(oldEngineFinalizedCursor, switchBoundary))
+        self.oldEngineCommittedRange = 0 ..< committedEnd
+
+        // Audio captured up to switchBoundary that has not yet been finalized
+        self.handoffBacklogRange = committedEnd ..< switchBoundary
+
+        // New engine starts decoding/consuming from committedEnd
+        self.newEngineStartCursor = committedEnd
+    }
+
+    /// Verifies that there is zero gap and zero overlap between committed audio and handoff backlog
+    public var isValidHandoff: Bool {
+        oldEngineCommittedRange.upperBound == handoffBacklogRange.lowerBound &&
+        handoffBacklogRange.upperBound == switchBoundary
+    }
 }

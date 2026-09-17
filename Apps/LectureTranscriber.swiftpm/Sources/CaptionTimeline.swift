@@ -51,6 +51,7 @@ public struct CaptionTimelineSnapshot: Sendable, Equatable {
     public let syncState: CaptionSyncState
     public let capturedThrough: Double
     public let fedThrough: Double
+    public let hypothesisThrough: Double
     public let recognizedThrough: Double
     public let translatedThrough: Double
     public let displayedThrough: Double
@@ -63,6 +64,32 @@ public struct CaptionTimelineSnapshot: Sendable, Equatable {
 
     // Backward-compatible alias
     public var captureToASRLag: Double { recognitionMediaLag }
+
+    public init(
+        syncState: CaptionSyncState,
+        capturedThrough: Double,
+        fedThrough: Double,
+        hypothesisThrough: Double = 0.0,
+        recognizedThrough: Double,
+        translatedThrough: Double,
+        displayedThrough: Double,
+        recognitionMediaLag: Double,
+        translationMediaLag: Double,
+        displayMediaLag: Double,
+        endToEndMediaLag: Double
+    ) {
+        self.syncState = syncState
+        self.capturedThrough = capturedThrough
+        self.fedThrough = fedThrough
+        self.hypothesisThrough = hypothesisThrough
+        self.recognizedThrough = recognizedThrough
+        self.translatedThrough = translatedThrough
+        self.displayedThrough = displayedThrough
+        self.recognitionMediaLag = recognitionMediaLag
+        self.translationMediaLag = translationMediaLag
+        self.displayMediaLag = displayMediaLag
+        self.endToEndMediaLag = endToEndMediaLag
+    }
 }
 
 // MARK: - Caption Synchronization Watermarks & Timeline
@@ -76,6 +103,7 @@ public final class CaptionTimeline: ObservableObject {
 
     @Published public private(set) var capturedThrough: Double = 0.0
     @Published public private(set) var fedThrough: Double = 0.0
+    @Published public private(set) var hypothesisThrough: Double = 0.0
     @Published public private(set) var recognizedThrough: Double = 0.0
     @Published public private(set) var translatedThrough: Double = 0.0
     @Published public private(set) var displayedThrough: Double = 0.0
@@ -127,6 +155,7 @@ public final class CaptionTimeline: ObservableObject {
         sessionEpochPTS = nil
         capturedThrough = 0.0
         fedThrough = 0.0
+        hypothesisThrough = 0.0
         recognizedThrough = 0.0
         translatedThrough = 0.0
         displayedThrough = 0.0
@@ -168,6 +197,7 @@ public final class CaptionTimeline: ObservableObject {
 
     public func recordASRFinalized(throughPTS: Double, wallClockDuration: Double? = nil) {
         let normalized = normalize(pts: throughPTS)
+        hypothesisThrough = max(hypothesisThrough, normalized)
         recognizedThrough = max(recognizedThrough, normalized)
         if let duration = wallClockDuration {
             lastASRProcessingDuration = duration
@@ -220,7 +250,7 @@ public final class CaptionTimeline: ObservableObject {
         language: String
     ) -> CaptionCue {
         revisionCounter += 1
-        recordRecognized(through: end)
+        hypothesisThrough = max(hypothesisThrough, normalize(pts: end))
 
         // In CATCHING_UP mode: latest-state-wins for partials
         if let existing = activeCue, !existing.isFinal {
@@ -256,7 +286,7 @@ public final class CaptionTimeline: ObservableObject {
         language: String
     ) -> CaptionCue {
         revisionCounter += 1
-        recordRecognized(through: end)
+        recordASRFinalized(throughPTS: end)
 
         let finalCue = CaptionCue(
             startTime: start,
@@ -324,6 +354,7 @@ public final class CaptionTimeline: ObservableObject {
             syncState: syncState,
             capturedThrough: capturedThrough,
             fedThrough: fedThrough,
+            hypothesisThrough: hypothesisThrough,
             recognizedThrough: recognizedThrough,
             translatedThrough: translatedThrough,
             displayedThrough: displayedThrough,
@@ -339,6 +370,7 @@ public final class CaptionTimeline: ObservableObject {
         [Sync: \(syncState.rawValue)]
         Captured:   \(String(format: "%.2f s", capturedThrough))
         Fed ASR:    \(String(format: "%.2f s", fedThrough))
+        Hypothesis: \(String(format: "%.2f s", hypothesisThrough))
         Recognized: \(String(format: "%.2f s", recognizedThrough))
         Translated: \(String(format: "%.2f s", translatedThrough))
         Displayed:  \(String(format: "%.2f s", displayedThrough))

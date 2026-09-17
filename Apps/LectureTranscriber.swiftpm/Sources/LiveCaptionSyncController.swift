@@ -91,11 +91,20 @@ public final class LiveCaptionSyncController: ObservableObject {
         emit(original: currentOriginal, translation: translation, cueEndTime: throughPTS ?? timeline.displayedThrough)
     }
 
-    private func emit(original: String, translation: String, cueEndTime: Double?) {
+    public func reset() {
+        lastPartialEmitTime = .distantPast
+        timeline.reset()
+    }
+
+    private func emit(original: String, translation: String?, cueEndTime: Double?) {
+        let currentTranslation = translation ?? CaptionFeed.shared.latestTranslation
         CaptionFeed.shared.update(
             original: original,
-            translation: translation,
+            translation: currentTranslation,
             cueEndTime: cueEndTime
         )
+        if let pts = cueEndTime {
+            timeline.recordCaptionDisplayed(throughPTS: pts)
+        }
     }
 }
