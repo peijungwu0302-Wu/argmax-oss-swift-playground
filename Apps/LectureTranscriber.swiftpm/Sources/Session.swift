@@ -203,6 +203,8 @@ enum TranscriptEngine: String, Codable, CaseIterable, Sendable, Equatable {
     case apple = "apple"
     case whisper = "whisper"
     case sensevoice = "sensevoice"
+    case zipformer = "zipformer"
+    case paraformer = "paraformer"
     case legacy = "legacy"
 
     var displayName: String {
@@ -210,6 +212,8 @@ enum TranscriptEngine: String, Codable, CaseIterable, Sendable, Equatable {
         case .apple: return "Apple Speech"
         case .whisper: return "Whisper v3"
         case .sensevoice: return "SenseVoice"
+        case .zipformer: return "Zipformer"
+        case .paraformer: return "Paraformer"
         case .legacy: return "舊版逐字稿"
         }
     }

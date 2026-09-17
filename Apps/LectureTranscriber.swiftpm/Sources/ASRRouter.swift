@@ -19,22 +19,21 @@ public enum ASREngineType: String, CaseIterable, Identifiable, Codable, Sendable
         case .apple: return "Apple Live Speech"
         case .sensevoice: return "SenseVoice Small"
         case .whisper: return "WhisperKit"
-        case .zipformer: return "Zipformer (Planned v1.9.2)"
-        case .paraformer: return "Paraformer (Planned v1.9.2)"
+        case .zipformer: return "Zipformer Bilingual"
+        case .paraformer: return "Streaming Paraformer Bilingual"
         }
     }
 
     public var isAvailableInCurrentRelease: Bool {
         switch self {
-        case .apple, .sensevoice, .whisper: return true
-        case .zipformer, .paraformer: return false
+        case .apple, .sensevoice, .whisper, .zipformer, .paraformer: return true
         }
     }
 
     public var isStreaming: Bool {
         switch self {
-        case .apple, .zipformer: return true
-        case .sensevoice, .whisper, .paraformer: return false
+        case .apple, .zipformer, .paraformer: return true
+        case .sensevoice, .whisper: return false
         }
     }
 
@@ -97,6 +96,8 @@ public final class ASRRouter: ObservableObject {
     private var appleEngine: (any LiveSpeechEngine)?
     private var senseVoiceEngine: SenseVoiceEngine?
     private var whisperEngine: WhisperEngine?
+    private var zipformerEngine: ZipformerStreamingEngine?
+    private var paraformerEngine: ParaformerStreamingEngine?
 
     // Active streaming parameters
     private var activeLanguage: String = "zh"
@@ -134,10 +135,18 @@ public final class ASRRouter: ObservableObject {
             try await whisperEngine?.load(model, progressState: onProgress)
 
         case .zipformer:
-            throw LectureError.message("Zipformer runtime is deferred to v1.9.2 (sherpa-onnx runtime not bundled)")
+            if zipformerEngine == nil { zipformerEngine = ZipformerStreamingEngine() }
+            try await zipformerEngine?.prepare(language: language) { progress in
+                onProgress(.preparing(progress: progress))
+            }
+            onProgress(.ready)
 
         case .paraformer:
-            throw LectureError.message("Paraformer runtime is deferred to v1.9.2 (sherpa-onnx runtime not bundled)")
+            if paraformerEngine == nil { paraformerEngine = ParaformerStreamingEngine() }
+            try await paraformerEngine?.prepare(language: language) { progress in
+                onProgress(.preparing(progress: progress))
+            }
+            onProgress(.ready)
         }
     }
 
@@ -188,10 +197,18 @@ public final class ASRRouter: ObservableObject {
                 self.whisperEngine = candidate
 
             case .zipformer:
-                throw LectureError.message("Zipformer runtime is deferred to v1.9.2 (sherpa-onnx runtime not bundled)")
+                let candidate = ZipformerStreamingEngine()
+                try await candidate.prepare(language: targetLanguage) { _ in }
+                try await candidate.start(language: targetLanguage, onResult: onResult)
+                await stopOldEngine(oldEngine)
+                self.zipformerEngine = candidate
 
             case .paraformer:
-                throw LectureError.message("Paraformer runtime is deferred to v1.9.2 (sherpa-onnx runtime not bundled)")
+                let candidate = ParaformerStreamingEngine()
+                try await candidate.prepare(language: targetLanguage) { _ in }
+                try await candidate.start(language: targetLanguage, onResult: onResult)
+                await stopOldEngine(oldEngine)
+                self.paraformerEngine = candidate
             }
 
             // 2. Candidate started successfully! Update pointers and record switch event
@@ -240,8 +257,18 @@ public final class ASRRouter: ObservableObject {
         case .whisper:
             await whisperEngine?.unload()
             self.whisperEngine = nil
-        case .zipformer, .paraformer:
-            break
+        case .zipformer:
+            if let zipformerEngine {
+                try? await zipformerEngine.finish()
+                await zipformerEngine.cancel()
+            }
+            self.zipformerEngine = nil
+        case .paraformer:
+            if let paraformerEngine {
+                try? await paraformerEngine.finish()
+                await paraformerEngine.cancel()
+            }
+            self.paraformerEngine = nil
         }
     }
 
@@ -254,7 +281,11 @@ public final class ASRRouter: ObservableObject {
         switch currentEngine {
         case .apple:
             try await appleEngine?.append(samples)
-        case .sensevoice, .whisper, .zipformer, .paraformer:
+        case .zipformer:
+            try await zipformerEngine?.append(samples)
+        case .paraformer:
+            try await paraformerEngine?.append(samples)
+        case .sensevoice, .whisper:
             // Buffer-based engines consume from circular buffer loop
             break
         }

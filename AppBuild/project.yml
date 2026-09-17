@@ -7,6 +7,9 @@ packages:
   WhisperLibrary:
     url: https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground.git
     exactVersion: 1.1.4
+  SherpaOnnxLibrary:
+    url: https://github.com/k2-fsa/sherpa-onnx
+    exactVersion: 1.13.8
 targets:
   LectureTranscriber:
     type: application
@@ -19,6 +22,8 @@ targets:
         product: WhisperKit
       - package: WhisperLibrary
         product: SpeakerKit
+      - package: SherpaOnnxLibrary
+        product: sherpa-onnx
     info:
       path: LectureInfo.plist
       properties:

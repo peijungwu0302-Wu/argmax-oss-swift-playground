@@ -1412,5 +1412,133 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertEqual(plan.newEngineStartCursor, 96000)
         XCTAssertTrue(plan.isValidHandoff)
     }
+
+    @MainActor
+    func testZipformerAndParaformerModelManifestAndInstallationCheck() {
+        let center = ModelCenter.shared
+        center.refreshAllModelStates()
+
+        let zipformerItem = center.manifest.first(where: { $0.id == "zipformer-bilingual" })
+        XCTAssertNotNil(zipformerItem)
+        XCTAssertEqual(zipformerItem?.name, "Zipformer Bilingual")
+        XCTAssertEqual(zipformerItem?.isSupportedOnCurrentDevice, true)
+        XCTAssertNil(zipformerItem?.unsupportedReason)
+        XCTAssertEqual(zipformerItem?.engineType, .zipformer)
+        XCTAssertEqual(zipformerItem?.downloadSizeMB, 48)
+
+        let paraformerItem = center.manifest.first(where: { $0.id == "paraformer-bilingual" })
+        XCTAssertNotNil(paraformerItem)
+        XCTAssertEqual(paraformerItem?.name, "Streaming Paraformer Bilingual")
+        XCTAssertEqual(paraformerItem?.isSupportedOnCurrentDevice, true)
+        XCTAssertNil(paraformerItem?.unsupportedReason)
+        XCTAssertEqual(paraformerItem?.engineType, .paraformer)
+        XCTAssertEqual(paraformerItem?.downloadSizeMB, 226)
+
+        // When uninstalled, state must be notDownloaded (never falsely ready)
+        if !ZipformerStreamingEngine.isModelInstalled() {
+            XCTAssertEqual(center.state(for: "zipformer-bilingual"), .notDownloaded)
+        }
+        if !ParaformerStreamingEngine.isModelInstalled() {
+            XCTAssertEqual(center.state(for: "paraformer-bilingual"), .notDownloaded)
+        }
+
+        // Required filenames
+        XCTAssertEqual(ZipformerStreamingEngine.encoderName, "encoder-epoch-99-avg-1.int8.onnx")
+        XCTAssertEqual(ZipformerStreamingEngine.decoderName, "decoder-epoch-99-avg-1.onnx")
+        XCTAssertEqual(ZipformerStreamingEngine.joinerName, "joiner-epoch-99-avg-1.int8.onnx")
+        XCTAssertEqual(ZipformerStreamingEngine.tokensName, "tokens.txt")
+
+        XCTAssertEqual(ParaformerStreamingEngine.encoderName, "encoder.int8.onnx")
+        XCTAssertEqual(ParaformerStreamingEngine.decoderName, "decoder.int8.onnx")
+        XCTAssertEqual(ParaformerStreamingEngine.tokensName, "tokens.txt")
+    }
+
+    @MainActor
+    func testZipformerStreamingEngineTimelineMapping() {
+        // Test SpeechUpdate mapping for streaming updates
+        let partialUpdate = SpeechUpdate(
+            text: "Hello",
+            start: 1.0,
+            end: 2.0,
+            finalizedThrough: 1.0,
+            isFinal: false
+        )
+        XCTAssertFalse(partialUpdate.isFinal)
+        XCTAssertEqual(partialUpdate.finalizedThrough, 1.0)
+
+        let finalUpdate = SpeechUpdate(
+            text: "Hello world",
+            start: 1.0,
+            end: 2.5,
+            finalizedThrough: 2.5,
+            isFinal: true
+        )
+        XCTAssertTrue(finalUpdate.isFinal)
+        XCTAssertEqual(finalUpdate.finalizedThrough, 2.5)
+    }
+
+    @MainActor
+    func testParaformerSegmentTimingFactualTimelineMapping() {
+        // Factual sample-to-seconds conversion: 32000 samples = 2.0s, 48000 samples = 3.0s
+        let startSample = 32000
+        let endSample = 48000
+        let startPTS = Double(startSample) / 16000.0
+        let endPTS = Double(endSample) / 16000.0
+
+        XCTAssertEqual(startPTS, 2.0, accuracy: 0.0001)
+        XCTAssertEqual(endPTS, 3.0, accuracy: 0.0001)
+
+        let update = SpeechUpdate(
+            text: "課堂逐字稿測試",
+            start: startPTS,
+            end: endPTS,
+            finalizedThrough: endPTS,
+            isFinal: true
+        )
+        XCTAssertTrue(update.isFinal)
+        XCTAssertEqual(update.start, 2.0, accuracy: 0.0001)
+        XCTAssertEqual(update.end, 3.0, accuracy: 0.0001)
+    }
+
+    func testSherpaStreamResultEquatabilityAndProperties() {
+        let result1 = SherpaStreamResult(
+            text: "testing",
+            tokens: ["test", "ing"],
+            timestamps: [0.1, 0.3],
+            isEndpoint: false,
+            startSampleIndex: 0,
+            endSampleIndex: 16000
+        )
+        XCTAssertFalse(result1.isEndpoint)
+        XCTAssertEqual(result1.text, "testing")
+        XCTAssertEqual(result1.tokens.count, 2)
+        XCTAssertEqual(result1.timestamps.count, 2)
+        XCTAssertEqual(result1.startSampleIndex, 0)
+        XCTAssertEqual(result1.endSampleIndex, 16000)
+
+        let result2 = SherpaStreamResult(
+            text: "final phrase",
+            isEndpoint: true,
+            startSampleIndex: 16000,
+            endSampleIndex: 32000
+        )
+        XCTAssertTrue(result2.isEndpoint)
+        XCTAssertEqual(result2.text, "final phrase")
+        XCTAssertTrue(result2.tokens.isEmpty)
+        XCTAssertTrue(result2.timestamps.isEmpty)
+    }
+
+    func testSherpaOnnxRuntimeLifecycleAndCleanup() async {
+        let runtime = SherpaOnnxRuntime()
+        let initialReady = await runtime.isReady
+        XCTAssertFalse(initialReady)
+
+        await runtime.resetStream()
+        await runtime.unload()
+        let afterUnloadReady = await runtime.isReady
+        XCTAssertFalse(afterUnloadReady)
+        let modelId = await runtime.currentModelId
+        XCTAssertEqual(modelId, "")
+    }
 }
 

@@ -19,13 +19,17 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(url: "https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground.git", exact: "1.1.4")
+        .package(url: "https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground.git", exact: "1.1.4"),
+        .package(url: "https://github.com/k2-fsa/sherpa-onnx", exact: "1.13.8")
     ],
     targets: [
         .executableTarget(
             name: "AppModule",
-            dependencies: [.product(name: "WhisperKit", package: "argmax-oss-swift-playground"),
-                           .product(name: "SpeakerKit", package: "argmax-oss-swift-playground")],
+            dependencies: [
+                .product(name: "WhisperKit", package: "argmax-oss-swift-playground"),
+                .product(name: "SpeakerKit", package: "argmax-oss-swift-playground"),
+                .product(name: "sherpa-onnx", package: "sherpa-onnx")
+            ],
             path: "Sources",
             resources: [.process("Assets.xcassets"), .copy("THIRD-PARTY-NOTICES.txt")]
         )

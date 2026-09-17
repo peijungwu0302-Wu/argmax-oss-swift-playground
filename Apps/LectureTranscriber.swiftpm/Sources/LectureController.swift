@@ -142,10 +142,14 @@ final class LectureController: ObservableObject {
     func saveNotesPrompt() { notesPrompt = String(notesPrompt.prefix(800)); UserDefaults.standard.set(notesPrompt, forKey: "notesPrompt") }
     private let engine = WhisperEngine()
     private let senseVoice = SenseVoiceEngine()
+    private let zipformerEngine = ZipformerStreamingEngine()
+    private let paraformerEngine = ParaformerStreamingEngine()
     private let recorder = PCMRecorder()
     private var appleSpeech: (any LiveSpeechEngine)?
     private var appleCursor = 0
     private var appleRangeStart = 0
+    private var zipformerCursor = 0
+    private var paraformerCursor = 0
     private var store: SessionStore?
     private var worker: Task<Void, Never>?
     private var meter: Timer?
@@ -197,7 +201,9 @@ final class LectureController: ObservableObject {
     var draftBehindSeconds: Double { max(0, duration - draftAudioEnd) }
     var usesAppleSpeech: Bool { (session?.recognitionEngine ?? recognitionEngine) == "apple" }
     var usesSenseVoice: Bool { (session?.recognitionEngine ?? recognitionEngine) == "sensevoice" }
-    var usesWhisper: Bool { !usesAppleSpeech && !usesSenseVoice }
+    var usesZipformer: Bool { (session?.recognitionEngine ?? recognitionEngine) == "zipformer" }
+    var usesParaformer: Bool { (session?.recognitionEngine ?? recognitionEngine) == "paraformer" }
+    var usesWhisper: Bool { !usesAppleSpeech && !usesSenseVoice && !usesZipformer && !usesParaformer }
     var draftStart: Double { liveDraft.isEmpty ? (provisional.first?.start ?? duration) : liveDraftStart }
     var caption: String { CaptionText.screen(displayedDraft.isEmpty ? (session?.lines.last?.text ?? "") : displayedDraft) }
     var draftTranslationKey: DraftTranslationKey? {
@@ -438,7 +444,13 @@ final class LectureController: ObservableObject {
                 current.parts.append(part)
                 try store.save(current)
                 session = current
-                if usesAppleSpeech { try await startApple(part, current: current) }
+                if usesAppleSpeech {
+                    try await startApple(part, current: current)
+                } else if usesZipformer {
+                    try await startZipformer(part, current: current)
+                } else if usesParaformer {
+                    try await startParaformer(part, current: current)
+                }
                 do {
                     try recorder.start(
                         at: store.audioURL(current, part),
@@ -466,6 +478,10 @@ final class LectureController: ObservableObject {
                 try await DeviceAudioCaptureManager.shared.start()
                 if usesAppleSpeech {
                     try await startAppleDeviceAudio(current: current)
+                } else if usesZipformer {
+                    try await startZipformerDeviceAudio(current: current)
+                } else if usesParaformer {
+                    try await startParaformerDeviceAudio(current: current)
                 }
                 DeviceAudioCaptureManager.shared.recordAudioSessionEvent("ASR start")
                 draftAudioEnd = 0
@@ -530,7 +546,7 @@ final class LectureController: ObservableObject {
         defer { pendingAppleLanguage = nil }
         do {
             if audioSource == .deviceAudio {
-                if usesAppleSpeech {
+                if usesAppleSpeech || usesZipformer || usesParaformer {
                     while isRecording {
                         try await Task.sleep(nanoseconds: 250_000_000)
                     }
@@ -550,6 +566,10 @@ final class LectureController: ObservableObject {
             } else {
                 if usesAppleSpeech {
                     try await streamApple()
+                } else if usesZipformer {
+                    try await streamZipformer()
+                } else if usesParaformer {
+                    try await streamParaformer()
                 } else {
                     while isRecording {
                         if !canProcessLiveAudio { try await Task.sleep(nanoseconds: 300_000_000); continue }
@@ -570,6 +590,8 @@ final class LectureController: ObservableObject {
             // Cancellation never marks unfinished audio as confirmed.
         } catch {
             await appleSpeech?.cancel()
+            await zipformerEngine.cancel()
+            await paraformerEngine.cancel()
             if isRecording && !isInForeground && supportsBackgroundAudio {
                 status = "背景辨識已暫停，錄音仍持續保存；回到畫面後繼續"
             } else {
@@ -864,6 +886,10 @@ final class LectureController: ObservableObject {
                 preparedApple = candidate
             } else if value == "sensevoice" {
                 try await senseVoice.load(language: language, progressState: { _ in })
+            } else if value == "zipformer" {
+                try await zipformerEngine.prepare(language: language, onProgress: { _ in })
+            } else if value == "paraformer" {
+                try await paraformerEngine.prepare(language: language, onProgress: { _ in })
             } else {
                 try await engine.load(model, progressState: { _ in })
             }
@@ -875,6 +901,8 @@ final class LectureController: ObservableObject {
 
             worker?.cancel(); await worker?.value; worker = nil
             if oldEngine == "apple" { await appleSpeech?.cancel() }
+            if oldEngine == "zipformer" { await zipformerEngine.cancel() }
+            if oldEngine == "paraformer" { await paraformerEngine.cancel() }
             recognitionEngine = value
             UserDefaults.standard.set(value, forKey: "recognitionEngine")
             session?.recognitionEngine = value
@@ -882,7 +910,7 @@ final class LectureController: ObservableObject {
 
             if audioSource == .deviceAudio {
                 // Backlog preservation: do NOT jump deviceAudioProcessedSamples to boundarySamples.
-                // If switching to streaming Apple Speech, feed unconsumed buffer backlog.
+                // If switching to streaming engines, feed unconsumed buffer backlog.
                 if value == "apple", let preparedApple {
                     appleSpeech = preparedApple
                     try await startAppleDeviceAudio(current: session ?? current)
@@ -896,6 +924,36 @@ final class LectureController: ObservableObject {
                         let backlog = Array(buffer[localStart..<localEnd])
                         if !backlog.isEmpty {
                             try? await preparedApple.append(backlog)
+                            deviceAudioFedSampleIndex = plan.switchBoundary
+                        }
+                    }
+                } else if value == "zipformer" {
+                    try await startZipformerDeviceAudio(current: session ?? current)
+                    deviceAudioBufferLock.lock()
+                    let bufferStart = deviceAudioBufferStartOffset
+                    let buffer = deviceAudioBuffer
+                    deviceAudioBufferLock.unlock()
+                    let localStart = max(0, plan.newEngineStartCursor - bufferStart)
+                    let localEnd = max(localStart, min(buffer.count, plan.switchBoundary - bufferStart))
+                    if localStart < localEnd {
+                        let backlog = Array(buffer[localStart..<localEnd])
+                        if !backlog.isEmpty {
+                            try? await zipformerEngine.append(backlog)
+                            deviceAudioFedSampleIndex = plan.switchBoundary
+                        }
+                    }
+                } else if value == "paraformer" {
+                    try await startParaformerDeviceAudio(current: session ?? current)
+                    deviceAudioBufferLock.lock()
+                    let bufferStart = deviceAudioBufferStartOffset
+                    let buffer = deviceAudioBuffer
+                    deviceAudioBufferLock.unlock()
+                    let localStart = max(0, plan.newEngineStartCursor - bufferStart)
+                    let localEnd = max(localStart, min(buffer.count, plan.switchBoundary - bufferStart))
+                    if localStart < localEnd {
+                        let backlog = Array(buffer[localStart..<localEnd])
+                        if !backlog.isEmpty {
+                            try? await paraformerEngine.append(backlog)
                             deviceAudioFedSampleIndex = plan.switchBoundary
                         }
                     }
@@ -919,6 +977,26 @@ final class LectureController: ObservableObject {
                         }
                     }
                     appleCursor = plan.switchBoundary
+                } else if value == "zipformer" {
+                    try await startZipformer(part, current: session ?? current)
+                    let backlogCount = plan.handoffBacklogRange.count
+                    if backlogCount > 0 {
+                        let unconsumed = (try? PCMRecorder.read(store.audioURL(current, part), from: plan.newEngineStartCursor, count: backlogCount)) ?? []
+                        if !unconsumed.isEmpty {
+                            try? await zipformerEngine.append(unconsumed)
+                        }
+                    }
+                    zipformerCursor = plan.switchBoundary
+                } else if value == "paraformer" {
+                    try await startParaformer(part, current: session ?? current)
+                    let backlogCount = plan.handoffBacklogRange.count
+                    if backlogCount > 0 {
+                        let unconsumed = (try? PCMRecorder.read(store.audioURL(current, part), from: plan.newEngineStartCursor, count: backlogCount)) ?? []
+                        if !unconsumed.isEmpty {
+                            try? await paraformerEngine.append(unconsumed)
+                        }
+                    }
+                    paraformerCursor = plan.switchBoundary
                 } else {
                     // When switching to chunked engines (Whisper, SenseVoice, etc.),
                     // set processing cursor to plan.newEngineStartCursor before its worker begins.
@@ -1905,6 +1983,254 @@ final class LectureController: ObservableObject {
         language = selectedLanguage
     }
 
+    // MARK: - Zipformer Streaming
+
+    private func startZipformer(_ part: AudioPart, current: LectureSession) async throws {
+        zipformerCursor = part.processedSamples
+        let from = part.processedSamples
+        let offset = part.offset + Double(from) / 16000
+        let generation = UUID(); activeDecodeID = generation
+        liveDraft = ""; provisional = []; restartTranslation()
+        try await zipformerEngine.start(language: current.language) { [weak self] result in
+            guard let self, self.activeDecodeID == generation, self.session?.id == current.id,
+                  let index = self.session?.parts.firstIndex(where: { $0.id == part.id }),
+                  result.start.isFinite, result.end.isFinite else { return }
+            let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.draftAudioEnd = max(self.draftAudioEnd, offset + result.end)
+            if result.isFinal {
+                if !text.isEmpty {
+                    self.session?.previousLines = nil
+                    let corrected = CourseVocabulary.shared.correctFinalText(text)
+                    let newLine = TranscriptLine(start: offset + result.start, end: offset + result.end, text: corrected)
+                    self.session?.lines.append(newLine)
+                    LiveActivityCoordinator.shared.updateTranscript(original: corrected, translation: self.validTranslatedDraft)
+                    LiveCaptionSyncController.shared.receiveFinal(
+                        id: newLine.id,
+                        start: offset + result.start,
+                        end: offset + result.end,
+                        text: corrected,
+                        engine: "zipformer",
+                        language: self.language,
+                        translation: self.validTranslatedDraft
+                    )
+                }
+                let durable = from + Int(max(0, result.finalizedThrough) * 16000)
+                let count = self.session?.parts[index].sampleCount ?? 0
+                let previous = self.session?.parts[index].processedSamples ?? 0
+                self.session?.parts[index].processedSamples = min(count, max(previous, durable))
+                self.persist()
+            } else {
+                if !text.isEmpty {
+                    LiveCaptionSyncController.shared.receivePartial(
+                        start: offset + result.start,
+                        end: offset + result.end,
+                        text: text,
+                        engine: "zipformer",
+                        language: self.language,
+                        translation: self.validTranslatedDraft
+                    )
+                }
+            }
+            self.liveDraftStart = offset + result.start
+            self.liveDraft = result.isFinal ? "" : text
+            self.provisional = []
+        }
+    }
+
+    private func feedZipformer(_ partID: UUID) async throws {
+        guard let store else { return }
+        while let current = session, let part = current.parts.first(where: { $0.id == partID }), zipformerCursor < part.sampleCount {
+            let count = min(4000, part.sampleCount - zipformerCursor)
+            let samples = try PCMRecorder.read(store.audioURL(current, part), from: zipformerCursor, count: count)
+            let fedPTS = part.offset + Double(zipformerCursor + count) / 16000
+            CaptionTimeline.shared.recordAudioFedToASR(samplesCount: count, pts: fedPTS)
+            try await zipformerEngine.append(samples)
+            zipformerCursor += count
+        }
+    }
+
+    private func streamZipformer() async throws {
+        guard let partID = activePartID else { return }
+        while isRecording {
+            if !canProcessLiveAudio { try await Task.sleep(nanoseconds: 300_000_000); continue }
+            updateAudioCount()
+            try await feedZipformer(partID)
+            try await Task.sleep(nanoseconds: 250_000_000)
+        }
+    }
+
+    private func startZipformerDeviceAudio(current: LectureSession) async throws {
+        let generation = UUID(); activeDecodeID = generation
+        liveDraft = ""; provisional = []; restartTranslation()
+        let offset = duration
+        try await zipformerEngine.start(language: current.language) { [weak self] result in
+            guard let self, self.activeDecodeID == generation, self.session?.id == current.id,
+                  result.start.isFinite, result.end.isFinite else { return }
+            let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.draftAudioEnd = max(self.draftAudioEnd, offset + result.end)
+            if result.isFinal {
+                if !text.isEmpty {
+                    self.session?.previousLines = nil
+                    let corrected = CourseVocabulary.shared.correctFinalText(text)
+                    let newLine = TranscriptLine(start: offset + result.start, end: offset + result.end, text: corrected)
+                    self.session?.lines.append(newLine)
+                    LiveActivityCoordinator.shared.updateTranscript(original: corrected, translation: self.validTranslatedDraft)
+                    LiveCaptionSyncController.shared.receiveFinal(
+                        id: newLine.id,
+                        start: offset + result.start,
+                        end: offset + result.end,
+                        text: corrected,
+                        engine: "zipformer",
+                        language: self.language,
+                        translation: self.validTranslatedDraft
+                    )
+                    self.deviceAudioFinalizedSampleIndex = max(self.deviceAudioFinalizedSampleIndex, Int((offset + result.end) * 16000))
+                }
+                if self.sessionStorageMode == .saveTranscript {
+                    self.persist()
+                }
+            } else {
+                if !text.isEmpty {
+                    LiveCaptionSyncController.shared.receivePartial(
+                        start: offset + result.start,
+                        end: offset + result.end,
+                        text: text,
+                        engine: "zipformer",
+                        language: self.language,
+                        translation: self.validTranslatedDraft
+                    )
+                }
+            }
+            self.liveDraftStart = offset + result.start
+            self.liveDraft = result.isFinal ? "" : text
+            self.provisional = []
+        }
+    }
+
+    // MARK: - Paraformer Streaming
+
+    private func startParaformer(_ part: AudioPart, current: LectureSession) async throws {
+        paraformerCursor = part.processedSamples
+        let from = part.processedSamples
+        let offset = part.offset + Double(from) / 16000
+        let generation = UUID(); activeDecodeID = generation
+        liveDraft = ""; provisional = []; restartTranslation()
+        try await paraformerEngine.start(language: current.language) { [weak self] result in
+            guard let self, self.activeDecodeID == generation, self.session?.id == current.id,
+                  let index = self.session?.parts.firstIndex(where: { $0.id == part.id }),
+                  result.start.isFinite, result.end.isFinite else { return }
+            let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.draftAudioEnd = max(self.draftAudioEnd, offset + result.end)
+            if result.isFinal {
+                if !text.isEmpty {
+                    self.session?.previousLines = nil
+                    let corrected = CourseVocabulary.shared.correctFinalText(text)
+                    let newLine = TranscriptLine(start: offset + result.start, end: offset + result.end, text: corrected)
+                    self.session?.lines.append(newLine)
+                    LiveActivityCoordinator.shared.updateTranscript(original: corrected, translation: self.validTranslatedDraft)
+                    LiveCaptionSyncController.shared.receiveFinal(
+                        id: newLine.id,
+                        start: offset + result.start,
+                        end: offset + result.end,
+                        text: corrected,
+                        engine: "paraformer",
+                        language: self.language,
+                        translation: self.validTranslatedDraft
+                    )
+                }
+                let durable = from + Int(max(0, result.finalizedThrough) * 16000)
+                let count = self.session?.parts[index].sampleCount ?? 0
+                let previous = self.session?.parts[index].processedSamples ?? 0
+                self.session?.parts[index].processedSamples = min(count, max(previous, durable))
+                self.persist()
+            } else {
+                if !text.isEmpty {
+                    LiveCaptionSyncController.shared.receivePartial(
+                        start: offset + result.start,
+                        end: offset + result.end,
+                        text: text,
+                        engine: "paraformer",
+                        language: self.language,
+                        translation: self.validTranslatedDraft
+                    )
+                }
+            }
+            self.liveDraftStart = offset + result.start
+            self.liveDraft = result.isFinal ? "" : text
+            self.provisional = []
+        }
+    }
+
+    private func feedParaformer(_ partID: UUID) async throws {
+        guard let store else { return }
+        while let current = session, let part = current.parts.first(where: { $0.id == partID }), paraformerCursor < part.sampleCount {
+            let count = min(4000, part.sampleCount - paraformerCursor)
+            let samples = try PCMRecorder.read(store.audioURL(current, part), from: paraformerCursor, count: count)
+            let fedPTS = part.offset + Double(paraformerCursor + count) / 16000
+            CaptionTimeline.shared.recordAudioFedToASR(samplesCount: count, pts: fedPTS)
+            try await paraformerEngine.append(samples)
+            paraformerCursor += count
+        }
+    }
+
+    private func streamParaformer() async throws {
+        guard let partID = activePartID else { return }
+        while isRecording {
+            if !canProcessLiveAudio { try await Task.sleep(nanoseconds: 300_000_000); continue }
+            updateAudioCount()
+            try await feedParaformer(partID)
+            try await Task.sleep(nanoseconds: 250_000_000)
+        }
+    }
+
+    private func startParaformerDeviceAudio(current: LectureSession) async throws {
+        let generation = UUID(); activeDecodeID = generation
+        liveDraft = ""; provisional = []; restartTranslation()
+        let offset = duration
+        try await paraformerEngine.start(language: current.language) { [weak self] result in
+            guard let self, self.activeDecodeID == generation, self.session?.id == current.id,
+                  result.start.isFinite, result.end.isFinite else { return }
+            let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.draftAudioEnd = max(self.draftAudioEnd, offset + result.end)
+            if result.isFinal {
+                if !text.isEmpty {
+                    self.session?.previousLines = nil
+                    let corrected = CourseVocabulary.shared.correctFinalText(text)
+                    let newLine = TranscriptLine(start: offset + result.start, end: offset + result.end, text: corrected)
+                    self.session?.lines.append(newLine)
+                    LiveActivityCoordinator.shared.updateTranscript(original: corrected, translation: self.validTranslatedDraft)
+                    LiveCaptionSyncController.shared.receiveFinal(
+                        id: newLine.id,
+                        start: offset + result.start,
+                        end: offset + result.end,
+                        text: corrected,
+                        engine: "paraformer",
+                        language: self.language,
+                        translation: self.validTranslatedDraft
+                    )
+                    self.deviceAudioFinalizedSampleIndex = max(self.deviceAudioFinalizedSampleIndex, Int((offset + result.end) * 16000))
+                }
+                if self.sessionStorageMode == .saveTranscript {
+                    self.persist()
+                }
+            } else {
+                if !text.isEmpty {
+                    LiveCaptionSyncController.shared.receivePartial(
+                        start: offset + result.start,
+                        end: offset + result.end,
+                        text: text,
+                        engine: "paraformer",
+                        language: self.language,
+                        translation: self.validTranslatedDraft
+                    )
+                }
+            }
+            self.liveDraftStart = offset + result.start
+            self.liveDraft = result.isFinal ? "" : text
+            self.provisional = []
+        }
+    }
+
     private func decodeDeviceAudioSenseVoice() async throws {
         deviceAudioBufferLock.lock()
         let currentSamples = deviceAudioBuffer
@@ -2041,6 +2367,20 @@ extension LectureController: DeviceAudioCaptureDelegate {
             Task { [weak self] in
                 CaptionTimeline.shared.recordAudioFedToASR(samplesCount: chunk.samples.count, pts: pts)
                 try? await self?.appleSpeech?.append(chunk.samples)
+            }
+        } else if usesZipformer {
+            let pts = chunk.endMediaTime
+            deviceAudioFedSampleIndex += chunk.samples.count
+            Task { [weak self] in
+                CaptionTimeline.shared.recordAudioFedToASR(samplesCount: chunk.samples.count, pts: pts)
+                try? await self?.zipformerEngine.append(chunk.samples)
+            }
+        } else if usesParaformer {
+            let pts = chunk.endMediaTime
+            deviceAudioFedSampleIndex += chunk.samples.count
+            Task { [weak self] in
+                CaptionTimeline.shared.recordAudioFedToASR(samplesCount: chunk.samples.count, pts: pts)
+                try? await self?.paraformerEngine.append(chunk.samples)
             }
         }
         deviceAudioBufferLock.lock()

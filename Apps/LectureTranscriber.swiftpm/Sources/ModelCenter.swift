@@ -125,7 +125,7 @@ public final class ModelCenter: ObservableObject {
             ),
             ModelManifestItem(
                 id: "zipformer-bilingual",
-                name: "Zipformer Bilingual (Planned v1.9.2)",
+                name: "Zipformer Bilingual",
                 engineType: .zipformer,
                 downloadSizeMB: 48,
                 memoryEstimateMB: 150,
@@ -133,12 +133,11 @@ public final class ModelCenter: ObservableObject {
                 supportsVocabularyBias: false,
                 isBuiltIn: false,
                 isExperimental: false,
-                isSupportedOnCurrentDevice: false,
-                unsupportedReason: "Zipformer runtime is deferred to v1.9.2 (sherpa-onnx runtime not bundled)"
+                isSupportedOnCurrentDevice: true
             ),
             ModelManifestItem(
                 id: "paraformer-bilingual",
-                name: "Paraformer Bilingual (Planned v1.9.2)",
+                name: "Streaming Paraformer Bilingual",
                 engineType: .paraformer,
                 downloadSizeMB: 226,
                 memoryEstimateMB: 340,
@@ -146,8 +145,7 @@ public final class ModelCenter: ObservableObject {
                 supportsVocabularyBias: false,
                 isBuiltIn: false,
                 isExperimental: false,
-                isSupportedOnCurrentDevice: false,
-                unsupportedReason: "Paraformer runtime is deferred to v1.9.2 (sherpa-onnx runtime not bundled)"
+                isSupportedOnCurrentDevice: true
             ),
             ModelManifestItem(
                 id: "moonshine-base",
@@ -204,6 +202,14 @@ public final class ModelCenter: ObservableObject {
             return FileManager.default.fileExists(atPath: path.path)
         }
 
+        if modelId == "zipformer-bilingual" {
+            return ZipformerStreamingEngine.isModelInstalled()
+        }
+
+        if modelId == "paraformer-bilingual" {
+            return ParaformerStreamingEngine.isModelInstalled()
+        }
+
         let cacheFile = base.appendingPathComponent(modelId + "-location.txt")
         if let relative = try? String(contentsOf: cacheFile, encoding: .utf8),
            FileManager.default.fileExists(atPath: base.appendingPathComponent(relative).path) {
@@ -232,6 +238,16 @@ public final class ModelCenter: ObservableObject {
         guard let item = manifest.first(where: { $0.id == modelId }), !item.isBuiltIn, item.isSupportedOnCurrentDevice else { return }
         let base = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
             .appendingPathComponent("SpeechModels", isDirectory: true)
+
+        if modelId == "zipformer-bilingual" {
+            if let dir = ZipformerStreamingEngine.modelDirectory() {
+                try? FileManager.default.removeItem(at: dir)
+            }
+        } else if modelId == "paraformer-bilingual" {
+            if let dir = ParaformerStreamingEngine.modelDirectory() {
+                try? FileManager.default.removeItem(at: dir)
+            }
+        }
 
         let target = base.appendingPathComponent(modelId)
         let cacheFile = base.appendingPathComponent(modelId + "-location.txt")
