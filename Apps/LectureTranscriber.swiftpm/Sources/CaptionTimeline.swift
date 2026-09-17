@@ -142,15 +142,7 @@ public final class CaptionTimeline: ObservableObject {
     // MARK: - Time Normalization
 
     private func normalize(pts: Double) -> Double {
-        if sessionEpochPTS == nil {
-            // If the incoming PTS is a realistic absolute timestamp (e.g. > 1000s), set epoch
-            if pts > 1000.0 {
-                sessionEpochPTS = pts
-            } else {
-                sessionEpochPTS = 0.0
-            }
-        }
-        return max(0.0, pts - (sessionEpochPTS ?? 0.0))
+        max(0.0, pts)
     }
 
     // MARK: - Watermark Updates
@@ -191,12 +183,11 @@ public final class CaptionTimeline: ObservableObject {
         if let pts = throughPTS {
             let normalized = normalize(pts: pts)
             translatedThrough = max(translatedThrough, normalized)
-        } else {
-            translatedThrough = max(translatedThrough, recognizedThrough)
         }
         if let duration = wallClockDuration {
             lastTranslationProcessingDuration = duration
         }
+        updateSyncState()
     }
 
     public func recordTranslated(through timestamp: Double) {
@@ -207,8 +198,9 @@ public final class CaptionTimeline: ObservableObject {
         if let pts = throughPTS {
             let normalized = normalize(pts: pts)
             displayedThrough = max(displayedThrough, normalized)
-        } else {
-            displayedThrough = max(displayedThrough, recognizedThrough)
+        }
+        if let wallClock = wallClock {
+            lastDisplayRenderDuration = wallClock
         }
         updateSyncState()
     }
@@ -305,11 +297,8 @@ public final class CaptionTimeline: ObservableObject {
 
     // MARK: - Catch-Up & Stale Logic
 
-    /// Called when source media pauses: aggressively drain backlog to normal
+    /// Called when source media pauses: update sync state without fabricating progress
     public func drainBacklog() {
-        recognizedThrough = capturedThrough
-        translatedThrough = recognizedThrough
-        displayedThrough = recognizedThrough
         updateSyncState()
     }
 
@@ -319,8 +308,7 @@ public final class CaptionTimeline: ObservableObject {
 
         if dispLag > staleThreshold {
             syncState = .stale
-            // Jump display forward toward newest recognized watermark
-            displayedThrough = max(0.0, recognizedThrough - 0.2)
+            // NEVER fabricate displayedThrough here; watermark strictly reflects actual rendered cue time
         } else if recLag > catchUpEnterThreshold || dispLag > catchUpEnterThreshold {
             syncState = .catchingUp
         } else if recLag <= catchUpExitThreshold && dispLag <= catchUpExitThreshold {

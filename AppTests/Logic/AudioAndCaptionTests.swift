@@ -979,18 +979,37 @@ final class AudioAndCaptionTests: XCTestCase {
         let timeline = CaptionTimeline()
         timeline.reset()
 
-        // Test epoch normalization: absolute PTS e.g. 54321.0
-        timeline.recordAudioCaptured(duration: 2.0, pts: 54321.0)
-        XCTAssertEqual(timeline.capturedThrough, 0.0) // Epoch normalized to 0
+        // Monotonic media timeline starting from 0.0
+        // Device Audio captures a chunk with duration 2.0s, endMediaTime 2.0s, sourcePTS 54321.0
+        let chunk1 = TimedAudioChunk(
+            samples: [Float](repeating: 0.1, count: 32000),
+            sampleRate: 16000,
+            channelCount: 1,
+            level: 0.5,
+            startMediaTime: 0.0,
+            endMediaTime: 2.0,
+            startSampleIndex: 0,
+            endSampleIndex: 32000,
+            sourcePTS: 54321.0
+        )
+        XCTAssertEqual(chunk1.startMediaTime, 0.0)
+        XCTAssertEqual(chunk1.endMediaTime, 2.0)
+        XCTAssertEqual(chunk1.pts, 0.0)
+        XCTAssertEqual(chunk1.duration, 2.0)
+        XCTAssertEqual(chunk1.sourcePTS, 54321.0)
 
-        timeline.recordAudioCaptured(duration: 3.0, pts: 54324.0)
-        XCTAssertEqual(timeline.capturedThrough, 3.0)
+        timeline.recordAudioCaptured(duration: chunk1.duration, pts: chunk1.endMediaTime)
+        XCTAssertEqual(timeline.capturedThrough, 2.0)
 
-        timeline.recordAudioFedToASR(samplesCount: 48000, pts: 54324.0)
-        XCTAssertEqual(timeline.fedThrough, 3.0)
+        // Second chunk: from 2.0 to 5.0
+        timeline.recordAudioCaptured(duration: 3.0, pts: 5.0)
+        XCTAssertEqual(timeline.capturedThrough, 5.0)
 
-        timeline.recordASRFinalized(throughPTS: 54323.5, wallClockDuration: 0.12)
-        XCTAssertEqual(timeline.recognizedThrough, 2.5)
+        timeline.recordAudioFedToASR(samplesCount: 48000, pts: 5.0)
+        XCTAssertEqual(timeline.fedThrough, 5.0)
+
+        timeline.recordASRFinalized(throughPTS: 4.5, wallClockDuration: 0.12)
+        XCTAssertEqual(timeline.recognizedThrough, 4.5)
         XCTAssertEqual(timeline.lastASRProcessingDuration, 0.12)
 
         // Media lag is strictly in the media domain: captured - recognized
@@ -998,19 +1017,120 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(timeline.recognitionMediaLag, 0.0)
 
         // Wall-clock translation latency tracked separately
-        timeline.recordTranslationComplete(throughPTS: 54323.5, wallClockDuration: 0.08)
-        XCTAssertEqual(timeline.translatedThrough, 2.5)
+        timeline.recordTranslationComplete(throughPTS: 4.5, wallClockDuration: 0.08)
+        XCTAssertEqual(timeline.translatedThrough, 4.5)
         XCTAssertEqual(timeline.lastTranslationProcessingDuration, 0.08)
         XCTAssertEqual(timeline.translationMediaLag, 0.0)
 
         // Display lag
-        timeline.recordCaptionDisplayed(throughPTS: 54323.5)
-        XCTAssertEqual(timeline.displayedThrough, 2.5)
+        timeline.recordCaptionDisplayed(throughPTS: 4.5)
+        XCTAssertEqual(timeline.displayedThrough, 4.5)
         XCTAssertEqual(timeline.displayMediaLag, 0.0)
-
-        // Backlog drain restores to normal
-        timeline.drainBacklog()
         XCTAssertEqual(timeline.syncState, .normal)
+    }
+
+    @MainActor
+    func testFactualWatermarksNeverFabricateOnPauseOrStale() {
+        let timeline = CaptionTimeline()
+        timeline.reset()
+
+        timeline.recordAudioCaptured(duration: 10.0, pts: 10.0)
+        timeline.recordAudioFedToASR(samplesCount: 160_000, pts: 10.0)
+        timeline.recordASRFinalized(throughPTS: 6.0)
+        timeline.recordTranslationComplete(throughPTS: 6.0)
+        timeline.recordCaptionDisplayed(throughPTS: 2.0)
+
+        // Display lag is 6.0 - 2.0 = 4.0s > 3.5s stale threshold
+        XCTAssertEqual(timeline.syncState, .stale)
+        // In STALE: displayedThrough MUST NOT be fabricated to max(0, recognizedThrough - 0.2)!
+        XCTAssertEqual(timeline.displayedThrough, 2.0, "Stale state must NEVER fabricate or advance displayedThrough speculatively")
+
+        // Source pause: drainBacklog must NEVER equate watermarks
+        timeline.drainBacklog()
+        XCTAssertEqual(timeline.recognizedThrough, 6.0, "Pause must not fabricate recognition progress")
+        XCTAssertEqual(timeline.translatedThrough, 6.0, "Pause must not fabricate translation progress")
+        XCTAssertEqual(timeline.displayedThrough, 2.0, "Pause must not fabricate display progress")
+    }
+
+    @MainActor
+    func testTranslationAndDisplayWatermarksRequireEndpoints() {
+        let timeline = CaptionTimeline()
+        timeline.reset()
+
+        timeline.recordAudioCaptured(duration: 5.0, pts: 5.0)
+        timeline.recordASRFinalized(throughPTS: 4.0)
+
+        // Passing nil endpoint must NOT fabricate progress to recognizedThrough
+        timeline.recordTranslationComplete(throughPTS: nil)
+        XCTAssertEqual(timeline.translatedThrough, 0.0, "Nil translation endpoint must not advance watermark")
+
+        timeline.recordTranslationComplete(throughPTS: 3.5)
+        XCTAssertEqual(timeline.translatedThrough, 3.5)
+
+        // Passing nil endpoint must NOT fabricate progress to recognizedThrough
+        timeline.recordCaptionDisplayed(throughPTS: nil)
+        XCTAssertEqual(timeline.displayedThrough, 0.0, "Nil display endpoint must not advance watermark")
+
+        timeline.recordCaptionDisplayed(throughPTS: 3.5)
+        XCTAssertEqual(timeline.displayedThrough, 3.5)
+    }
+
+    @MainActor
+    func testLiveCaptionSyncControllerPoliciesAndPresentation() {
+        let timeline = CaptionTimeline()
+        timeline.reset()
+        let controller = LiveCaptionSyncController(timeline: timeline)
+
+        // 1. NORMAL mode: immediate pass-through
+        let cue1 = controller.receivePartial(start: 0.0, end: 1.0, text: "Hello", engine: "apple", language: "en")
+        XCTAssertEqual(cue1.originalText, "Hello")
+        XCTAssertEqual(CaptionFeed.shared.latestOriginal, "Hello")
+        XCTAssertEqual(CaptionFeed.shared.latestCueEndTime, 1.0)
+
+        // Final line
+        let cueFinal = controller.receiveFinal(start: 0.0, end: 1.5, text: "Hello world.", engine: "apple", language: "en")
+        XCTAssertTrue(cueFinal.isFinal)
+        XCTAssertEqual(CaptionFeed.shared.latestOriginal, "Hello world.")
+        XCTAssertEqual(CaptionFeed.shared.latestCueEndTime, 1.5)
+        XCTAssertEqual(timeline.cues.count, 1, "Finalized cue must be preserved in storage")
+
+        // Translation update
+        controller.updateTranslation(forCueID: cueFinal.id, throughPTS: 1.5, translation: "你好世界。")
+        XCTAssertEqual(CaptionFeed.shared.latestTranslation, "你好世界。")
+        XCTAssertEqual(timeline.translatedThrough, 1.5)
+    }
+
+    @MainActor
+    func testASRHotSwitchBacklogPreservedInRouter() {
+        let router = ASRRouter.shared
+        router.recordSwitch(
+            from: "sensevoice",
+            to: "apple",
+            sampleIndex: 120_000,
+            timestamp: 7.5,
+            successful: true,
+            note: "Hot switch preserving backlog"
+        )
+        XCTAssertEqual(router.currentEngine, .apple)
+        XCTAssertEqual(router.lastSwitchEvent?.fromEngine, "sensevoice")
+        XCTAssertEqual(router.lastSwitchEvent?.toEngine, "apple")
+        XCTAssertEqual(router.lastSwitchEvent?.sampleIndex, 120_000)
+        XCTAssertEqual(router.lastSwitchEvent?.successful, true)
+    }
+
+    func testMicrophoneDualBranchArchitecture() {
+        let intermediate = URL(fileURLWithPath: "/tmp/lecture-session/part1.pcm16")
+        let master = PCMRecorder.masterURL(for: intermediate)
+        XCTAssertEqual(master.pathExtension.lowercased(), "caf")
+        XCTAssertTrue(master.lastPathComponent.contains("master"))
+
+        // Speech dynamics processor at native 48 kHz
+        var processor = SpeechDynamicsProcessor(sampleRate: 48000)
+        let quietNative: [Float] = (0..<4800).map { _ in 0.005 }
+        let (boosted, diag) = processor.processWithDiagnostics(quietNative)
+        XCTAssertEqual(boosted.count, quietNative.count)
+        XCTAssertGreaterThan(diag.postPeakDBFS, diag.prePeakDBFS, "Native speech must be amplified by listener DSP")
+        XCTAssertLessThanOrEqual(diag.postPeakDBFS, -0.29, "Native speech must respect peak limiter ceiling")
     }
 
     @MainActor

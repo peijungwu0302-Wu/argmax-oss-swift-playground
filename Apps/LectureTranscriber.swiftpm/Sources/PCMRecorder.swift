@@ -6,11 +6,12 @@ final class PCMRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var engine: AVAudioEngine?
     private var writer: FileHandle?
+    private var masterAudioFile: AVAudioFile?
     private var count = 0
     private var level: Float = 0
     private var failure: String?
     private var accepting = false
-    private let dynamicsProcessor = SpeechDynamicsProcessor(sampleRate: 16000)
+    private var dynamicsProcessor = SpeechDynamicsProcessor(sampleRate: 16000)
 
     /// Optional real-time callback delivering pristine 16 kHz mono Float32 audio to ASR router
     var onASRAudio: (@Sendable ([Float]) -> Void)?
@@ -32,6 +33,10 @@ final class PCMRecorder: @unchecked Sendable {
         )
     }
 
+    static func masterURL(for intermediateURL: URL) -> URL {
+        intermediateURL.deletingPathExtension().appendingPathExtension("master.caf")
+    }
+
     @MainActor
     func start(at url: URL, allowsPlayback: Bool = false) throws {
         // Centralized AudioSession policy
@@ -50,8 +55,23 @@ final class PCMRecorder: @unchecked Sendable {
             throw LectureError.message("無法建立新的錄音檔。請確認裝置剩餘空間。")
         }
         let file = try FileHandle(forWritingTo: url)
+
+        // Setup listener master file at native sample rate
+        let master = Self.masterURL(for: url)
+        if FileManager.default.fileExists(atPath: master.path) {
+            try? FileManager.default.removeItem(at: master)
+        }
+        let masterFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: format.sampleRate, channels: 1, interleaved: false)!
+        let masterFile = try? AVAudioFile(forWriting: master, settings: masterFormat.settings)
+
         lock.lock()
-        writer = file; count = 0; level = 0; failure = nil; accepting = true
+        dynamicsProcessor = SpeechDynamicsProcessor(sampleRate: format.sampleRate)
+        writer = file
+        masterAudioFile = masterFile
+        count = 0
+        level = 0
+        failure = nil
+        accepting = true
         lock.unlock()
         self.engine = engine
 
@@ -59,6 +79,26 @@ final class PCMRecorder: @unchecked Sendable {
             guard let self else { return }
             self.lock.lock(); defer { self.lock.unlock() }
             guard self.accepting, self.failure == nil, let writer = self.writer else { return }
+
+            // 1. Branch B (Recording Master): Process native mic audio through SpeechDynamicsProcessor
+            var masterSamples: [Float] = []
+            if let channel0 = buffer.floatChannelData?[0], buffer.frameLength > 0 {
+                let nativeLength = Int(buffer.frameLength)
+                let nativeSamples = Array(UnsafeBufferPointer(start: channel0, count: nativeLength))
+                masterSamples = self.dynamicsProcessor.process(nativeSamples)
+
+                if let masterAudioFile = self.masterAudioFile,
+                   let masterBuffer = AVAudioPCMBuffer(pcmFormat: masterAudioFile.processingFormat, frameCapacity: buffer.frameCapacity),
+                   let dst = masterBuffer.floatChannelData?[0] {
+                    masterBuffer.frameLength = buffer.frameLength
+                    masterSamples.withUnsafeBufferPointer {
+                        dst.update(from: $0.baseAddress!, count: nativeLength)
+                    }
+                    try? masterAudioFile.write(from: masterBuffer)
+                }
+            }
+
+            // 2. Branch A (ASR Branch): Resample native buffer to pristine 16 kHz mono Float32
             let capacity = AVAudioFrameCount(ceil(Double(buffer.frameLength) * 16000 / format.sampleRate)) + 256
             guard let output = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else {
                 self.failure = "音訊緩衝區配置失敗。"; return
@@ -76,16 +116,16 @@ final class PCMRecorder: @unchecked Sendable {
             let length = Int(output.frameLength)
             let asrSamples = Array(UnsafeBufferPointer(start: channel, count: length))
 
-            // 1. Deliver pristine uncompressed PCM to ASR branch
+            // 2a. Deliver pristine uncompressed PCM to ASR branch (RAW, NO DSP)
             self.onASRAudio?(asrSamples)
 
-            // 2. Process through listener-oriented speech dynamics processor (Gain + Compressor + Peak Limiter)
-            let recordingSamples = self.dynamicsProcessor.process(asrSamples)
-
+            // 2b. Write raw 16 kHz PCM to crash-recoverable intermediate file (RAW, NO DSP)
             do {
-                try writer.write(contentsOf: AudioStorage.encodePCM16(recordingSamples))
+                try writer.write(contentsOf: AudioStorage.encodePCM16(asrSamples))
                 self.count += length
-                let power = recordingSamples.reduce(Float(0)) { $0 + $1 * $1 } / Float(length)
+                // Compute level for UI
+                let levelSamples = masterSamples.isEmpty ? asrSamples : masterSamples
+                let power = levelSamples.reduce(Float(0)) { $0 + $1 * $1 } / Float(max(1, levelSamples.count))
                 self.level = min(1, max(0, (20 * log10(max(sqrt(power), 0.00001)) + 60) / 60))
             } catch {
                 self.failure = "錄音無法寫入磁碟：\(error.localizedDescription)"
@@ -107,6 +147,7 @@ final class PCMRecorder: @unchecked Sendable {
         do { try writer?.synchronize(); try writer?.close() }
         catch { failure = "錄音儲存失敗：\(error.localizedDescription)" }
         writer = nil
+        masterAudioFile = nil
         lock.unlock()
 
         AudioSessionCoordinator.shared.deactivateMicrophoneCapture()
@@ -117,10 +158,22 @@ final class PCMRecorder: @unchecked Sendable {
     }
 
     static func archive(_ source: URL, samples: Int, bitRate: Int) throws -> URL {
-        try StoredAudio.archive(source, samples: samples, bitRate: bitRate)
+        let master = masterURL(for: source)
+        let sourceToArchive = FileManager.default.fileExists(atPath: master.path) ? master : source
+        let result = try StoredAudio.archive(sourceToArchive, samples: samples, bitRate: bitRate)
+        if sourceToArchive == master {
+            try? FileManager.default.removeItem(at: master)
+        }
+        return result
     }
 
     static func archive(source: URL, samples: Int, quality: RecordingQuality) throws -> URL {
-        try StoredAudio.archive(source: source, samples: samples, quality: quality)
+        let master = masterURL(for: source)
+        let sourceToArchive = FileManager.default.fileExists(atPath: master.path) ? master : source
+        let result = try StoredAudio.archive(source: sourceToArchive, samples: samples, quality: quality)
+        if sourceToArchive == master {
+            try? FileManager.default.removeItem(at: master)
+        }
+        return result
     }
 }

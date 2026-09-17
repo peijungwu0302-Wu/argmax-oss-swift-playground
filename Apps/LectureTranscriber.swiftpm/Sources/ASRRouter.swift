@@ -265,4 +265,27 @@ public final class ASRRouter: ObservableObject {
         totalSamplesFed = 0
         isSwitching = false
     }
+
+    public func recordSwitch(
+        from oldEngineName: String,
+        to newEngineName: String,
+        sampleIndex: Int,
+        timestamp: Double,
+        successful: Bool,
+        note: String? = nil
+    ) {
+        let event = ASRSwitchEvent(
+            fromEngine: oldEngineName,
+            toEngine: newEngineName,
+            sampleIndex: sampleIndex,
+            timestamp: timestamp,
+            successful: successful,
+            note: note
+        )
+        self.lastSwitchEvent = event
+        self.switchHistory.append(event)
+        if successful, let type = ASREngineType(rawValue: newEngineName) {
+            self.currentEngine = type
+        }
+    }
 }

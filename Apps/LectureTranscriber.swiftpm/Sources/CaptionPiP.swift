@@ -115,7 +115,10 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
         }
     }
 
+    private var currentCueEndTime: Double?
+
     private func feedDidUpdate(_ feed: CaptionFeed) {
+        self.currentCueEndTime = feed.latestCueEndTime
         let orig = feed.latestOriginal.isEmpty ? L10n.tr("等待語音…", "Waiting for speech…") : feed.latestOriginal
         let trans = feed.latestTranslation
         let mode = feed.captionMode
@@ -428,7 +431,7 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
 
         if layer.isReadyForMoreMediaData {
             layer.enqueue(sample)
-            CaptionTimeline.shared.recordCaptionDisplayed(at: CACurrentMediaTime())
+            CaptionTimeline.shared.recordCaptionDisplayed(at: CACurrentMediaTime(), throughPTS: isSamplePreview ? nil : currentCueEndTime)
             lastRenderedOriginal = original
             lastRenderedTranslation = translated
             lastRenderedMode = displayMode

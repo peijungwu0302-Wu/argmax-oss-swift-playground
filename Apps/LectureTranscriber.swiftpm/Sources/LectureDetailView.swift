@@ -14,6 +14,8 @@ final class LectureAudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegat
     private var session: LectureSession?
     private var store: SessionStore?
     private var timer: Timer?
+    private var prepareTask: Task<Void, Never>?
+    private var playableURLCache: [UUID: URL] = [:]
 
     func setRate(_ rate: Float) {
         playbackRate = rate
@@ -29,6 +31,7 @@ final class LectureAudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegat
         self.isPlaying = false
         self.activePartIndex = 0
         self.playbackRate = 1.0
+        self.playableURLCache.removeAll()
         stop()
     }
 
@@ -92,10 +95,38 @@ final class LectureAudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegat
         let localTime = max(0, time - part.offset)
         activePartIndex = targetIndex
 
-        Task {
+        // If player already loaded for this part, seek directly without re-transcoding
+        if let player = self.player, activePartIndex == targetIndex, player.url == playableURLCache[part.id] {
+            player.currentTime = localTime
+            if autoPlay {
+                player.play()
+                isPlaying = true
+                startTimer()
+            }
+            return
+        }
+
+        prepareTask?.cancel()
+        prepareTask = Task { [weak self] in
+            guard let self else { return }
             do {
                 let url = store.audioURL(session, part)
-                let playable = try StoredAudio.playable(url, samples: part.sampleCount)
+                let sampleCount = part.sampleCount
+                let partID = part.id
+                let cached = self.playableURLCache[partID]
+
+                // Move expensive transcoding off MainActor to background thread
+                let playable: URL
+                if let cached, FileManager.default.fileExists(atPath: cached.path) {
+                    playable = cached
+                } else {
+                    playable = try await Task.detached(priority: .userInitiated) {
+                        try StoredAudio.playable(url, samples: sampleCount)
+                    }.value
+                    self.playableURLCache[partID] = playable
+                }
+
+                try Task.checkCancellation()
                 try AudioSessionCoordinator.shared.activatePlayback()
 
                 let nextPlayer = try AVAudioPlayer(contentsOf: playable)
@@ -114,7 +145,9 @@ final class LectureAudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegat
                     self.isPlaying = false
                 }
             } catch {
-                self.isPlaying = false
+                if !Task.isCancelled {
+                    self.isPlaying = false
+                }
             }
         }
     }
@@ -153,6 +186,8 @@ final class LectureAudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegat
     }
 
     func stop() {
+        prepareTask?.cancel()
+        prepareTask = nil
         timer?.invalidate()
         timer = nil
         player?.stop()

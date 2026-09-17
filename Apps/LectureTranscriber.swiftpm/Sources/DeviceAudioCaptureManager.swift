@@ -160,10 +160,36 @@ public struct TimedAudioChunk: Sendable {
     public let sampleRate: Double
     public let channelCount: Int
     public let level: Float
-    public let pts: Double
+    public let startMediaTime: Double
+    public let endMediaTime: Double
     public let startSampleIndex: Int
     public let endSampleIndex: Int
-    public var duration: Double { Double(samples.count) / max(1.0, sampleRate) }
+    public let sourcePTS: Double
+
+    public var pts: Double { startMediaTime }
+    public var duration: Double { max(0.0, endMediaTime - startMediaTime) }
+
+    public init(
+        samples: [Float],
+        sampleRate: Double = 16000,
+        channelCount: Int = 1,
+        level: Float = 0,
+        startMediaTime: Double = 0,
+        endMediaTime: Double = 0,
+        startSampleIndex: Int = 0,
+        endSampleIndex: Int = 0,
+        sourcePTS: Double = 0
+    ) {
+        self.samples = samples
+        self.sampleRate = sampleRate
+        self.channelCount = channelCount
+        self.level = level
+        self.startMediaTime = startMediaTime
+        self.endMediaTime = endMediaTime
+        self.startSampleIndex = startSampleIndex
+        self.endSampleIndex = endSampleIndex
+        self.sourcePTS = sourcePTS
+    }
 
     public init(
         samples: [Float],
@@ -174,13 +200,16 @@ public struct TimedAudioChunk: Sendable {
         startSampleIndex: Int = 0,
         endSampleIndex: Int = 0
     ) {
+        let dur = Double(samples.count) / max(1.0, sampleRate)
         self.samples = samples
         self.sampleRate = sampleRate
         self.channelCount = channelCount
         self.level = level
-        self.pts = pts
+        self.startMediaTime = pts
+        self.endMediaTime = pts + dur
         self.startSampleIndex = startSampleIndex
         self.endSampleIndex = endSampleIndex
+        self.sourcePTS = pts
     }
 }
 
@@ -195,7 +224,10 @@ public protocol DeviceAudioCaptureDelegate: AnyObject {
 }
 
 public extension DeviceAudioCaptureDelegate {
-    func deviceAudioDidOutput(chunk: TimedAudioChunk) {}
+    func deviceAudioDidOutput(chunk: TimedAudioChunk) {
+        deviceAudioDidOutput(samples: chunk.samples, level: chunk.level)
+    }
+    func deviceAudioDidOutput(samples: [Float], level: Float) {}
 }
 
 // MARK: - Device Audio Capture Manager
@@ -485,22 +517,25 @@ private final class SCStreamAudioReceiver: NSObject, SCStreamOutput, SCStreamDel
         let startSample = sampleCounter
         sampleCounter += length
         let endSample = sampleCounter
+        let startMediaTime = Double(startSample) / 16000.0
+        let endMediaTime = Double(endSample) / 16000.0
 
         let chunk = TimedAudioChunk(
             samples: samples,
             sampleRate: 16000,
             channelCount: 1,
             level: level,
-            pts: ptsSeconds,
+            startMediaTime: startMediaTime,
+            endMediaTime: endMediaTime,
             startSampleIndex: startSample,
-            endSampleIndex: endSample
+            endSampleIndex: endSample,
+            sourcePTS: ptsSeconds
         )
 
         Task { @MainActor [weak self] in
             guard let manager = self?.manager, manager.isCapturing else { return }
             manager.recordBuffer(sampleRate: inRate, channels: inChannels)
             manager.delegate?.deviceAudioDidOutput(chunk: chunk)
-            manager.delegate?.deviceAudioDidOutput(samples: samples, level: level)
         }
     }
 
