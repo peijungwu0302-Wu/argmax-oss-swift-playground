@@ -1028,6 +1028,12 @@ final class AudioAndCaptionTests: XCTestCase {
         timeline.recordCaptionDisplayed(throughPTS: 2.5)
         XCTAssertEqual(timeline.displayedThrough, 2.5)
         XCTAssertEqual(timeline.displayMediaLag, 0.0)
+        XCTAssertEqual(timeline.syncState, .catchingUp)
+
+        // When ASR and display catch up (lag <= 0.35s), timeline transitions back to normal
+        timeline.recordASRFinalized(throughPTS: 2.8)
+        timeline.recordCaptionDisplayed(throughPTS: 2.8)
+        XCTAssertEqual(timeline.recognitionMediaLag, 0.2, accuracy: 0.001)
         XCTAssertEqual(timeline.syncState, .normal)
     }
 
