@@ -961,7 +961,7 @@ final class LectureController: ObservableObject {
                     // When switching to chunked engines (Whisper, SenseVoice, etc.),
                     // set processing cursor to plan.newEngineStartCursor before its worker begins.
                     deviceAudioProcessedSamples = plan.newEngineStartCursor
-                    deviceAudioFinalizedSampleIndex = max(deviceAudioFinalizedSampleIndex, plan.committedRange.upperBound)
+                    deviceAudioFinalizedSampleIndex = max(deviceAudioFinalizedSampleIndex, plan.oldEngineCommittedRange.upperBound)
                     deviceAudioFedSampleIndex = max(deviceAudioFedSampleIndex, plan.switchBoundary)
                 }
             } else if let index = session?.parts.indices.last, let part = session?.parts[index], let store {

@@ -379,6 +379,11 @@ public struct ASRSwitchPlan: Equatable, Sendable {
         self.newEngineStartCursor = committedEnd
     }
 
+    /// Backward-compatible alias for oldEngineCommittedRange
+    public var committedRange: Range<Int> {
+        oldEngineCommittedRange
+    }
+
     /// Verifies that there is zero gap and zero overlap between committed audio and handoff backlog
     public var isValidHandoff: Bool {
         oldEngineCommittedRange.upperBound == handoffBacklogRange.lowerBound &&
