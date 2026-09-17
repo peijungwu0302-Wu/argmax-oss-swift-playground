@@ -13,6 +13,14 @@
       "iconURL": "https://raw.githubusercontent.com/peijungwu0302-Wu/argmax-oss-swift-playground/playground-compatible/Apps/LectureTranscriber.swiftpm/Sources/Assets.xcassets/AppIcon.appiconset/AppIcon.png",
       "versions": [
         {
+          "version": "1.9.1",
+          "date": "2026-09-17T00:00:00Z",
+          "localizedDescription": "改善裝置音訊即時辨識與 ASR 引擎熱切換接軌穩定性，支援 Sherpa-ONNX 離線串流辨識（Zipformer/Paraformer 實機測試進行中），最佳化 Live Activity 與 PiP 字幕同步。",
+          "downloadURL": "https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/download/v1.9.1/LectureTranscriber-v1.9.1.ipa",
+          "size": 0,
+          "minOSVersion": "16.1"
+        },
+        {
           "version": "1.9.0",
           "date": "2026-09-16T00:00:00Z",
           "localizedDescription": "改善裝置聲音診斷與儲存流程、Live Activity 暫停計時與低延遲字幕、獨立字幕字級與彈性 PiP 比例、ASR 熱切換、中文定稿分段及翻譯自動恢復。",

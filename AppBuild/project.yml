@@ -28,8 +28,8 @@ targets:
       path: LectureInfo.plist
       properties:
         CFBundleDisplayName: 課堂逐字稿
-        CFBundleShortVersionString: "1.9.0"
-        CFBundleVersion: "19"
+        CFBundleShortVersionString: "1.9.1"
+        CFBundleVersion: "20"
         NSMicrophoneUsageDescription: 錄製課堂聲音，在這台裝置上產生逐字稿。
         NSScreenCaptureUsageDescription: 擷取裝置音訊以進行即時課堂語音辨識與字幕轉錄。
         NSSupportsLiveActivities: YES
@@ -48,8 +48,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.peijungwu0302.lecturetranscriber
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: LectureInfo.plist
-        MARKETING_VERSION: "1.9.0"
-        CURRENT_PROJECT_VERSION: "19"
+        MARKETING_VERSION: "1.9.1"
+        CURRENT_PROJECT_VERSION: "20"
         INFOPLIST_KEY_NSMicrophoneUsageDescription: 錄製課堂聲音，在這台裝置上產生逐字稿。
         INFOPLIST_KEY_NSScreenCaptureUsageDescription: 擷取裝置音訊以進行即時課堂語音辨識與字幕轉錄。
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
@@ -71,8 +71,8 @@ targets:
       path: LectureTranscriberWidgetInfo.plist
       properties:
         CFBundleDisplayName: 課堂逐字稿動態島
-        CFBundleShortVersionString: "1.9.0"
-        CFBundleVersion: "19"
+        CFBundleShortVersionString: "1.9.1"
+        CFBundleVersion: "20"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
@@ -82,8 +82,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.peijungwu0302.lecturetranscriber.widget
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: LectureTranscriberWidgetInfo.plist
-        MARKETING_VERSION: "1.9.0"
-        CURRENT_PROJECT_VERSION: "19"
+        MARKETING_VERSION: "1.9.1"
+        CURRENT_PROJECT_VERSION: "20"
         CODE_SIGNING_ALLOWED: NO
         TARGETED_DEVICE_FAMILY: "1,2"
   LogicTests:

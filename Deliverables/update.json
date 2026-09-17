@@ -1,8 +1,8 @@
 {
   "bundleIdentifier": "com.peijungwu0302.lecturetranscriber",
-  "version": "1.9.0",
-  "build": 19,
+  "version": "1.9.1",
+  "build": 20,
   "minimumOS": "16.1",
-  "downloadURL": "https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/download/v1.9.0/LectureTranscriber-v1.9.0.ipa",
-  "notes": "改善裝置聲音診斷、Live Activity 暫停與字幕更新、彈性字級與 PiP 比例、ASR 熱切換、中文定稿分段及翻譯自動恢復。"
+  "downloadURL": "https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/download/v1.9.1/LectureTranscriber-v1.9.1.ipa",
+  "notes": "改善裝置音訊即時辨識與 ASR 引擎熱切換接軌穩定性，支援 Sherpa-ONNX 離線串流辨識（Zipformer/Paraformer 實機測試進行中），最佳化 Live Activity 與 PiP 字幕同步。"
 }

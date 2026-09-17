@@ -9,7 +9,7 @@ with (app / "Info.plist").open("rb") as f:
 
 assert info["CFBundleIdentifier"] == "com.peijungwu0302.lecturetranscriber"
 assert sorted(info["UIDeviceFamily"]) == [1, 2]
-assert info["CFBundleShortVersionString"] == "1.9.0" and info["CFBundleVersion"] == "19"
+assert info["CFBundleShortVersionString"] == "1.9.1" and info["CFBundleVersion"] == "20"
 assert "audio" in info["UIBackgroundModes"]
 assert info.get("UIRequiresFullScreen") is False
 assert info.get("NSSupportsLiveActivities") is True, "Missing NSSupportsLiveActivities entitlement in Info.plist"
@@ -22,7 +22,7 @@ with (widget_appex / "Info.plist").open("rb") as f:
     widget_info = plistlib.load(f)
 
 assert widget_info["CFBundleIdentifier"] == "com.peijungwu0302.lecturetranscriber.widget", f"Unexpected widget bundle ID: {widget_info['CFBundleIdentifier']}"
-assert widget_info["CFBundleShortVersionString"] == "1.9.0" and widget_info["CFBundleVersion"] == "19"
+assert widget_info["CFBundleShortVersionString"] == "1.9.1" and widget_info["CFBundleVersion"] == "20"
 
 assert not (app / "embedded.mobileprovision").exists(), "Distribute an unsigned app for personal signing"
 assert info.get("CFBundleIcons"), "Missing packaged app icon"
@@ -38,5 +38,5 @@ with zipfile.ZipFile(output) as z:
     names = z.namelist()
     assert any(n.startswith(f"Payload/{app.name}/PlugIns/LectureTranscriberWidget.appex") for n in names), "IPA missing embedded widget extension"
 
-print("PASS: single Widget extension, universal iPhone/iPad, background audio, NSSupportsLiveActivities, version 1.9.0 (19) and unsigned IPA integrity")
+print("PASS: single Widget extension, universal iPhone/iPad, background audio, NSSupportsLiveActivities, version 1.9.1 (20) and unsigned IPA integrity")
 print(output)
