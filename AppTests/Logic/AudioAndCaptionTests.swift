@@ -1291,12 +1291,12 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertEqual(timeline.snapshot().displayedThrough, 0.0)
 
         // Emitting / receiving final caption must NOT advance displayedThrough
-        let cue = timeline.receiveFinal(id: UUID(), start: 1.0, end: 3.5, text: "Hello world", engine: "whisper", language: "en")
+        _ = timeline.receiveFinal(id: UUID(), start: 1.0, end: 3.5, text: "Hello world", engine: "whisper", language: "en")
         XCTAssertEqual(timeline.snapshot().recognizedThrough, 3.5)
         XCTAssertEqual(timeline.snapshot().displayedThrough, 0.0, "displayedThrough must not advance before actual presentation")
 
         // Only explicit presentation acknowledgement advances displayedThrough
-        timeline.recordCaptionDisplayed(cue: cue, atMediaPTS: 3.5)
+        timeline.recordCaptionDisplayed(throughPTS: 3.5)
         XCTAssertEqual(timeline.snapshot().displayedThrough, 3.5, "displayedThrough must advance upon presentation acknowledgement")
     }
 
@@ -1307,7 +1307,7 @@ final class AudioAndCaptionTests: XCTestCase {
         // Feed audio up to 10.0s
         timeline.recordAudioCaptured(duration: 10.0, pts: 10.0)
         timeline.recordAudioFedToASR(samplesCount: 160000, pts: 10.0)
-        let cue = timeline.receiveFinal(id: UUID(), start: 0.0, end: 2.0, text: "Old cue", engine: "apple", language: "en")
+        _ = timeline.receiveFinal(id: UUID(), start: 0.0, end: 2.0, text: "Old cue", engine: "apple", language: "en")
 
         // Surface inactive: even if display lag is huge (10.0 - 0.0 = 10.0s), sync state must NOT be .stale
         timeline.setPresentationSurfaceActive(false)
@@ -1322,9 +1322,9 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertEqual(activeSnapshot.syncState, .stale, "Active presentation surface with displayMediaLag > 2.0s must be stale")
 
         // Acknowledge display up to 9.5s
-        timeline.recordCaptionDisplayed(cue: cue, atMediaPTS: 9.5)
+        timeline.recordCaptionDisplayed(throughPTS: 9.5)
         let caughtUpSnapshot = timeline.snapshot()
-        XCTAssertEqual(caughtUpSnapshot.syncState, .inSync)
+        XCTAssertEqual(caughtUpSnapshot.syncState, .normal)
     }
 
     @MainActor
@@ -1339,20 +1339,20 @@ final class AudioAndCaptionTests: XCTestCase {
         // Receive cue 1
         syncController.receiveFinal(id: cue1ID, start: 0.0, end: 2.0, text: "First sentence", engine: "sensevoice", language: "en")
         XCTAssertEqual(feed.latestCueID, cue1ID)
-        XCTAssertEqual(feed.original, "First sentence")
+        XCTAssertEqual(feed.latestOriginal, "First sentence")
 
         // Receive cue 2
         syncController.receiveFinal(id: cue2ID, start: 2.0, end: 4.0, text: "Second sentence", engine: "sensevoice", language: "en")
         XCTAssertEqual(feed.latestCueID, cue2ID)
-        XCTAssertEqual(feed.original, "Second sentence")
+        XCTAssertEqual(feed.latestOriginal, "Second sentence")
 
         // Delayed translation arrives for older cue 1: must be discarded
         syncController.updateTranslation(forCueID: cue1ID, translation: "第一句（過期）")
-        XCTAssertEqual(feed.translation, "", "Delayed translation for mismatched cueID must not overwrite current caption")
+        XCTAssertEqual(feed.latestTranslation, "", "Delayed translation for mismatched cueID must not overwrite current caption")
 
         // Translation arrives for current cue 2: must be applied
         syncController.updateTranslation(forCueID: cue2ID, translation: "第二句（正確）")
-        XCTAssertEqual(feed.translation, "第二句（正確）", "Translation matching current cueID must update CaptionFeed")
+        XCTAssertEqual(feed.latestTranslation, "第二句（正確）", "Translation matching current cueID must update CaptionFeed")
     }
 
     func testPCMRecorderMasterDurationValidationAndFallback() throws {
