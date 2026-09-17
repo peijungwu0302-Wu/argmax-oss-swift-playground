@@ -1143,6 +1143,7 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertEqual(router.lastSwitchEvent?.successful, true)
     }
 
+    @MainActor
     func testASRSwitchPlanDeterministicHandoff() {
         let plan = ASRRouter.planSwitch(
             from: "sensevoice",
@@ -1226,7 +1227,7 @@ final class AudioAndCaptionTests: XCTestCase {
         let master = PCMRecorder.masterURL(for: original)
         let samples: [Float] = (0..<16000).map { _ in 0.05 }
         try AudioStorage.encodePCM16(samples).write(to: original)
-        try "dummy-master".utf8.write(to: master)
+        try Data("dummy-master".utf8).write(to: master)
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: original.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: master.path))

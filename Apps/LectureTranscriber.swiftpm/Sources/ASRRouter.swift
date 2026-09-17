@@ -291,7 +291,7 @@ public final class ASRRouter: ObservableObject {
 
     // MARK: - Authoritative Switch & Cursor Planning
 
-    public static func planSwitch(
+    public nonisolated static func planSwitch(
         from oldEngine: String,
         to newEngine: String,
         capturedSamples: Int,
