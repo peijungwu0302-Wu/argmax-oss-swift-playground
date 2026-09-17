@@ -40,11 +40,6 @@ final class ParaformerStreamingEngine: LiveSpeechEngine {
         guard SherpaOnnxRuntime.isSupported else {
             throw LectureError.message("此系統平台尚未支援 sherpa-onnx 執行環境。")
         }
-        if !Self.isModelInstalled() {
-            try await ModelCenter.shared.downloadModel("paraformer-bilingual") { p in
-                Task { @MainActor in onProgress(p) }
-            }
-        }
         guard let dir = Self.modelDirectory(), Self.isModelInstalled() else {
             throw LectureError.message("Streaming Paraformer 模型尚未下載，請至模型中心下載後再使用。")
         }
