@@ -42,20 +42,20 @@ public final class LiveCaptionSyncController: ObservableObject {
 
         switch state {
         case .normal:
-            emit(original: text, translation: translation ?? cue.translatedText, cueEndTime: end)
+            emit(id: cue.id, original: text, translation: translation ?? cue.translatedText, cueEndTime: end)
 
         case .catchingUp:
             // Coalesce / rate limit partial updates (latest-state-wins)
             if now.timeIntervalSince(lastPartialEmitTime) >= catchUpThrottleInterval {
                 lastPartialEmitTime = now
-                emit(original: text, translation: translation ?? cue.translatedText, cueEndTime: end)
+                emit(id: cue.id, original: text, translation: translation ?? cue.translatedText, cueEndTime: end)
             }
 
         case .stale:
             // In STALE: Skip intermediate partials unless sufficiently spaced for a fresh leap
             if now.timeIntervalSince(lastPartialEmitTime) >= staleThrottleInterval {
                 lastPartialEmitTime = now
-                emit(original: text, translation: translation ?? cue.translatedText, cueEndTime: end)
+                emit(id: cue.id, original: text, translation: translation ?? cue.translatedText, cueEndTime: end)
             }
         }
         return cue
@@ -64,6 +64,7 @@ public final class LiveCaptionSyncController: ObservableObject {
     /// Receives a finalized transcript line from ASR.
     @discardableResult
     public func receiveFinal(
+        id: UUID? = nil,
         start: Double,
         end: Double,
         text: String,
@@ -71,9 +72,9 @@ public final class LiveCaptionSyncController: ObservableObject {
         language: String = "zh",
         translation: String? = nil
     ) -> CaptionCue {
-        let cue = timeline.receiveFinal(start: start, end: end, text: text, engine: engine, language: language)
-        // Finals are always emitted to display latest confirmed text
-        emit(original: text, translation: translation ?? cue.translatedText, cueEndTime: end)
+        let cue = timeline.receiveFinal(id: id, start: start, end: end, text: text, engine: engine, language: language)
+        // Finals are always emitted to display latest confirmed text with authoritative cue ID
+        emit(id: cue.id, original: text, translation: translation ?? cue.translatedText, cueEndTime: end)
         return cue
     }
 
@@ -87,8 +88,15 @@ public final class LiveCaptionSyncController: ObservableObject {
         if let pts = throughPTS {
             timeline.recordTranslationComplete(forLine: id, throughPTS: pts)
         }
-        let currentOriginal = CaptionFeed.shared.latestOriginal
-        emit(original: currentOriginal, translation: translation, cueEndTime: throughPTS ?? timeline.displayedThrough)
+        // Delayed translation policy:
+        // If cue A is still the currently displayed cue (or id is nil), update visible translation
+        // If cue A is no longer the visible cue: do NOT overwrite current cue B's displayed translation!
+        if id == nil || id == CaptionFeed.shared.latestCueID {
+            CaptionFeed.shared.update(
+                translation: translation,
+                cueEndTime: throughPTS ?? CaptionFeed.shared.latestCueEndTime
+            )
+        }
     }
 
     public func reset() {
@@ -96,15 +104,17 @@ public final class LiveCaptionSyncController: ObservableObject {
         timeline.reset()
     }
 
-    private func emit(original: String, translation: String?, cueEndTime: Double?) {
+    private func emit(id: UUID? = nil, original: String, translation: String?, cueEndTime: Double?) {
         let currentTranslation = translation ?? CaptionFeed.shared.latestTranslation
         CaptionFeed.shared.update(
             original: original,
             translation: currentTranslation,
+            latestCueID: id,
             cueEndTime: cueEndTime
         )
-        if let pts = cueEndTime {
-            timeline.recordCaptionDisplayed(throughPTS: pts)
-        }
+        // Presentation acknowledgement rule:
+        // emit() selects presentation state for CaptionFeed.
+        // It MUST NOT advance timeline.displayedThrough. Only actual presentation
+        // acknowledgement (e.g. AVSampleBufferDisplayLayer enqueue success) advances displayedThrough.
     }
 }

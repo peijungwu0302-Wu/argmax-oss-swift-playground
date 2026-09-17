@@ -55,6 +55,7 @@ public struct CaptionTimelineSnapshot: Sendable, Equatable {
     public let recognizedThrough: Double
     public let translatedThrough: Double
     public let displayedThrough: Double
+    public let presentationSurfaceActive: Bool
 
     // Media position lags (all within the media timeline)
     public let recognitionMediaLag: Double
@@ -73,6 +74,7 @@ public struct CaptionTimelineSnapshot: Sendable, Equatable {
         recognizedThrough: Double,
         translatedThrough: Double,
         displayedThrough: Double,
+        presentationSurfaceActive: Bool = false,
         recognitionMediaLag: Double,
         translationMediaLag: Double,
         displayMediaLag: Double,
@@ -85,6 +87,7 @@ public struct CaptionTimelineSnapshot: Sendable, Equatable {
         self.recognizedThrough = recognizedThrough
         self.translatedThrough = translatedThrough
         self.displayedThrough = displayedThrough
+        self.presentationSurfaceActive = presentationSurfaceActive
         self.recognitionMediaLag = recognitionMediaLag
         self.translationMediaLag = translationMediaLag
         self.displayMediaLag = displayMediaLag
@@ -107,6 +110,7 @@ public final class CaptionTimeline: ObservableObject {
     @Published public private(set) var recognizedThrough: Double = 0.0
     @Published public private(set) var translatedThrough: Double = 0.0
     @Published public private(set) var displayedThrough: Double = 0.0
+    @Published public var presentationSurfaceActive: Bool = false
 
     // Backward-compatible property aliases
     public var audioCapturedPTS: Double { capturedThrough }
@@ -123,6 +127,11 @@ public final class CaptionTimeline: ObservableObject {
     @Published public private(set) var activeCue: CaptionCue?
 
     private var revisionCounter: Int = 0
+
+    public func setPresentationSurfaceActive(_ active: Bool) {
+        presentationSurfaceActive = active
+        updateSyncState()
+    }
 
     // Sensible thresholds for catch-up and stale states
     private let catchUpEnterThreshold: Double = 1.2   // seconds of lag
@@ -159,6 +168,7 @@ public final class CaptionTimeline: ObservableObject {
         recognizedThrough = 0.0
         translatedThrough = 0.0
         displayedThrough = 0.0
+        presentationSurfaceActive = false
         lastASRProcessingDuration = nil
         lastTranslationProcessingDuration = nil
         lastDisplayRenderDuration = nil
@@ -279,6 +289,7 @@ public final class CaptionTimeline: ObservableObject {
 
     @discardableResult
     public func receiveFinal(
+        id: UUID? = nil,
         start: Double,
         end: Double,
         text: String,
@@ -289,6 +300,7 @@ public final class CaptionTimeline: ObservableObject {
         recordASRFinalized(throughPTS: end)
 
         let finalCue = CaptionCue(
+            id: id ?? UUID(),
             startTime: start,
             endTime: end,
             originalText: text,
@@ -334,7 +346,7 @@ public final class CaptionTimeline: ObservableObject {
 
     private func updateSyncState() {
         let recLag = recognitionMediaLag
-        let dispLag = displayMediaLag
+        let dispLag = presentationSurfaceActive ? displayMediaLag : 0.0
 
         if dispLag > staleThreshold {
             syncState = .stale
@@ -358,6 +370,7 @@ public final class CaptionTimeline: ObservableObject {
             recognizedThrough: recognizedThrough,
             translatedThrough: translatedThrough,
             displayedThrough: displayedThrough,
+            presentationSurfaceActive: presentationSurfaceActive,
             recognitionMediaLag: recognitionMediaLag,
             translationMediaLag: translationMediaLag,
             displayMediaLag: displayMediaLag,
@@ -367,7 +380,7 @@ public final class CaptionTimeline: ObservableObject {
 
     public func formattedDiagnostics() -> String {
         """
-        [Sync: \(syncState.rawValue)]
+        [Sync: \(syncState.rawValue)] (SurfaceActive: \(presentationSurfaceActive))
         Captured:   \(String(format: "%.2f s", capturedThrough))
         Fed ASR:    \(String(format: "%.2f s", fedThrough))
         Hypothesis: \(String(format: "%.2f s", hypothesisThrough))

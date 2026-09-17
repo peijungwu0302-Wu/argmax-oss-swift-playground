@@ -17,6 +17,10 @@ final class PCMRecorder: @unchecked Sendable {
     var onASRAudio: (@Sendable ([Float]) -> Void)?
 
     private var masterCreationError: String?
+    private var masterWriteFailed: Bool = false
+    private var masterError: String?
+    private var masterFramesWritten: Int = 0
+    private var masterSampleRate: Double = 0.0
 
     struct Snapshot: Sendable {
         var samples: Int
@@ -24,7 +28,10 @@ final class PCMRecorder: @unchecked Sendable {
         var error: String?
         var dynamics: AudioDynamicsDiagnostics
         var isMasterActive: Bool
+        var masterWriteFailed: Bool
         var masterError: String?
+        var masterFramesWritten: Int
+        var masterSampleRate: Double
 
         init(
             samples: Int,
@@ -32,14 +39,20 @@ final class PCMRecorder: @unchecked Sendable {
             error: String? = nil,
             dynamics: AudioDynamicsDiagnostics = AudioDynamicsDiagnostics(),
             isMasterActive: Bool = false,
-            masterError: String? = nil
+            masterWriteFailed: Bool = false,
+            masterError: String? = nil,
+            masterFramesWritten: Int = 0,
+            masterSampleRate: Double = 0.0
         ) {
             self.samples = samples
             self.level = level
             self.error = error
             self.dynamics = dynamics
             self.isMasterActive = isMasterActive
+            self.masterWriteFailed = masterWriteFailed
             self.masterError = masterError
+            self.masterFramesWritten = masterFramesWritten
+            self.masterSampleRate = masterSampleRate
         }
     }
 
@@ -50,8 +63,11 @@ final class PCMRecorder: @unchecked Sendable {
             level: level,
             error: failure,
             dynamics: dynamicsProcessor.currentDiagnostics(),
-            isMasterActive: masterAudioFile != nil,
-            masterError: masterCreationError
+            isMasterActive: masterAudioFile != nil && !masterWriteFailed,
+            masterWriteFailed: masterWriteFailed,
+            masterError: masterError ?? masterCreationError,
+            masterFramesWritten: masterFramesWritten,
+            masterSampleRate: masterSampleRate
         )
     }
 
@@ -100,6 +116,10 @@ final class PCMRecorder: @unchecked Sendable {
         writer = file
         masterAudioFile = masterFile
         masterCreationError = masterErr
+        masterWriteFailed = masterFile == nil && masterErr != nil
+        masterError = masterErr
+        masterFramesWritten = 0
+        masterSampleRate = format.sampleRate
         count = 0
         level = 0
         failure = nil
@@ -126,7 +146,14 @@ final class PCMRecorder: @unchecked Sendable {
                     masterSamples.withUnsafeBufferPointer {
                         dst.update(from: $0.baseAddress!, count: nativeLength)
                     }
-                    try? masterAudioFile.write(from: masterBuffer)
+                    do {
+                        try masterAudioFile.write(from: masterBuffer)
+                        self.masterFramesWritten += Int(buffer.frameLength)
+                    } catch {
+                        self.masterWriteFailed = true
+                        self.masterError = "主錄音寫入中斷：\(error.localizedDescription)"
+                        self.masterAudioFile = nil
+                    }
                 }
             }
 
@@ -180,7 +207,8 @@ final class PCMRecorder: @unchecked Sendable {
         catch { failure = "錄音儲存失敗：\(error.localizedDescription)" }
         writer = nil
         masterAudioFile = nil
-        masterCreationError = nil
+        // Preserve masterCreationError, masterWriteFailed, masterError, masterFramesWritten, and masterSampleRate!
+        // Do NOT clear them here so controller / finalizer can inspect them!
         lock.unlock()
 
         AudioSessionCoordinator.shared.deactivateMicrophoneCapture()
@@ -190,15 +218,41 @@ final class PCMRecorder: @unchecked Sendable {
         try StoredAudio.read(url, from: start, count: count)
     }
 
-    static func archive(_ source: URL, samples: Int, bitRate: Int) throws -> URL {
+    static func archive(_ source: URL, samples: Int, bitRate: Int, masterWriteFailed: Bool = false) throws -> URL {
         let master = masterURL(for: source)
-        let sourceToArchive = FileManager.default.fileExists(atPath: master.path) ? master : source
+        var sourceToArchive = source
+        let expectedDuration = Double(samples) / 16000.0
+
+        if !masterWriteFailed && FileManager.default.fileExists(atPath: master.path) {
+            if let masterFile = try? AVAudioFile(forReading: master) {
+                let masterDuration = Double(masterFile.length) / masterFile.fileFormat.sampleRate
+                let tolerance = max(0.5, expectedDuration * 0.05)
+                if abs(masterDuration - expectedDuration) <= tolerance {
+                    sourceToArchive = master
+                } else {
+                    print("PCMRecorder.archive: master duration mismatch (\(masterDuration)s vs expected \(expectedDuration)s); falling back to recovery PCM.")
+                }
+            }
+        }
         return try StoredAudio.archive(sourceToArchive, samples: samples, bitRate: bitRate)
     }
 
-    static func archive(source: URL, samples: Int, quality: RecordingQuality) throws -> URL {
+    static func archive(source: URL, samples: Int, quality: RecordingQuality, masterWriteFailed: Bool = false) throws -> URL {
         let master = masterURL(for: source)
-        let sourceToArchive = FileManager.default.fileExists(atPath: master.path) ? master : source
+        var sourceToArchive = source
+        let expectedDuration = Double(samples) / 16000.0
+
+        if !masterWriteFailed && FileManager.default.fileExists(atPath: master.path) {
+            if let masterFile = try? AVAudioFile(forReading: master) {
+                let masterDuration = Double(masterFile.length) / masterFile.fileFormat.sampleRate
+                let tolerance = max(0.5, expectedDuration * 0.05)
+                if abs(masterDuration - expectedDuration) <= tolerance {
+                    sourceToArchive = master
+                } else {
+                    print("PCMRecorder.archive: master duration mismatch (\(masterDuration)s vs expected \(expectedDuration)s); falling back to recovery PCM.")
+                }
+            }
+        }
         return try StoredAudio.archive(source: sourceToArchive, samples: samples, quality: quality)
     }
 }

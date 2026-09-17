@@ -637,6 +637,7 @@ final class LectureController: ObservableObject {
             if let lastLine = corrected.last {
                 LiveActivityCoordinator.shared.updateTranscript(original: lastLine.text, translation: validTranslatedDraft)
                 LiveCaptionSyncController.shared.receiveFinal(
+                    id: lastLine.id,
                     start: lastLine.start,
                     end: lastLine.end,
                     text: lastLine.text,
@@ -696,6 +697,7 @@ final class LectureController: ObservableObject {
             if let line = corrected.first {
                 LiveActivityCoordinator.shared.updateTranscript(original: line.text, translation: validTranslatedDraft)
                 LiveCaptionSyncController.shared.receiveFinal(
+                    id: line.id,
                     start: line.start,
                     end: line.end,
                     text: line.text,
@@ -809,6 +811,31 @@ final class LectureController: ObservableObject {
                 fedCursor: deviceAudioFedSampleIndex,
                 finalizedCursor: deviceAudioFinalizedSampleIndex
             )
+
+            // Validate rolling buffer ownership BEFORE stopping the old engine
+            deviceAudioBufferLock.lock()
+            let bufferStart = deviceAudioBufferStartOffset
+            let bufferEnd = bufferStart + deviceAudioBuffer.count
+            deviceAudioBufferLock.unlock()
+
+            if plan.newEngineStartCursor < bufferStart || plan.switchBoundary > bufferEnd {
+                let msg = L10n.tr(
+                    "無法在不遺失緩衝聲音的情況下切換辨識引擎；請等待待處理聲音追上後再試。",
+                    "Cannot switch recognizer without losing buffered audio; retry after backlog catches up."
+                )
+                status = msg
+                errorMessage = msg
+                ASRRouter.shared.recordSwitch(
+                    from: oldEngine,
+                    to: value,
+                    sampleIndex: plan.switchBoundary,
+                    timestamp: boundaryTime,
+                    successful: false,
+                    note: msg
+                )
+                isBusy = false
+                return
+            }
         } else if let part = current.parts.last {
             updateAudioCount()
             let captured = session?.parts.last?.sampleCount ?? part.sampleCount
@@ -872,9 +899,13 @@ final class LectureController: ObservableObject {
                             deviceAudioFedSampleIndex = plan.switchBoundary
                         }
                     }
+                } else {
+                    // When switching to chunked engines (Whisper, SenseVoice, etc.),
+                    // set processing cursor to plan.newEngineStartCursor before its worker begins.
+                    deviceAudioProcessedSamples = plan.newEngineStartCursor
+                    deviceAudioFinalizedSampleIndex = max(deviceAudioFinalizedSampleIndex, plan.committedRange.upperBound)
+                    deviceAudioFedSampleIndex = max(deviceAudioFedSampleIndex, plan.switchBoundary)
                 }
-                // When switching to SenseVoice or Whisper, deviceAudioProcessedSamples remains at its cursor,
-                // and streamLoop will naturally decode the backlog.
             } else if let index = session?.parts.indices.last, let part = session?.parts[index], let store {
                 // Backlog preservation for Microphone: do NOT skip unprocessed samples.
                 if value == "apple", let preparedApple {
@@ -888,6 +919,10 @@ final class LectureController: ObservableObject {
                         }
                     }
                     appleCursor = plan.switchBoundary
+                } else {
+                    // When switching to chunked engines (Whisper, SenseVoice, etc.),
+                    // set processing cursor to plan.newEngineStartCursor before its worker begins.
+                    session?.parts[index].processedSamples = plan.newEngineStartCursor
                 }
             }
 
@@ -917,8 +952,37 @@ final class LectureController: ObservableObject {
             if oldEngine == "apple" {
                 if audioSource == .deviceAudio {
                     try? await startAppleDeviceAudio(current: session ?? current)
-                } else if let part = session?.parts.last {
+                    // Replay unfinalized backlog from plan.newEngineStartCursor through boundarySamples
+                    deviceAudioBufferLock.lock()
+                    let bufferStart = deviceAudioBufferStartOffset
+                    let buffer = deviceAudioBuffer
+                    deviceAudioBufferLock.unlock()
+                    let localStart = max(0, plan.newEngineStartCursor - bufferStart)
+                    let localEnd = max(localStart, min(buffer.count, plan.switchBoundary - bufferStart))
+                    if localStart < localEnd, let apple = appleSpeech {
+                        let backlog = Array(buffer[localStart..<localEnd])
+                        if !backlog.isEmpty {
+                            try? await apple.append(backlog)
+                            deviceAudioFedSampleIndex = plan.switchBoundary
+                        }
+                    }
+                } else if let part = session?.parts.last, let store {
                     try? await startApple(part, current: session ?? current)
+                    let backlogCount = plan.handoffBacklogRange.count
+                    if backlogCount > 0, let apple = appleSpeech {
+                        let unconsumed = (try? PCMRecorder.read(store.audioURL(current, part), from: plan.newEngineStartCursor, count: backlogCount)) ?? []
+                        if !unconsumed.isEmpty {
+                            try? await apple.append(unconsumed)
+                        }
+                    }
+                    appleCursor = plan.switchBoundary
+                }
+            } else {
+                // Restore old Whisper / SenseVoice processing cursor
+                if audioSource == .deviceAudio {
+                    deviceAudioProcessedSamples = plan.newEngineStartCursor
+                } else if let index = session?.parts.indices.last {
+                    session?.parts[index].processedSamples = plan.newEngineStartCursor
                 }
             }
             worker = Task { [weak self] in await self?.streamLoop() }
@@ -1389,8 +1453,9 @@ final class LectureController: ObservableObject {
             status = L10n.tr("正在封裝保存錄音，請保持 App 開啟…", "Packaging audio, please keep app open…")
             var destinationURL: URL?
             do {
+                let masterWriteFailed = self.recorder.snapshot().masterWriteFailed
                 let archived = try await Task.detached(priority: .utility) {
-                    try PCMRecorder.archive(source: original, samples: part.sampleCount, quality: quality)
+                    try PCMRecorder.archive(source: original, samples: part.sampleCount, quality: quality, masterWriteFailed: masterWriteFailed)
                 }.value
                 destinationURL = archived
 
@@ -1630,6 +1695,7 @@ final class LectureController: ObservableObject {
                     print("CaptionLatency final_transcript=\(Date().timeIntervalSince1970)")
                     LiveActivityCoordinator.shared.updateTranscript(original: corrected, translation: self.validTranslatedDraft)
                     LiveCaptionSyncController.shared.receiveFinal(
+                        id: newLine.id,
                         start: offset + confirmed.start,
                         end: offset + confirmed.end,
                         text: corrected,
@@ -1804,6 +1870,7 @@ final class LectureController: ObservableObject {
                     print("CaptionLatency final_transcript=\(Date().timeIntervalSince1970)")
                     LiveActivityCoordinator.shared.updateTranscript(original: corrected, translation: self.validTranslatedDraft)
                     LiveCaptionSyncController.shared.receiveFinal(
+                        id: newLine.id,
                         start: offset + confirmed.start,
                         end: offset + confirmed.end,
                         text: corrected,
@@ -1881,6 +1948,7 @@ final class LectureController: ObservableObject {
             if let line = correctedLines.first {
                 LiveActivityCoordinator.shared.updateTranscript(original: line.text, translation: validTranslatedDraft)
                 LiveCaptionSyncController.shared.receiveFinal(
+                    id: line.id,
                     start: line.start,
                     end: line.end,
                     text: line.text,
@@ -1943,6 +2011,7 @@ final class LectureController: ObservableObject {
         if let line = corrected.last {
             LiveActivityCoordinator.shared.updateTranscript(original: line.text, translation: validTranslatedDraft)
             LiveCaptionSyncController.shared.receiveFinal(
+                id: line.id,
                 start: line.start,
                 end: line.end,
                 text: line.text,

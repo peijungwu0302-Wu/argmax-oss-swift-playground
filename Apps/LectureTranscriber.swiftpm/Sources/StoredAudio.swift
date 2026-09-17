@@ -118,9 +118,7 @@ enum StoredAudio {
         let destination = source.deletingLastPathComponent().appendingPathComponent(UUID().uuidString + ".m4a")
         do {
             try writeArchive(source, destination: destination, samples: samples, bitRate: bitRate)
-            // Check both ends after closing the encoder
-            _ = try read(destination, from: 0, count: min(samples, 16000))
-            _ = try read(destination, from: max(0, samples - 16000), count: min(samples, 16000))
+            try verifyArchive(destination: destination, expectedDuration: Double(samples) / 16000.0, samples: samples)
             return destination
         } catch {
             try? FileManager.default.removeItem(at: destination)
@@ -154,14 +152,39 @@ enum StoredAudio {
         let destination = source.deletingLastPathComponent().appendingPathComponent(UUID().uuidString + ".wav")
         do {
             try writeWAVFile(from: source, to: destination, samples: samples)
-            // Verify ends
-            _ = try read(destination, from: 0, count: min(samples, 16000))
-            _ = try read(destination, from: max(0, samples - 16000), count: min(samples, 16000))
+            try verifyArchive(destination: destination, expectedDuration: Double(samples) / 16000.0, samples: samples)
             return destination
         } catch {
             try? FileManager.default.removeItem(at: destination)
             throw error
         }
+    }
+
+    /// Validates that an archived audio file exists, has non-zero size, decodes at beginning and end,
+    /// and matches expected recording duration within tolerance.
+    static func verifyArchive(destination: URL, expectedDuration: Double, samples: Int) throws {
+        guard FileManager.default.fileExists(atPath: destination.path) else {
+            throw LectureError.message("封裝檔案不存在。")
+        }
+        let attributes = try FileManager.default.attributesOfItem(atPath: destination.path)
+        let fileSize = (attributes[.size] as? NSNumber)?.int64Value ?? 0
+        guard fileSize > 0 else {
+            throw LectureError.message("封裝檔案大小為 0 位元組。")
+        }
+
+        let audioFile = try AVAudioFile(forReading: destination)
+        guard audioFile.fileFormat.sampleRate > 0 else {
+            throw LectureError.message("無法讀取封裝音訊取樣率。")
+        }
+        let actualDuration = Double(audioFile.length) / audioFile.fileFormat.sampleRate
+        let tolerance = max(1.0, expectedDuration * 0.08)
+        guard abs(actualDuration - expectedDuration) <= tolerance else {
+            throw LectureError.message("封裝音訊長度不符（實際 \(String(format: "%.2f", actualDuration))s，預期 \(String(format: "%.2f", expectedDuration))s）。")
+        }
+
+        // Beginning and ending must decode cleanly
+        _ = try read(destination, from: 0, count: min(samples, 16000))
+        _ = try read(destination, from: max(0, samples - 16000), count: min(samples, 16000))
     }
 
     private static func writeWAVFile(from source: URL, to destination: URL, samples: Int) throws {

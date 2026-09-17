@@ -185,6 +185,7 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
         active = false
         possible = false
         paused = false
+        CaptionTimeline.shared.setPresentationSurfaceActive(false)
     }
 
     func update(original: String, translated: String, sourceSize: Double, translationSize: Double) {
@@ -470,6 +471,7 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
         active = true
         lifecycleState = .active
         status = L10n.tr("子母畫面字幕已啟動", "PiP captions active")
+        CaptionTimeline.shared.setPresentationSurfaceActive(true)
         AudioSessionCoordinator.shared.beginPiPPresentation(requiresAudioSession: pendingRequiresAudioSession)
         render(force: true)
     }
@@ -479,6 +481,7 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
         paused = false
         lifecycleState = .idle
         status = L10n.tr("子母畫面字幕已結束", "PiP captions stopped")
+        CaptionTimeline.shared.setPresentationSurfaceActive(false)
         AudioSessionCoordinator.shared.endPiPPresentation()
     }
 
@@ -487,6 +490,7 @@ final class CaptionPiP: NSObject, ObservableObject, AVPictureInPictureController
             self.active = false
             self.lifecycleState = .failedRecoverable
             self.status = error.localizedDescription
+            CaptionTimeline.shared.setPresentationSurfaceActive(false)
             AudioSessionCoordinator.shared.endPiPPresentation()
             print("CaptionPiP failedToStart: \(error)")
         }

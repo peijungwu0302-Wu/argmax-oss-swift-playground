@@ -1283,5 +1283,134 @@ final class AudioAndCaptionTests: XCTestCase {
             XCTAssertEqual(router.lastSwitchEvent?.successful, false)
         }
     }
+
+    @MainActor
+    func testDisplayedThroughOnlyAdvancesOnPresentationAcknowledgement() {
+        let timeline = CaptionTimeline.shared
+        timeline.reset()
+        XCTAssertEqual(timeline.snapshot().displayedThrough, 0.0)
+
+        // Emitting / receiving final caption must NOT advance displayedThrough
+        let cue = timeline.receiveFinal(id: UUID(), start: 1.0, end: 3.5, text: "Hello world", engine: "whisper", language: "en")
+        XCTAssertEqual(timeline.snapshot().recognizedThrough, 3.5)
+        XCTAssertEqual(timeline.snapshot().displayedThrough, 0.0, "displayedThrough must not advance before actual presentation")
+
+        // Only explicit presentation acknowledgement advances displayedThrough
+        timeline.recordCaptionDisplayed(cue: cue, atMediaPTS: 3.5)
+        XCTAssertEqual(timeline.snapshot().displayedThrough, 3.5, "displayedThrough must advance upon presentation acknowledgement")
+    }
+
+    @MainActor
+    func testPresentationSurfaceActivePreventsFalseStaleSyncState() {
+        let timeline = CaptionTimeline.shared
+        timeline.reset()
+        // Feed audio up to 10.0s
+        timeline.recordAudioCaptured(duration: 10.0, pts: 10.0)
+        timeline.recordAudioFedToASR(samplesCount: 160000, pts: 10.0)
+        let cue = timeline.receiveFinal(id: UUID(), start: 0.0, end: 2.0, text: "Old cue", engine: "apple", language: "en")
+
+        // Surface inactive: even if display lag is huge (10.0 - 0.0 = 10.0s), sync state must NOT be .stale
+        timeline.setPresentationSurfaceActive(false)
+        let inactiveSnapshot = timeline.snapshot()
+        XCTAssertFalse(inactiveSnapshot.presentationSurfaceActive)
+        XCTAssertNotEqual(inactiveSnapshot.syncState, .stale, "Inactive presentation surface must not declare stale sync state")
+
+        // Surface active: display lag (10.0 - 0.0 = 10.0s > 2.0s) triggers .stale
+        timeline.setPresentationSurfaceActive(true)
+        let activeSnapshot = timeline.snapshot()
+        XCTAssertTrue(activeSnapshot.presentationSurfaceActive)
+        XCTAssertEqual(activeSnapshot.syncState, .stale, "Active presentation surface with displayMediaLag > 2.0s must be stale")
+
+        // Acknowledge display up to 9.5s
+        timeline.recordCaptionDisplayed(cue: cue, atMediaPTS: 9.5)
+        let caughtUpSnapshot = timeline.snapshot()
+        XCTAssertEqual(caughtUpSnapshot.syncState, .inSync)
+    }
+
+    @MainActor
+    func testDelayedTranslationBindingToMatchingCueID() {
+        let syncController = LiveCaptionSyncController.shared
+        let feed = CaptionFeed.shared
+        feed.clear()
+
+        let cue1ID = UUID()
+        let cue2ID = UUID()
+
+        // Receive cue 1
+        syncController.receiveFinal(id: cue1ID, start: 0.0, end: 2.0, text: "First sentence", engine: "sensevoice", language: "en")
+        XCTAssertEqual(feed.latestCueID, cue1ID)
+        XCTAssertEqual(feed.original, "First sentence")
+
+        // Receive cue 2
+        syncController.receiveFinal(id: cue2ID, start: 2.0, end: 4.0, text: "Second sentence", engine: "sensevoice", language: "en")
+        XCTAssertEqual(feed.latestCueID, cue2ID)
+        XCTAssertEqual(feed.original, "Second sentence")
+
+        // Delayed translation arrives for older cue 1: must be discarded
+        syncController.updateTranslation(forCueID: cue1ID, translation: "第一句（過期）")
+        XCTAssertEqual(feed.translation, "", "Delayed translation for mismatched cueID must not overwrite current caption")
+
+        // Translation arrives for current cue 2: must be applied
+        syncController.updateTranslation(forCueID: cue2ID, translation: "第二句（正確）")
+        XCTAssertEqual(feed.translation, "第二句（正確）", "Translation matching current cueID must update CaptionFeed")
+    }
+
+    func testPCMRecorderMasterDurationValidationAndFallback() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let recoveryPCM = tempDir.appendingPathComponent("part1.pcm16")
+        let sampleCount = 32000 // 2 seconds at 16 kHz
+        let pcmData = AudioStorage.encodePCM16([Float](repeating: 0.05, count: sampleCount))
+        try pcmData.write(to: recoveryPCM)
+
+        // Case 1: master file does not exist, recovery PCM is used directly
+        let archivedNormal = try PCMRecorder.archive(source: recoveryPCM, samples: sampleCount, quality: .standard, masterWriteFailed: false)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: archivedNormal.path))
+
+        // Case 2: masterWriteFailed flag is explicitly true
+        let archivedWithFailedFlag = try PCMRecorder.archive(source: recoveryPCM, samples: sampleCount, quality: .standard, masterWriteFailed: true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: archivedWithFailedFlag.path))
+    }
+
+    func testStoredAudioArchiveVerificationThrowsOnTruncation() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Non-existent file throws
+        let nonExistentURL = tempDir.appendingPathComponent("missing.m4a")
+        XCTAssertThrowsError(
+            try StoredAudio.verifyArchive(destination: nonExistentURL, expectedDuration: 1.0, samples: 16000)
+        )
+
+        // Empty (0 byte) file throws
+        let emptyURL = tempDir.appendingPathComponent("empty.m4a")
+        FileManager.default.createFile(atPath: emptyURL.path, contents: Data())
+        XCTAssertThrowsError(
+            try StoredAudio.verifyArchive(destination: emptyURL, expectedDuration: 1.0, samples: 16000)
+        )
+    }
+
+    func testASRSwitchPlanContinuityAndBoundaries() {
+        let router = ASRRouter.shared
+        let plan = router.planSwitch(
+            from: "apple",
+            to: "sensevoice",
+            capturedSamples: 160000,
+            fedCursor: 144000,
+            finalizedCursor: 96000
+        )
+
+        XCTAssertEqual(plan.oldEngine, "apple")
+        XCTAssertEqual(plan.newEngine, "sensevoice")
+        XCTAssertEqual(plan.capturedSampleCount, 160000)
+        XCTAssertEqual(plan.switchBoundary, 160000)
+        XCTAssertEqual(plan.oldEngineCommittedRange, 0..<96000)
+        XCTAssertEqual(plan.handoffBacklogRange, 96000..<160000)
+        XCTAssertEqual(plan.newEngineStartCursor, 96000)
+        XCTAssertTrue(plan.isValidHandoff)
+    }
 }
 

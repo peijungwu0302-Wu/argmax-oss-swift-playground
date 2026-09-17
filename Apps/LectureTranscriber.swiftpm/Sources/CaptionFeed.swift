@@ -7,6 +7,7 @@ final class CaptionFeed: ObservableObject {
 
     @Published private(set) var latestOriginal: String = ""
     @Published private(set) var latestTranslation: String = ""
+    @Published private(set) var latestCueID: UUID?
     @Published private(set) var latestCueEndTime: Double?
     @Published private(set) var isRecording: Bool = false
     @Published private(set) var isPaused: Bool = false
@@ -30,6 +31,7 @@ final class CaptionFeed: ObservableObject {
     func update(
         original: String? = nil,
         translation: String? = nil,
+        latestCueID: UUID? = nil,
         isRecording: Bool? = nil,
         isPaused: Bool? = nil,
         captionMode: PiPDisplayMode? = nil,
@@ -43,6 +45,10 @@ final class CaptionFeed: ObservableObject {
         }
         if let translation, translation != self.latestTranslation {
             self.latestTranslation = translation
+            changed = true
+        }
+        if let latestCueID {
+            self.latestCueID = latestCueID
             changed = true
         }
         if let cueEndTime {
@@ -77,6 +83,7 @@ final class CaptionFeed: ObservableObject {
     func clear() {
         latestOriginal = ""
         latestTranslation = ""
+        latestCueID = nil
         latestCueEndTime = nil
         updatedAt = Date()
         onUpdate?(self)
