@@ -25,13 +25,25 @@ final class ZipformerStreamingEngine: LiveSpeechEngine {
         ).appendingPathComponent("SpeechModels", isDirectory: true) else {
             return nil
         }
-        return base.appendingPathComponent(modelFolder, isDirectory: true)
+        let dir1 = base.appendingPathComponent("sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20", isDirectory: true)
+        if FileManager.default.fileExists(atPath: dir1.path) { return dir1 }
+        let dir2 = base.appendingPathComponent(modelFolder, isDirectory: true)
+        if FileManager.default.fileExists(atPath: dir2.path) { return dir2 }
+        return dir1
+    }
+
+    static func resolvedDecoderName(in dir: URL) -> String {
+        let decInt8 = dir.appendingPathComponent("decoder-epoch-99-avg-1.int8.onnx")
+        if FileManager.default.fileExists(atPath: decInt8.path) {
+            return "decoder-epoch-99-avg-1.int8.onnx"
+        }
+        return decoderName
     }
 
     static func isModelInstalled() -> Bool {
-        guard let dir = modelDirectory() else { return false }
+        guard let dir = modelDirectory(), FileManager.default.fileExists(atPath: dir.path) else { return false }
         let enc = dir.appendingPathComponent(encoderName)
-        let dec = dir.appendingPathComponent(decoderName)
+        let dec = dir.appendingPathComponent(resolvedDecoderName(in: dir))
         let joi = dir.appendingPathComponent(joinerName)
         let tok = dir.appendingPathComponent(tokensName)
         return FileManager.default.fileExists(atPath: enc.path) &&
@@ -44,13 +56,18 @@ final class ZipformerStreamingEngine: LiveSpeechEngine {
         guard SherpaOnnxRuntime.isSupported else {
             throw LectureError.message("此系統平台尚未支援 sherpa-onnx 執行環境。")
         }
+        if !Self.isModelInstalled() {
+            try await ModelCenter.shared.downloadModel("zipformer-bilingual") { p in
+                Task { @MainActor in onProgress(p) }
+            }
+        }
         guard let dir = Self.modelDirectory(), Self.isModelInstalled() else {
             throw LectureError.message("Zipformer 模型尚未下載，請至模型中心下載後再使用。")
         }
 
         onProgress(0.2)
         let enc = dir.appendingPathComponent(Self.encoderName).path
-        let dec = dir.appendingPathComponent(Self.decoderName).path
+        let dec = dir.appendingPathComponent(Self.resolvedDecoderName(in: dir)).path
         let joi = dir.appendingPathComponent(Self.joinerName).path
         let tok = dir.appendingPathComponent(Self.tokensName).path
 
@@ -70,7 +87,7 @@ final class ZipformerStreamingEngine: LiveSpeechEngine {
         if !isPrepared {
             try await prepare(language: language, onProgress: { _ in })
         }
-        await runtime.resetStream()
+        await runtime.startNewStream()
         self.onResult = onResult
         self.sampleOffset = 0
     }

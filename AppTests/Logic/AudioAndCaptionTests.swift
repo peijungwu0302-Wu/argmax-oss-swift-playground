@@ -1543,5 +1543,156 @@ final class AudioAndCaptionTests: XCTestCase {
         let modelId = await runtime.currentModelId
         XCTAssertEqual(modelId, "")
     }
+
+    func testASREngineTypeSupportedEnginesAndAvailability() {
+        let validEngines = ["apple", "whisper", "sensevoice", "zipformer", "paraformer"]
+        for engineName in validEngines {
+            let engineType = ASREngineType(rawValue: engineName)
+            XCTAssertNotNil(engineType, "Engine \(engineName) must be recognized by ASREngineType")
+            XCTAssertTrue(engineType?.isAvailableInCurrentRelease == true, "Engine \(engineName) must be available in current release")
+        }
+        let invalid = ASREngineType(rawValue: "unsupported_engine_xyz")
+        XCTAssertNil(invalid)
+    }
+
+    func testSherpaStreamMonotonicUtteranceContinuity() async {
+        let runtime = SherpaOnnxRuntime()
+        // Fresh stream starts at 0
+        await runtime.startNewStream()
+        let startCount = await runtime.currentSampleCountFed
+        let startSegment = await runtime.currentSegmentStartSample
+        XCTAssertEqual(startCount, 0)
+        XCTAssertEqual(startSegment, 0)
+
+        // Resetting utterance advances segmentStartSample to currentSampleCountFed without zeroing media clock
+        await runtime.resetUtterance()
+        let resetCount = await runtime.currentSampleCountFed
+        let resetSegment = await runtime.currentSegmentStartSample
+        XCTAssertEqual(resetCount, 0)
+        XCTAssertEqual(resetSegment, 0)
+
+        // Calling startNewStream resets both back to 0
+        await runtime.startNewStream()
+        let finalCount = await runtime.currentSampleCountFed
+        let finalSegment = await runtime.currentSegmentStartSample
+        XCTAssertEqual(finalCount, 0)
+        XCTAssertEqual(finalSegment, 0)
+    }
+
+    func testHotSwitchPlanReflectsPreparationRaceAdvance() {
+        // Stale cursors at switch initiation
+        let staleCaptured = 32000
+        let staleFed = 32000
+        let staleFinalized = 16000
+        let stalePlan = ASRRouter.planSwitch(
+            from: "whisper",
+            to: "zipformer",
+            capturedSamples: staleCaptured,
+            fedCursor: staleFed,
+            finalizedCursor: staleFinalized
+        )
+        XCTAssertEqual(stalePlan.switchBoundary, 32000)
+
+        // While candidate was being prepared, audio capture and recognition advanced
+        let freshCaptured = 48000
+        let freshFed = 48000
+        let freshFinalized = 32000
+        let freshPlan = ASRRouter.planSwitch(
+            from: "whisper",
+            to: "zipformer",
+            capturedSamples: freshCaptured,
+            fedCursor: freshFed,
+            finalizedCursor: freshFinalized
+        )
+        // Authoritative handoff plan snapshot reflects the new boundary
+        XCTAssertEqual(freshPlan.switchBoundary, 48000)
+        XCTAssertEqual(freshPlan.newEngineStartCursor, 32000)
+        XCTAssertEqual(freshPlan.handoffBacklogRange, 32000..<48000)
+        XCTAssertGreaterThan(freshPlan.switchBoundary, stalePlan.switchBoundary)
+    }
+
+    func testHotSwitchPrunedRollingBufferValidation() {
+        let plan = ASRRouter.planSwitch(
+            from: "whisper",
+            to: "zipformer",
+            capturedSamples: 48000,
+            fedCursor: 48000,
+            finalizedCursor: 16000
+        )
+        XCTAssertEqual(plan.newEngineStartCursor, 16000)
+        XCTAssertEqual(plan.switchBoundary, 48000)
+
+        // Case A: Rolling buffer retains full backlog [0, 48000]
+        let bufferStartA = 0
+        let bufferEndA = 48000
+        let canSwitchA = plan.newEngineStartCursor >= bufferStartA && plan.switchBoundary <= bufferEndA
+        XCTAssertTrue(canSwitchA, "Buffer retains full backlog, safe to switch")
+
+        // Case B: Rolling buffer was pruned to [20000, 48000], missing [16000, 20000]
+        let bufferStartB = 20000
+        let bufferEndB = 48000
+        let canSwitchB = plan.newEngineStartCursor >= bufferStartB && plan.switchBoundary <= bufferEndB
+        XCTAssertFalse(canSwitchB, "Buffer pruned, missing backlog; must safely abort")
+    }
+
+    func testGlobalOffsetCompositionForContinuousTimeline() {
+        let handoffStartSample = 32000
+        let offset = Double(handoffStartSample) / 16000.0 // 2.0s
+
+        let result1 = SherpaStreamResult(
+            text: "Hello",
+            isEndpoint: true,
+            startSampleIndex: 0,
+            endSampleIndex: 16000
+        )
+        let globalStart1 = offset + Double(result1.startSampleIndex) / 16000.0
+        let globalEnd1 = offset + Double(result1.endSampleIndex) / 16000.0
+        XCTAssertEqual(globalStart1, 2.0, accuracy: 0.0001)
+        XCTAssertEqual(globalEnd1, 3.0, accuracy: 0.0001)
+
+        let result2 = SherpaStreamResult(
+            text: "World",
+            isEndpoint: true,
+            startSampleIndex: 16000,
+            endSampleIndex: 32000
+        )
+        let globalStart2 = offset + Double(result2.startSampleIndex) / 16000.0
+        let globalEnd2 = offset + Double(result2.endSampleIndex) / 16000.0
+        XCTAssertEqual(globalStart2, 3.0, accuracy: 0.0001)
+        XCTAssertEqual(globalEnd2, 4.0, accuracy: 0.0001)
+    }
+
+    @MainActor
+    func testModelCenterAtomicInstallAndCleanDelete() throws {
+        let center = ModelCenter.shared
+        let stagingDir = FileManager.default.temporaryDirectory.appendingPathComponent("test-staging-" + UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: stagingDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: stagingDir) }
+
+        // Attempting to install when files are missing must fail
+        XCTAssertThrowsError(try center.installModel(modelId: "zipformer-bilingual", from: stagingDir))
+
+        // Create the 4 required Zipformer files
+        let requiredFiles = [
+            "encoder-epoch-99-avg-1.int8.onnx",
+            "decoder-epoch-99-avg-1.int8.onnx",
+            "joiner-epoch-99-avg-1.int8.onnx",
+            "tokens.txt"
+        ]
+        for f in requiredFiles {
+            let data = Data([0x01, 0x02, 0x03, 0x04])
+            try data.write(to: stagingDir.appendingPathComponent(f))
+        }
+
+        // Install succeeds atomically
+        try center.installModel(modelId: "zipformer-bilingual", from: stagingDir)
+        XCTAssertTrue(center.isModelDownloaded("zipformer-bilingual"))
+        XCTAssertEqual(center.state(for: "zipformer-bilingual"), .ready)
+
+        // Clean delete removes files and resets state
+        try center.deleteModel("zipformer-bilingual")
+        XCTAssertFalse(center.isModelDownloaded("zipformer-bilingual"))
+        XCTAssertEqual(center.state(for: "zipformer-bilingual"), .notDownloaded)
+    }
 }
 

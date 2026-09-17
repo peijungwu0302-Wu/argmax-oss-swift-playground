@@ -548,9 +548,11 @@ struct LectureSession: Codable, Identifiable, Sendable {
                 let eng: TranscriptEngine
                 if recognitionEngine == "apple" { eng = .apple }
                 else if recognitionEngine == "sensevoice" { eng = .sensevoice }
+                else if recognitionEngine == "zipformer" { eng = .zipformer }
+                else if recognitionEngine == "paraformer" { eng = .paraformer }
                 else { eng = .whisper }
                 var v = TranscriptVersion(
-                    name: eng == .apple ? "Apple Speech · Live" : "即時逐字稿",
+                    name: eng == .apple ? "Apple Speech · Live" : "\(eng.displayName) · Live",
                     engine: eng,
                     model: model,
                     language: language,
@@ -613,9 +615,11 @@ struct LectureSession: Codable, Identifiable, Sendable {
             let eng: TranscriptEngine
             if recognitionEngine == "apple" { eng = .apple }
             else if recognitionEngine == "sensevoice" { eng = .sensevoice }
+            else if recognitionEngine == "zipformer" { eng = .zipformer }
+            else if recognitionEngine == "paraformer" { eng = .paraformer }
             else { eng = .whisper }
             var v = TranscriptVersion(
-                name: eng == .apple ? "Apple Speech · Live" : "即時逐字稿",
+                name: eng == .apple ? "Apple Speech · Live" : "\(eng.displayName) · Live",
                 engine: eng,
                 model: model,
                 language: language,
@@ -717,6 +721,14 @@ struct LectureSession: Codable, Identifiable, Sendable {
                 engine = .sensevoice
                 source = transcriptionPass == "context30" ? .retranscription : .live
                 name = transcriptionPass == "context30" ? "SenseVoice · Retranscription" : "SenseVoice · Live"
+            } else if recognitionEngine == "zipformer" {
+                engine = .zipformer
+                source = .live
+                name = "Zipformer · Live"
+            } else if recognitionEngine == "paraformer" {
+                engine = .paraformer
+                source = .live
+                name = "Paraformer · Live"
             } else {
                 engine = .whisper
                 source = transcriptionPass == "context30" ? .retranscription : .live

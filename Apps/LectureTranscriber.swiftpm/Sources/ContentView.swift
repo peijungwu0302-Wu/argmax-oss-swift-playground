@@ -574,6 +574,8 @@ struct ContentView: View {
                         Text(L10n.tr("Apple Speech · 系統內建 · 最快／最省電", "Apple Speech · System Built-in · Fastest / Efficient")).tag("apple")
                         Text(L10n.tr("WhisperKit · Turbo 等模型", "WhisperKit · Models")).tag("whisper")
                         Text(L10n.tr("SenseVoice · 中英混合／多語快速", "SenseVoice · Mixed-language / Multilingual Fast")).tag("sensevoice")
+                        Text(L10n.tr("Zipformer · 雙語串流", "Zipformer · Bilingual Streaming")).tag("zipformer")
+                        Text(L10n.tr("Paraformer · 雙語串流", "Paraformer · Bilingual Streaming")).tag("paraformer")
                     }.disabled(controller.isBusy || controller.isSummarizing)
 
                     if controller.usesWhisper {
@@ -1310,7 +1312,8 @@ struct DeviceAudioDiagnosticsView: View {
                 .font(.caption).foregroundStyle(.secondary)
 
             Button {
-                manager.updateEnvironmentDiagnostics(engine: controller.usesAppleSpeech ? "Apple Speech" : (controller.usesSenseVoice ? "SenseVoice" : "WhisperKit"))
+                let engineName = controller.usesAppleSpeech ? "Apple Speech" : (controller.usesSenseVoice ? "SenseVoice" : (controller.usesZipformer ? "Zipformer" : (controller.usesParaformer ? "Paraformer" : "WhisperKit")))
+                manager.updateEnvironmentDiagnostics(engine: engineName)
                 _ = manager.copyDiagnostics()
                 copied = true
                 Task {

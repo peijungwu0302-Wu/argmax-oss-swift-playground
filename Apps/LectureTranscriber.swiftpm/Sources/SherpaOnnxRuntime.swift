@@ -222,12 +222,34 @@ actor SherpaOnnxRuntime {
         #endif
     }
 
-    /// Resets the stream state without destroying the loaded recognizer.
-    func resetStream() {
+    /// Starts a fresh stream: resets the recognizer and sets stream-local clock to 0.
+    func startNewStream() {
+        #if canImport(SherpaOnnx)
+        recognizer?.reset()
+        #endif
+        sampleCountFed = 0
+        segmentStartSample = 0
+    }
+
+    /// Resets the utterance state within an active stream without resetting the stream-local media clock.
+    func resetUtterance() {
         #if canImport(SherpaOnnx)
         recognizer?.reset()
         #endif
         segmentStartSample = sampleCountFed
+    }
+
+    /// Resets the stream state without destroying the loaded recognizer.
+    func resetStream() {
+        startNewStream()
+    }
+
+    var currentSampleCountFed: Int {
+        sampleCountFed
+    }
+
+    var currentSegmentStartSample: Int {
+        segmentStartSample
     }
 
     /// Releases recognizer resources and clears memory.

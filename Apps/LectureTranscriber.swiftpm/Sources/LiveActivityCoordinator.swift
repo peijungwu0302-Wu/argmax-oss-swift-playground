@@ -209,6 +209,15 @@ final class LiveActivityCoordinator: ObservableObject {
         #endif
     }
 
+    func updateEngineName(_ engineName: String) {
+        lastEngineName = engineName
+        #if canImport(ActivityKit)
+        if #available(iOS 16.1, *) {
+            publishCurrentState()
+        }
+        #endif
+    }
+
     func stop() {
         #if canImport(ActivityKit)
         guard #available(iOS 16.1, *), let activity = activeActivity as? Activity<LectureActivityAttributes> else { return }

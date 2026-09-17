@@ -234,19 +234,144 @@ public final class ModelCenter: ObservableObject {
         }
     }
 
+    public func installModel(modelId: String, from stagingDir: URL) throws {
+        guard let item = manifest.first(where: { $0.id == modelId }), !item.isBuiltIn, item.isSupportedOnCurrentDevice else {
+            throw LectureError.message("此模型不支援安裝。")
+        }
+        let base = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        ).appendingPathComponent("SpeechModels", isDirectory: true)
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+
+        let targetFolderName: String
+        let requiredFiles: [String]
+        if modelId == "zipformer-bilingual" {
+            targetFolderName = "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20"
+            requiredFiles = [
+                "encoder-epoch-99-avg-1.int8.onnx",
+                "decoder-epoch-99-avg-1.int8.onnx",
+                "joiner-epoch-99-avg-1.int8.onnx",
+                "tokens.txt"
+            ]
+        } else if modelId == "paraformer-bilingual" {
+            targetFolderName = "sherpa-onnx-streaming-paraformer-bilingual-zh-en"
+            requiredFiles = [
+                "encoder.int8.onnx",
+                "decoder.int8.onnx",
+                "tokens.txt"
+            ]
+        } else {
+            throw LectureError.message("暫不支援安裝此模型：\(modelId)")
+        }
+
+        // Verify required filenames and non-empty sizes in stagingDir
+        for fileName in requiredFiles {
+            let fileURL = stagingDir.appendingPathComponent(fileName)
+            guard FileManager.default.fileExists(atPath: fileURL.path) else {
+                throw LectureError.message("缺少必要模型檔案：\(fileName)")
+            }
+            let size = (try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? NSNumber)?.intValue ?? 0
+            guard size > 0 else {
+                throw LectureError.message("模型檔案無效或為空：\(fileName)")
+            }
+        }
+
+        // Atomic placement
+        let targetDir = base.appendingPathComponent(targetFolderName, isDirectory: true)
+        let backupDir = base.appendingPathComponent("\(targetFolderName).old-\(UUID().uuidString)")
+        var didBackup = false
+        if FileManager.default.fileExists(atPath: targetDir.path) {
+            try FileManager.default.moveItem(at: targetDir, to: backupDir)
+            didBackup = true
+        }
+
+        do {
+            try FileManager.default.moveItem(at: stagingDir, to: targetDir)
+            if didBackup {
+                try? FileManager.default.removeItem(at: backupDir)
+            }
+            modelStates[modelId] = .ready
+        } catch {
+            if didBackup {
+                try? FileManager.default.moveItem(at: backupDir, to: targetDir)
+            }
+            throw error
+        }
+    }
+
+    public func downloadModel(
+        _ modelId: String,
+        progress: @escaping @Sendable (Double?) -> Void = { _ in }
+    ) async throws {
+        guard let item = manifest.first(where: { $0.id == modelId }), !item.isBuiltIn, item.isSupportedOnCurrentDevice else {
+            throw LectureError.message("此模型不支援下載。")
+        }
+
+        modelStates[modelId] = .downloading(bytesReceived: 0, totalBytes: 0, progress: 0)
+
+        let stagingDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: stagingDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: stagingDir) }
+
+        let files: [(String, String)]
+        if modelId == "zipformer-bilingual" {
+            files = [
+                ("encoder-epoch-99-avg-1.int8.onnx", "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/encoder-epoch-99-avg-1.int8.onnx"),
+                ("decoder-epoch-99-avg-1.int8.onnx", "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/decoder-epoch-99-avg-1.int8.onnx"),
+                ("joiner-epoch-99-avg-1.int8.onnx", "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/joiner-epoch-99-avg-1.int8.onnx"),
+                ("tokens.txt", "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/tokens.txt")
+            ]
+        } else if modelId == "paraformer-bilingual" {
+            files = [
+                ("encoder.int8.onnx", "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-paraformer-bilingual-zh-en/resolve/main/encoder.int8.onnx"),
+                ("decoder.int8.onnx", "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-paraformer-bilingual-zh-en/resolve/main/decoder.int8.onnx"),
+                ("tokens.txt", "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-paraformer-bilingual-zh-en/resolve/main/tokens.txt")
+            ]
+        } else {
+            throw LectureError.message("暫不支援在此處下載模型：\(modelId)")
+        }
+
+        let total = files.count
+        var completed = 0
+        for (fileName, urlString) in files {
+            try Task.checkCancellation()
+            guard let url = URL(string: urlString) else {
+                throw LectureError.message("模型下載網址無效：\(urlString)")
+            }
+            let (tempURL, response) = try await URLSession.shared.download(from: url)
+            guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+                throw LectureError.message("下載模型檔案失敗：\(fileName)")
+            }
+            let dest = stagingDir.appendingPathComponent(fileName)
+            if FileManager.default.fileExists(atPath: dest.path) {
+                try FileManager.default.removeItem(at: dest)
+            }
+            try FileManager.default.moveItem(at: tempURL, to: dest)
+            completed += 1
+            let fraction = Double(completed) / Double(total)
+            progress(fraction)
+            modelStates[modelId] = .downloading(bytesReceived: Int64(completed), totalBytes: Int64(total), progress: fraction)
+        }
+
+        try installModel(modelId: modelId, from: stagingDir)
+    }
+
     public func deleteModel(_ modelId: String) throws {
         guard let item = manifest.first(where: { $0.id == modelId }), !item.isBuiltIn, item.isSupportedOnCurrentDevice else { return }
         let base = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
             .appendingPathComponent("SpeechModels", isDirectory: true)
 
         if modelId == "zipformer-bilingual" {
-            if let dir = ZipformerStreamingEngine.modelDirectory() {
-                try? FileManager.default.removeItem(at: dir)
-            }
+            let dir1 = base.appendingPathComponent("sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20", isDirectory: true)
+            let dir2 = base.appendingPathComponent("sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16", isDirectory: true)
+            try? FileManager.default.removeItem(at: dir1)
+            try? FileManager.default.removeItem(at: dir2)
         } else if modelId == "paraformer-bilingual" {
-            if let dir = ParaformerStreamingEngine.modelDirectory() {
-                try? FileManager.default.removeItem(at: dir)
-            }
+            let dir = base.appendingPathComponent("sherpa-onnx-streaming-paraformer-bilingual-zh-en", isDirectory: true)
+            try? FileManager.default.removeItem(at: dir)
         }
 
         let target = base.appendingPathComponent(modelId)

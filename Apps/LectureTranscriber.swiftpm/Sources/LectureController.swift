@@ -342,6 +342,36 @@ final class LectureController: ObservableObject {
             return
         }
         await senseVoice.unload()
+        if usesZipformer {
+            await engine.unload()
+            status = L10n.tr("正在準備 Zipformer 模型…", "Preparing Zipformer model…")
+            resourceState = .preparing(progress: nil)
+            try await zipformerEngine.prepare(language: session?.language ?? language) { [weak self] value in
+                Task { @MainActor in
+                    self?.resourceState = .preparing(progress: value)
+                    self?.progress = value
+                }
+            }
+            loadedModel = "zipformer"; status = "Zipformer 已就緒 · 串流雙語版"; progress = nil
+            resourceState = .ready
+            return
+        }
+        await zipformerEngine.unload()
+        if usesParaformer {
+            await engine.unload()
+            status = L10n.tr("正在準備 Paraformer 模型…", "Preparing Paraformer model…")
+            resourceState = .preparing(progress: nil)
+            try await paraformerEngine.prepare(language: session?.language ?? language) { [weak self] value in
+                Task { @MainActor in
+                    self?.resourceState = .preparing(progress: value)
+                    self?.progress = value
+                }
+            }
+            loadedModel = "paraformer"; status = "Paraformer 已就緒 · 串流雙語版"; progress = nil
+            resourceState = .ready
+            return
+        }
+        await paraformerEngine.unload()
         status = "正在載入模型…"
         try await engine.load(name) { [weak self] state in
             Task { @MainActor in
@@ -388,6 +418,12 @@ final class LectureController: ObservableObject {
                 } else if usesSenseVoice {
                     eng = .sensevoice
                     liveName = "SenseVoice · Live"
+                } else if usesZipformer {
+                    eng = .zipformer
+                    liveName = "Zipformer · Live"
+                } else if usesParaformer {
+                    eng = .paraformer
+                    liveName = "Paraformer · Live"
                 } else {
                     eng = .whisper
                     liveName = "Whisper v3 · Live"
@@ -418,9 +454,9 @@ final class LectureController: ObservableObject {
                     preferredVersionID: liveVersion.id
                 )
             } else if session?.transcriptVersions.isEmpty == true {
-                let eng: TranscriptEngine = usesAppleSpeech ? .apple : (usesSenseVoice ? .sensevoice : .whisper)
+                let eng: TranscriptEngine = usesAppleSpeech ? .apple : (usesSenseVoice ? .sensevoice : (usesZipformer ? .zipformer : (usesParaformer ? .paraformer : .whisper)))
                 let liveVersion = TranscriptVersion(
-                    name: usesAppleSpeech ? "Apple Speech · Live" : "即時逐字稿",
+                    name: usesAppleSpeech ? "Apple Speech · Live" : "\(eng.displayName) · Live",
                     engine: eng,
                     model: session?.model ?? model,
                     language: session?.language ?? language,
@@ -502,7 +538,7 @@ final class LectureController: ObservableObject {
             LiveActivityCoordinator.shared.start(
                 lectureID: current.id,
                 title: current.title,
-                engineName: usesAppleSpeech ? "Apple Live" : (usesSenseVoice ? "SenseVoice" : "Whisper")
+                engineName: usesAppleSpeech ? "Apple Live" : (usesSenseVoice ? "SenseVoice" : (usesZipformer ? "Zipformer" : (usesParaformer ? "Paraformer" : "Whisper")))
             )
             UIApplication.shared.isIdleTimerDisabled = true
             meter = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
@@ -812,34 +848,68 @@ final class LectureController: ObservableObject {
     }
 
     func switchRecognitionEngine(to value: String) async {
-        guard ["apple", "sensevoice", "whisper"].contains(value), value != recognitionEngine else { return }
+        guard let targetType = ASREngineType(rawValue: value), targetType.isAvailableInCurrentRelease, value != recognitionEngine else { return }
         guard isRecording else { setRecognitionEngine(value); return }
         guard !isBusy, let current = session else { return }
         isBusy = true
         let oldEngine = recognitionEngine
         status = L10n.tr("正在準備新辨識引擎；目前引擎繼續運作…", "Preparing the new recognizer while the current engine continues…")
 
+        // 1. Candidate preparation FIRST while old recognizer continues running live
+        var preparedApple: (any LiveSpeechEngine)?
+        do {
+            if value == "apple" {
+                guard #available(iOS 26.0, *) else { throw LectureError.message("Apple Speech requires iOS 26+") }
+                let candidate = AppleSpeechEngine()
+                try await candidate.prepare(language: RecognitionLanguage.primary(language) ?? "zh") { _ in }
+                preparedApple = candidate
+            } else if value == "sensevoice" {
+                try await senseVoice.load(language: language, progressState: { _ in })
+            } else if value == "zipformer" {
+                try await zipformerEngine.prepare(language: language, onProgress: { _ in })
+            } else if value == "paraformer" {
+                try await paraformerEngine.prepare(language: language, onProgress: { _ in })
+            } else {
+                try await engine.load(model, progressState: { _ in })
+            }
+        } catch {
+            let msg = L10n.tr("新引擎準備失敗，目前辨識繼續運作", "Failed to prepare new engine; current recognizer continues")
+            status = msg
+            errorMessage = error.localizedDescription
+            ASRRouter.shared.recordSwitch(
+                from: oldEngine,
+                to: value,
+                sampleIndex: 0,
+                timestamp: audioSource == .deviceAudio ? deviceAudioDuration : duration,
+                successful: false,
+                note: error.localizedDescription
+            )
+            isBusy = false
+            return
+        }
+
+        // 2. Authoritative snapshot AT EXACT HANDOFF MOMENT after candidate preparation succeeds
         let boundaryTime: TimeInterval
         let plan: ASRSwitchPlan
         if audioSource == .deviceAudio {
             deviceAudioBufferLock.lock()
-            let captured = deviceAudioBufferStartOffset + deviceAudioBuffer.count
-            deviceAudioBufferLock.unlock()
-            boundaryTime = deviceAudioDuration
-            plan = ASRRouter.planSwitch(
-                from: oldEngine,
-                to: value,
-                capturedSamples: captured,
-                fedCursor: deviceAudioFedSampleIndex,
-                finalizedCursor: deviceAudioFinalizedSampleIndex
-            )
-
-            // Validate rolling buffer ownership BEFORE stopping the old engine
-            deviceAudioBufferLock.lock()
+            let capturedNow = deviceAudioBufferStartOffset + deviceAudioBuffer.count
+            let fedNow = deviceAudioFedSampleIndex
+            let finalizedNow = deviceAudioFinalizedSampleIndex
             let bufferStart = deviceAudioBufferStartOffset
             let bufferEnd = bufferStart + deviceAudioBuffer.count
             deviceAudioBufferLock.unlock()
 
+            boundaryTime = deviceAudioDuration
+            plan = ASRRouter.planSwitch(
+                from: oldEngine,
+                to: value,
+                capturedSamples: capturedNow,
+                fedCursor: fedNow,
+                finalizedCursor: finalizedNow
+            )
+
+            // Validate rolling buffer ownership at the handoff moment
             if plan.newEngineStartCursor < bufferStart || plan.switchBoundary > bufferEnd {
                 let msg = L10n.tr(
                     "無法在不遺失緩衝聲音的情況下切換辨識引擎；請等待待處理聲音追上後再試。",
@@ -860,16 +930,21 @@ final class LectureController: ObservableObject {
             }
         } else if let part = current.parts.last {
             updateAudioCount()
-            let captured = session?.parts.last?.sampleCount ?? part.sampleCount
-            let finalized = session?.parts.last?.processedSamples ?? part.processedSamples
-            let fed = oldEngine == "apple" ? appleCursor : finalized
-            boundaryTime = part.offset + Double(captured) / 16_000
+            let capturedNow = session?.parts.last?.sampleCount ?? part.sampleCount
+            let finalizedNow = session?.parts.last?.processedSamples ?? part.processedSamples
+            let fedNow: Int
+            if oldEngine == "apple" { fedNow = appleCursor }
+            else if oldEngine == "zipformer" { fedNow = zipformerCursor }
+            else if oldEngine == "paraformer" { fedNow = paraformerCursor }
+            else { fedNow = finalizedNow }
+
+            boundaryTime = part.offset + Double(capturedNow) / 16_000
             plan = ASRRouter.planSwitch(
                 from: oldEngine,
                 to: value,
-                capturedSamples: captured,
-                fedCursor: fed,
-                finalizedCursor: finalized
+                capturedSamples: capturedNow,
+                fedCursor: fedNow,
+                finalizedCursor: finalizedNow
             )
         } else {
             boundaryTime = duration
@@ -877,27 +952,15 @@ final class LectureController: ObservableObject {
         }
         let boundarySamples = plan.switchBoundary
 
+        // 3. Perform atomic handoff & backlog feeding
         do {
-            var preparedApple: (any LiveSpeechEngine)?
-            if value == "apple" {
-                guard #available(iOS 26.0, *) else { throw LectureError.message("Apple Speech requires iOS 26+") }
-                let candidate = AppleSpeechEngine()
-                try await candidate.prepare(language: RecognitionLanguage.primary(language) ?? "zh") { _ in }
-                preparedApple = candidate
-            } else if value == "sensevoice" {
-                try await senseVoice.load(language: language, progressState: { _ in })
-            } else if value == "zipformer" {
-                try await zipformerEngine.prepare(language: language, onProgress: { _ in })
-            } else if value == "paraformer" {
-                try await paraformerEngine.prepare(language: language, onProgress: { _ in })
-            } else {
-                try await engine.load(model, progressState: { _ in })
-            }
-
             let buffers = DeviceAudioCaptureManager.shared.diagnostics.totalBuffersReceived
-            lastASRSwitchBoundary = ASRSwitchBoundary(engine: oldEngine, sampleIndex: boundarySamples,
-                                                      timestamp: boundaryTime, totalBuffers: buffers)
-                .switching(to: value, atSample: boundarySamples, timestamp: boundaryTime)
+            lastASRSwitchBoundary = ASRSwitchBoundary(
+                engine: oldEngine,
+                sampleIndex: boundarySamples,
+                timestamp: boundaryTime,
+                totalBuffers: buffers
+            ).switching(to: value, atSample: boundarySamples, timestamp: boundaryTime)
 
             worker?.cancel(); await worker?.value; worker = nil
             if oldEngine == "apple" { await appleSpeech?.cancel() }
@@ -909,11 +972,9 @@ final class LectureController: ObservableObject {
             liveDraft = ""; provisional = []; previousHypothesis = []
 
             if audioSource == .deviceAudio {
-                // Backlog preservation: do NOT jump deviceAudioProcessedSamples to boundarySamples.
-                // If switching to streaming engines, feed unconsumed buffer backlog.
                 if value == "apple", let preparedApple {
                     appleSpeech = preparedApple
-                    try await startAppleDeviceAudio(current: session ?? current)
+                    try await startAppleDeviceAudio(current: session ?? current, startSampleOffset: plan.newEngineStartCursor)
                     deviceAudioBufferLock.lock()
                     let bufferStart = deviceAudioBufferStartOffset
                     let buffer = deviceAudioBuffer
@@ -928,7 +989,7 @@ final class LectureController: ObservableObject {
                         }
                     }
                 } else if value == "zipformer" {
-                    try await startZipformerDeviceAudio(current: session ?? current)
+                    try await startZipformerDeviceAudio(current: session ?? current, startSampleOffset: plan.newEngineStartCursor)
                     deviceAudioBufferLock.lock()
                     let bufferStart = deviceAudioBufferStartOffset
                     let buffer = deviceAudioBuffer
@@ -943,7 +1004,7 @@ final class LectureController: ObservableObject {
                         }
                     }
                 } else if value == "paraformer" {
-                    try await startParaformerDeviceAudio(current: session ?? current)
+                    try await startParaformerDeviceAudio(current: session ?? current, startSampleOffset: plan.newEngineStartCursor)
                     deviceAudioBufferLock.lock()
                     let bufferStart = deviceAudioBufferStartOffset
                     let buffer = deviceAudioBuffer
@@ -968,7 +1029,7 @@ final class LectureController: ObservableObject {
                 // Backlog preservation for Microphone: do NOT skip unprocessed samples.
                 if value == "apple", let preparedApple {
                     appleSpeech = preparedApple
-                    try await startApple(part, current: session ?? current)
+                    try await startApple(part, current: session ?? current, startSample: plan.newEngineStartCursor)
                     let backlogCount = plan.handoffBacklogRange.count
                     if backlogCount > 0 {
                         let unconsumed = (try? PCMRecorder.read(store.audioURL(current, part), from: plan.newEngineStartCursor, count: backlogCount)) ?? []
@@ -978,7 +1039,7 @@ final class LectureController: ObservableObject {
                     }
                     appleCursor = plan.switchBoundary
                 } else if value == "zipformer" {
-                    try await startZipformer(part, current: session ?? current)
+                    try await startZipformer(part, current: session ?? current, startSample: plan.newEngineStartCursor)
                     let backlogCount = plan.handoffBacklogRange.count
                     if backlogCount > 0 {
                         let unconsumed = (try? PCMRecorder.read(store.audioURL(current, part), from: plan.newEngineStartCursor, count: backlogCount)) ?? []
@@ -988,7 +1049,7 @@ final class LectureController: ObservableObject {
                     }
                     zipformerCursor = plan.switchBoundary
                 } else if value == "paraformer" {
-                    try await startParaformer(part, current: session ?? current)
+                    try await startParaformer(part, current: session ?? current, startSample: plan.newEngineStartCursor)
                     let backlogCount = plan.handoffBacklogRange.count
                     if backlogCount > 0 {
                         let unconsumed = (try? PCMRecorder.read(store.audioURL(current, part), from: plan.newEngineStartCursor, count: backlogCount)) ?? []
@@ -1013,6 +1074,9 @@ final class LectureController: ObservableObject {
                 successful: true,
                 note: "Engine switched from \(oldEngine) to \(value); backlog preserved"
             )
+            LiveActivityCoordinator.shared.updateEngineName(
+                value == "apple" ? "Apple Live" : (value == "sensevoice" ? "SenseVoice" : (value == "zipformer" ? "Zipformer" : (value == "paraformer" ? "Paraformer" : "Whisper")))
+            )
             worker = Task { [weak self] in await self?.streamLoop() }
             status = L10n.tr("辨識引擎已切換，擷取與翻譯持續", "Recognizer switched; capture and translation continue")
         } catch {
@@ -1029,7 +1093,7 @@ final class LectureController: ObservableObject {
             )
             if oldEngine == "apple" {
                 if audioSource == .deviceAudio {
-                    try? await startAppleDeviceAudio(current: session ?? current)
+                    try? await startAppleDeviceAudio(current: session ?? current, startSampleOffset: plan.newEngineStartCursor)
                     // Replay unfinalized backlog from plan.newEngineStartCursor through boundarySamples
                     deviceAudioBufferLock.lock()
                     let bufferStart = deviceAudioBufferStartOffset
@@ -1045,7 +1109,7 @@ final class LectureController: ObservableObject {
                         }
                     }
                 } else if let part = session?.parts.last, let store {
-                    try? await startApple(part, current: session ?? current)
+                    try? await startApple(part, current: session ?? current, startSample: plan.newEngineStartCursor)
                     let backlogCount = plan.handoffBacklogRange.count
                     if backlogCount > 0, let apple = appleSpeech {
                         let unconsumed = (try? PCMRecorder.read(store.audioURL(current, part), from: plan.newEngineStartCursor, count: backlogCount)) ?? []
@@ -1055,6 +1119,60 @@ final class LectureController: ObservableObject {
                     }
                     appleCursor = plan.switchBoundary
                 }
+            } else if oldEngine == "zipformer" {
+                if audioSource == .deviceAudio {
+                    try? await startZipformerDeviceAudio(current: session ?? current, startSampleOffset: plan.newEngineStartCursor)
+                    deviceAudioBufferLock.lock()
+                    let bufferStart = deviceAudioBufferStartOffset
+                    let buffer = deviceAudioBuffer
+                    deviceAudioBufferLock.unlock()
+                    let localStart = max(0, plan.newEngineStartCursor - bufferStart)
+                    let localEnd = max(localStart, min(buffer.count, plan.switchBoundary - bufferStart))
+                    if localStart < localEnd {
+                        let backlog = Array(buffer[localStart..<localEnd])
+                        if !backlog.isEmpty {
+                            try? await zipformerEngine.append(backlog)
+                            deviceAudioFedSampleIndex = plan.switchBoundary
+                        }
+                    }
+                } else if let part = session?.parts.last, let store {
+                    try? await startZipformer(part, current: session ?? current, startSample: plan.newEngineStartCursor)
+                    let backlogCount = plan.handoffBacklogRange.count
+                    if backlogCount > 0 {
+                        let unconsumed = (try? PCMRecorder.read(store.audioURL(current, part), from: plan.newEngineStartCursor, count: backlogCount)) ?? []
+                        if !unconsumed.isEmpty {
+                            try? await zipformerEngine.append(unconsumed)
+                        }
+                    }
+                    zipformerCursor = plan.switchBoundary
+                }
+            } else if oldEngine == "paraformer" {
+                if audioSource == .deviceAudio {
+                    try? await startParaformerDeviceAudio(current: session ?? current, startSampleOffset: plan.newEngineStartCursor)
+                    deviceAudioBufferLock.lock()
+                    let bufferStart = deviceAudioBufferStartOffset
+                    let buffer = deviceAudioBuffer
+                    deviceAudioBufferLock.unlock()
+                    let localStart = max(0, plan.newEngineStartCursor - bufferStart)
+                    let localEnd = max(localStart, min(buffer.count, plan.switchBoundary - bufferStart))
+                    if localStart < localEnd {
+                        let backlog = Array(buffer[localStart..<localEnd])
+                        if !backlog.isEmpty {
+                            try? await paraformerEngine.append(backlog)
+                            deviceAudioFedSampleIndex = plan.switchBoundary
+                        }
+                    }
+                } else if let part = session?.parts.last, let store {
+                    try? await startParaformer(part, current: session ?? current, startSample: plan.newEngineStartCursor)
+                    let backlogCount = plan.handoffBacklogRange.count
+                    if backlogCount > 0 {
+                        let unconsumed = (try? PCMRecorder.read(store.audioURL(current, part), from: plan.newEngineStartCursor, count: backlogCount)) ?? []
+                        if !unconsumed.isEmpty {
+                            try? await paraformerEngine.append(unconsumed)
+                        }
+                    }
+                    paraformerCursor = plan.switchBoundary
+                }
             } else {
                 // Restore old Whisper / SenseVoice processing cursor
                 if audioSource == .deviceAudio {
@@ -1063,6 +1181,9 @@ final class LectureController: ObservableObject {
                     session?.parts[index].processedSamples = plan.newEngineStartCursor
                 }
             }
+            LiveActivityCoordinator.shared.updateEngineName(
+                oldEngine == "apple" ? "Apple Live" : (oldEngine == "sensevoice" ? "SenseVoice" : (oldEngine == "zipformer" ? "Zipformer" : (oldEngine == "paraformer" ? "Paraformer" : "Whisper")))
+            )
             worker = Task { [weak self] in await self?.streamLoop() }
             status = L10n.tr("新引擎尚未就緒，目前辨識繼續運作", "New model not ready; current recognizer continues")
             errorMessage = error.localizedDescription
@@ -1746,11 +1867,11 @@ final class LectureController: ObservableObject {
         do { try store.save(session); lastSaved = Date() }
         catch { errorMessage = "自動儲存失敗：\(error.localizedDescription)。請先暫停並檢查剩餘空間。" }
     }
-    private func startApple(_ part: AudioPart, current: LectureSession) async throws {
+    private func startApple(_ part: AudioPart, current: LectureSession, startSample: Int? = nil) async throws {
         guard let appleSpeech else { throw LectureError.message("請先載入 Apple 語音模型。") }
-        appleCursor = part.processedSamples
-        appleRangeStart = part.processedSamples
-        let from = part.processedSamples
+        let from = startSample ?? part.processedSamples
+        appleCursor = from
+        appleRangeStart = from
         let offset = part.offset + Double(from) / 16000
         let generation = UUID(); activeDecodeID = generation
         appleCaptions = AppleCaptionState()
@@ -1925,13 +2046,13 @@ final class LectureController: ObservableObject {
         do { if let store { history = try store.loadAll() } }
         catch { errorMessage = "讀取歷史紀錄失敗：\(error.localizedDescription)" }
     }
-    private func startAppleDeviceAudio(current: LectureSession) async throws {
+    private func startAppleDeviceAudio(current: LectureSession, startSampleOffset: Int? = nil) async throws {
         guard let appleSpeech else { throw LectureError.message(L10n.tr("請先載入 Apple 語音模型。", "Please load Apple speech model first.")) }
         let generation = UUID(); activeDecodeID = generation
         appleCaptions = AppleCaptionState()
         liveDraft = ""; provisional = []; restartTranslation()
         let selectedLanguage = current.language
-        let offset = duration
+        let offset = startSampleOffset.map { Double($0) / 16000.0 } ?? duration
         try await appleSpeech.start(language: selectedLanguage) { [weak self] result in
             guard let self, self.activeDecodeID == generation, self.session?.id == current.id,
                   result.start.isFinite, result.end.isFinite else { return }
@@ -1985,9 +2106,9 @@ final class LectureController: ObservableObject {
 
     // MARK: - Zipformer Streaming
 
-    private func startZipformer(_ part: AudioPart, current: LectureSession) async throws {
-        zipformerCursor = part.processedSamples
-        let from = part.processedSamples
+    private func startZipformer(_ part: AudioPart, current: LectureSession, startSample: Int? = nil) async throws {
+        let from = startSample ?? part.processedSamples
+        zipformerCursor = from
         let offset = part.offset + Double(from) / 16000
         let generation = UUID(); activeDecodeID = generation
         liveDraft = ""; provisional = []; restartTranslation()
@@ -2059,10 +2180,10 @@ final class LectureController: ObservableObject {
         }
     }
 
-    private func startZipformerDeviceAudio(current: LectureSession) async throws {
+    private func startZipformerDeviceAudio(current: LectureSession, startSampleOffset: Int? = nil) async throws {
         let generation = UUID(); activeDecodeID = generation
         liveDraft = ""; provisional = []; restartTranslation()
-        let offset = duration
+        let offset = startSampleOffset.map { Double($0) / 16000.0 } ?? duration
         try await zipformerEngine.start(language: current.language) { [weak self] result in
             guard let self, self.activeDecodeID == generation, self.session?.id == current.id,
                   result.start.isFinite, result.end.isFinite else { return }
@@ -2109,9 +2230,9 @@ final class LectureController: ObservableObject {
 
     // MARK: - Paraformer Streaming
 
-    private func startParaformer(_ part: AudioPart, current: LectureSession) async throws {
-        paraformerCursor = part.processedSamples
-        let from = part.processedSamples
+    private func startParaformer(_ part: AudioPart, current: LectureSession, startSample: Int? = nil) async throws {
+        let from = startSample ?? part.processedSamples
+        paraformerCursor = from
         let offset = part.offset + Double(from) / 16000
         let generation = UUID(); activeDecodeID = generation
         liveDraft = ""; provisional = []; restartTranslation()
@@ -2183,10 +2304,10 @@ final class LectureController: ObservableObject {
         }
     }
 
-    private func startParaformerDeviceAudio(current: LectureSession) async throws {
+    private func startParaformerDeviceAudio(current: LectureSession, startSampleOffset: Int? = nil) async throws {
         let generation = UUID(); activeDecodeID = generation
         liveDraft = ""; provisional = []; restartTranslation()
-        let offset = duration
+        let offset = startSampleOffset.map { Double($0) / 16000.0 } ?? duration
         try await paraformerEngine.start(language: current.language) { [weak self] result in
             guard let self, self.activeDecodeID == generation, self.session?.id == current.id,
                   result.start.isFinite, result.end.isFinite else { return }
