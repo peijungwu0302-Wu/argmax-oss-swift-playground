@@ -96,30 +96,42 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild -project AppBuild/LectureTranscriber.xcodeproj -scheme LectureTranscriber -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/UniversalBuild" CODE_SIGNING_ALLOWED=NO build 2>&1 | tee "$RUNNER_TEMP/lecture-device.log"
-          python3 AppBuild/package_ipa.py "$RUNNER_TEMP/UniversalBuild/Build/Products/Debug-iphoneos/LectureTranscriber.app" "$RUNNER_TEMP/LectureTranscriber-v1.9.1.ipa"
-          cp "$RUNNER_TEMP/LectureTranscriber-v1.9.1.ipa" "$RUNNER_TEMP/LectureTranscriber-1.9.1-unsigned.ipa"
+          python3 AppBuild/package_ipa.py "$RUNNER_TEMP/UniversalBuild/Build/Products/Debug-iphoneos/LectureTranscriber.app" "$RUNNER_TEMP/LectureTranscriber-v1.9.2.ipa"
+          cp "$RUNNER_TEMP/LectureTranscriber-v1.9.2.ipa" "$RUNNER_TEMP/LectureTranscriber-1.9.2-unsigned.ipa"
       - uses: actions/upload-artifact@v4
         with:
-          name: LectureTranscriber-v1.9.1-IPA
+          name: LectureTranscriber-v1.9.2-IPA
           path: |
-            ${{ runner.temp }}/LectureTranscriber-v1.9.1.ipa
-            ${{ runner.temp }}/LectureTranscriber-1.9.1-unsigned.ipa
+            ${{ runner.temp }}/LectureTranscriber-v1.9.2.ipa
+            ${{ runner.temp }}/LectureTranscriber-1.9.2-unsigned.ipa
       - name: Create GitHub Release
-        if: github.ref == 'refs/tags/v1.9.1'
+        if: github.ref == 'refs/tags/v1.9.2'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.9.1
+          tag_name: v1.9.2
           files: |
-            ${{ runner.temp }}/LectureTranscriber-v1.9.1.ipa
+            ${{ runner.temp }}/LectureTranscriber-v1.9.2.ipa
             Deliverables/update.json
             Deliverables/sidestore.json
-          name: LectureTranscriber v1.9.1
+          name: LectureTranscriber v1.9.2
           body: |
-            ## LectureTranscriber v1.9.1
-            - 改善裝置音訊（Device Audio）即時辨識與 ASR 引擎熱切換（hot-switch）無縫接軌與回放穩定性
-            - 整合 Sherpa-ONNX 串流語音辨識（包含實驗性 Zipformer 與 Streaming Paraformer 引擎，實機測試進行中）
-            - 最佳化 Live Activity 與 PiP 畫中畫字幕同步與延遲表現
-            - 既有裝置音訊擷取、麥克風錄製、SenseVoice 與 WhisperKit 保持完整相容與穩定性
+            ## LectureTranscriber v1.9.2 (Build 21)
+
+            ### 繁體中文更新重點（實機驗證持續進行中）
+            - **Zipformer / Paraformer 串流字幕即時轉繁體中文**：Sherpa 語音辨識之 raw partial 與 final 輸出全面導入標準文字規格化層，即時轉換為繁體中文（含即時草稿、PiP 畫中畫、動態島、即時翻譯與歷史文字稿），中英混說與純英文單字完整保留。
+            - **串流字幕穩定器 (StreamingPartialStabilizer)**：抑制內容相同之重複推論，過濾異常向後跳動與文字縮減，僅在單調延伸或尾端微調時推進更新，顯著減少字幕整句反覆重寫之視覺跳動；final 定稿文字具權威性覆蓋並自動重置。
+            - **Zipformer 雙語模型下載流程驗證就緒**：模型中心完整支援乾淨下載與已安裝狀態識別；錄音期間持續鎖定模型狀態，防止非預期熱切換。
+            - **既有實機功能相容與穩定**：ScreenCaptureKit 裝置聲音擷取（絕對零磁碟音訊寫入）、麥克風錄音、SenseVoice、WhisperKit、Apple 語音辨識與 PiP 浮動字幕保持完全相容。
+            - **說明**：各型號 iOS / iPadOS 實體裝置之硬體負載與語音特性存在差異，Zipformer / Paraformer 實機驗證持續進行中（Real-device validation is ongoing）。
+
+            ---
+
+            ### English Release Notes (Real-Device Validation Ongoing)
+            - **Traditional Chinese Normalization Layer**: Live Sherpa raw partial and final hypotheses are normalized to Traditional Chinese (繁體中文) via Foundation / ICU transliteration across live drafts, floating PiP, Dynamic Island, translation queues, and saved transcripts. English terms and mixed Chinese-English speech are safely preserved.
+            - **Streaming Caption Hypothesis Stabilizer (`StreamingPartialStabilizer`)**: Suppresses duplicate partial hypothesis updates, filters out erratic shrinkage, and smooths partial updates by preserving common prefixes during minor tail character revisions, substantially reducing visual full-line caption flickering. Authoritative finals take immediate precedence and cleanly reset stabilizer state.
+            - **Zipformer Bilingual Model Center Download Flow Verified**: Clean-install and existing-installation checks verified for bilingual Zipformer streaming model files. Model selection remains locked during active recording.
+            - **Regression-Free Compatibility**: Preserves verified ScreenCaptureKit device audio (0 disk audio files written), microphone recording, SenseVoice and WhisperKit offline recognition, Apple Speech, and SideStore 2-App-ID personal sideload limits.
+            - **Note**: Compute performance and latency vary across iOS / iPadOS hardware models; Zipformer and Paraformer streaming engines remain experimental while real-device validation is ongoing.
           draft: false
           prerelease: false
       - name: Report validation errors
