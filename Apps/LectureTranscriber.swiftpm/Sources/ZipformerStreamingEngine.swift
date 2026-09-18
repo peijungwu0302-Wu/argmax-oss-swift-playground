@@ -109,11 +109,12 @@ final class ZipformerStreamingEngine: LiveSpeechEngine {
 
         let startPTS = Double(result.startSampleIndex) / 16000.0
         let endPTS = Double(result.endSampleIndex) / 16000.0
+        let normalizedText = ChineseTextNormalizer.toTraditional(result.text)
 
         if result.isEndpoint {
-            if !result.text.isEmpty {
+            if !normalizedText.isEmpty {
                 let update = SpeechUpdate(
-                    text: result.text,
+                    text: normalizedText,
                     start: startPTS,
                     end: endPTS,
                     finalizedThrough: endPTS,
@@ -122,9 +123,9 @@ final class ZipformerStreamingEngine: LiveSpeechEngine {
                 onResult?(update)
             }
         } else {
-            if !result.text.isEmpty {
+            if !normalizedText.isEmpty {
                 let update = SpeechUpdate(
-                    text: result.text,
+                    text: normalizedText,
                     start: startPTS,
                     end: endPTS,
                     finalizedThrough: startPTS,
@@ -139,9 +140,10 @@ final class ZipformerStreamingEngine: LiveSpeechEngine {
         if let result = await runtime.finishStream() {
             let startPTS = Double(result.startSampleIndex) / 16000.0
             let endPTS = Double(result.endSampleIndex) / 16000.0
-            if !result.text.isEmpty {
+            let normalizedText = ChineseTextNormalizer.toTraditional(result.text)
+            if !normalizedText.isEmpty {
                 let update = SpeechUpdate(
-                    text: result.text,
+                    text: normalizedText,
                     start: startPTS,
                     end: endPTS,
                     finalizedThrough: endPTS,

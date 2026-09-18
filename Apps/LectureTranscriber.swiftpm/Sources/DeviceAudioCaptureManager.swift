@@ -79,7 +79,7 @@ public struct DeviceAudioDiagnostics: Sendable, Codable {
     public var audioSessionEvents: [String]
 
     public init(
-        appVersion: String = "1.9.1 (20)",
+        appVersion: String = "1.9.2 (21)",
         osVersion: String = ProcessInfo.processInfo.operatingSystemVersionString,
         isSupported: Bool = DeviceAudioAvailability.isSupported,
         isCapturing: Bool = false,

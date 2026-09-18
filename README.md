@@ -1,15 +1,33 @@
 [English](README.md) | [繁體中文](README.zh-TW.md)
 
-> **LectureTranscriber v1.8.5 (Build 18) — Xcode 27 + iOS 27 Native ScreenCaptureKit Device Audio + Course Vocabulary Beta**: Single universal unsigned IPA for iPhone & iPad, optimized for SideStore personal team sideloading (exactly 1 App + 1 Widget Extension, 0 extra App IDs, 0 App Groups, 0 APNs). Features Xcode 27 + iOS 27 SDK native ScreenCaptureKit audio capture path, SCContentSharingPicker integration, real-time audio buffer observability & diagnostics panel ("Copy Diagnostics"), strict zero disk audio persistence for internal audio, Live Only vs Save Transcript storage modes, Course Vocabulary (Beta) with canonical terms and alias replacement for Apple Speech & SenseVoice, translation stability with SegmentMerger, Picture-in-Picture (PiP) subtitles across apps, Dynamic Island & Lock Screen Live Activities, and full reactive global UI localization (System / Traditional Chinese / English).
-> [GitHub Release v1.8.5 IPA Download](https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/tag/v1.8.5) · [SideStore Install Guide](Apps/PRIVATE_INSTALL.zh-Hant.md)
+> **LectureTranscriber v1.9.2 (Build 21) — Traditional Chinese Normalization + Streaming Partial Caption Stabilizer (Beta)**: Single universal unsigned IPA for iPhone & iPad, optimized for SideStore personal team sideloading (exactly 1 App + 1 Widget Extension, 0 extra App IDs). Features unified Traditional Chinese (繁體中文) text normalization across Zipformer & Paraformer streaming pipelines (live draft, PiP, Live Activity, translation, persistent storage), a new `StreamingPartialStabilizer` to suppress high-frequency jitter and visual full-line rewriting, verified Model Center Zipformer bilingual download flow, and rock-solid backwards compatibility for ScreenCaptureKit internal device audio, SenseVoice, WhisperKit, and Picture-in-Picture.
+> [SideStore Install Guide](Apps/PRIVATE_INSTALL.zh-Hant.md) · [v1.9.2 Release Notes (繁中)](Apps/UPDATE-1.9.2.zh-Hant.md)
 
 ---
 
-## 🎙️ LectureTranscriber v1.8.5 Overview
+## 🎙️ LectureTranscriber Overview
 
-**LectureTranscriber** is an on-device live transcription and translation app for iOS and iPadOS.
+### What's New in v1.9.2 (Real-Device Validation Ongoing)
 
-### What's New in v1.8.5
+- **Traditional Chinese Normalization Layer for Zipformer & Paraformer**:
+  - Live Sherpa raw partial and final hypotheses are normalized to Traditional Chinese (繁體中文) via Foundation / ICU transliteration.
+  - Consistent presentation across live draft subtitles, floating Picture-in-Picture (PiP), Lock Screen & Dynamic Island Live Activities, translation inputs, and persistent lecture history.
+  - English words, casing, and mixed Chinese-English speech segments are safely preserved without alteration.
+- **Streaming Caption Hypothesis Stabilizer (`StreamingPartialStabilizer`)**:
+  - Eliminates duplicate partial hypothesis updates and filters out transient token shrinkage / jitter.
+  - Smooths partial updates by emitting immediately upon monotonic string growth and preserving common prefixes during minor tail character revisions, substantially reducing visual full-line caption flickering.
+  - Authoritative final segments take immediate precedence and cleanly reset stabilizer state between sentences.
+- **Zipformer Bilingual Model Center Download Verification**:
+  - Validated clean-install and existing-installation checks for the bilingual Zipformer streaming model files.
+  - Model selection is locked during active recording to prevent unexpected hot-switching to non-ready models.
+- **Regression-Free Compatibility**:
+  - Preserves verified ScreenCaptureKit internal device audio capture (strictly 0 disk audio files written), microphone recording with AAC compression, SenseVoice and WhisperKit offline recognition, Apple Speech, and SideStore 2-App-ID personal sideload limits.
+- **Note on Real-Device Testing**:
+  - Compute performance, thermal throttling, and speech recognition latency vary across iOS / iPadOS hardware models. **Real-device validation is ongoing.**
+
+---
+
+### Previous Highlights (v1.8.5 ~ v1.9.1)
 - **Device Audio Bring-up & Real iOS 27 Fix (ScreenCaptureKit)**:
   - Fixed availability check to properly detect real iOS 27 devices, eliminating false "requires iOS 27" errors when built with forward-compatible toolchains.
   - ScreenCaptureKit stream capture receives system audio `CMSampleBuffer`, converts to standard 16 kHz Float32 mono PCM, and computes RMS audio level in real time.

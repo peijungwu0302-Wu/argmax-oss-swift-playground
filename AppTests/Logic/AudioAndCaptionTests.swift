@@ -48,8 +48,8 @@ final class AudioAndCaptionTests: XCTestCase {
     @MainActor
     func testUniversalInstallConfiguration() {
         XCTAssertEqual(Bundle.main.bundleIdentifier, "com.peijungwu0302.lecturetranscriber")
-        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String, "1.9.1")
-        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "20")
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String, "1.9.2")
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "21")
         XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "UIDeviceFamily") as? [Int], [1, 2])
         XCTAssertTrue(LectureController().supportsBackgroundAudio)
         XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "UIRequiresFullScreen") as? Bool, false)
@@ -2374,6 +2374,115 @@ final class AudioAndCaptionTests: XCTestCase {
         XCTAssertTrue(controller.isRecording)
         XCTAssertNotNil(controller.errorMessage)
         XCTAssertFalse(controller.isASRHandoffInProgress)
+    }
+
+    // MARK: - v1.9.2 Zipformer & Paraformer Hotfix Tests
+
+    func testChineseTextNormalizerSimplifiedToTraditional() {
+        let input1 = "这是一个测试"
+        let output1 = ChineseTextNormalizer.toTraditional(input1)
+        XCTAssertEqual(output1, "這是一個測試")
+
+        let input2 = "自动驾驶系统正在运行"
+        let output2 = ChineseTextNormalizer.toTraditional(input2)
+        XCTAssertEqual(output2, "自動駕駛系統正在運行")
+    }
+
+    func testChineseTextNormalizerMixedAndEnglish() {
+        let input1 = "这个 model 使用 transformer"
+        let output1 = ChineseTextNormalizer.toTraditional(input1)
+        XCTAssertEqual(output1, "這個 model 使用 transformer")
+
+        let input2 = "Hello world"
+        let output2 = ChineseTextNormalizer.toTraditional(input2)
+        XCTAssertEqual(output2, "Hello world")
+
+        let input3 = "123 ABC 測試 test 456"
+        let output3 = ChineseTextNormalizer.toTraditional(input3)
+        XCTAssertEqual(output3, "123 ABC 測試 test 456")
+
+        let empty = ""
+        XCTAssertEqual(ChineseTextNormalizer.toTraditional(empty), "")
+    }
+
+    @MainActor
+    func testStreamingPartialStabilizerDuplicateSuppression() {
+        let stabilizer = StreamingPartialStabilizer()
+        let first = stabilizer.processPartial("今天")
+        XCTAssertEqual(first, "今天")
+
+        let duplicate1 = stabilizer.processPartial("今天")
+        XCTAssertNil(duplicate1, "Identical hypothesis must not trigger duplicate emission")
+
+        let duplicate2 = stabilizer.processPartial(" 今天 \n")
+        XCTAssertNil(duplicate2, "Whitespace-equivalent hypothesis must not trigger duplicate emission")
+
+        let next = stabilizer.processPartial("今天我們")
+        XCTAssertEqual(next, "今天我們")
+    }
+
+    @MainActor
+    func testStreamingPartialStabilizerMonotonicGrowth() {
+        let stabilizer = StreamingPartialStabilizer()
+        XCTAssertEqual(stabilizer.processPartial("今天"), "今天")
+        XCTAssertEqual(stabilizer.processPartial("今天我們"), "今天我們")
+        XCTAssertEqual(stabilizer.processPartial("今天我們要"), "今天我們要")
+        XCTAssertEqual(stabilizer.processPartial("今天我們要介紹"), "今天我們要介紹")
+    }
+
+    @MainActor
+    func testStreamingPartialStabilizerTailRevisionAndShrinkageSuppression() {
+        let stabilizer = StreamingPartialStabilizer()
+        XCTAssertEqual(stabilizer.processPartial("今天我們要介紹"), "今天我們要介紹")
+
+        // Tail revision: modifies the ending words from "介紹" to "解釋"
+        let revised = stabilizer.processPartial("今天我們要解釋")
+        XCTAssertEqual(revised, "今天我們要解釋", "Common prefix must be preserved and tail updated")
+        XCTAssertEqual(stabilizer.stablePrefix, "今天我們要")
+        XCTAssertEqual(stabilizer.unstableTail, "解釋")
+
+        // Temporary backward shrinkage: model drops trailing characters without alternative tail
+        let shrunk = stabilizer.processPartial("今天我們要")
+        XCTAssertNil(shrunk, "Temporary shrinkage jitter must be suppressed to prevent visual bouncing")
+        XCTAssertEqual(stabilizer.lastEmittedText, "今天我們要解釋")
+    }
+
+    @MainActor
+    func testStreamingPartialStabilizerFinalReset() {
+        let stabilizer = StreamingPartialStabilizer()
+        XCTAssertEqual(stabilizer.processPartial("今天我們要介紹"), "今天我們要介紹")
+
+        let finalResult = stabilizer.processFinal("今天我們要介紹說明。")
+        XCTAssertEqual(finalResult, "今天我們要介紹說明。")
+        XCTAssertEqual(stabilizer.lastEmittedText, "")
+        XCTAssertEqual(stabilizer.stablePrefix, "")
+        XCTAssertEqual(stabilizer.unstableTail, "")
+
+        // Next utterance begins with a clean slate
+        let nextUtterance = stabilizer.processPartial("明天開始")
+        XCTAssertEqual(nextUtterance, "明天開始")
+    }
+
+    @MainActor
+    func testZipformerAndParaformerSharedNormalizationAndStabilization() async throws {
+        // Zipformer normalization check
+        let simplifiedSampleText = "这是一个测试"
+        let traditionalNormalized = ChineseTextNormalizer.toTraditional(simplifiedSampleText)
+        XCTAssertEqual(traditionalNormalized, "這是一個測試")
+
+        // Paraformer normalization check
+        let simplifiedSentence = "自动驾驶系统正在运行"
+        let paraformerNormalized = ChineseTextNormalizer.toTraditional(simplifiedSentence)
+        XCTAssertEqual(paraformerNormalized, "自動駕駛系統正在運行")
+
+        // Stabilizer shared between both engines
+        let zipStabilizer = StreamingPartialStabilizer()
+        let paraStabilizer = StreamingPartialStabilizer()
+
+        XCTAssertEqual(zipStabilizer.processPartial("今天我們"), "今天我們")
+        XCTAssertNil(zipStabilizer.processPartial("今天我們"))
+        XCTAssertEqual(paraStabilizer.processPartial("今天我們"), "今天我們")
+        XCTAssertNil(paraStabilizer.processPartial("今天我們"))
     }
 }
 

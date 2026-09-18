@@ -13,6 +13,14 @@
       "iconURL": "https://raw.githubusercontent.com/peijungwu0302-Wu/argmax-oss-swift-playground/playground-compatible/Apps/LectureTranscriber.swiftpm/Sources/Assets.xcassets/AppIcon.appiconset/AppIcon.png",
       "versions": [
         {
+          "version": "1.9.2",
+          "date": "2026-09-18T00:00:00Z",
+          "localizedDescription": "修正 Zipformer / Paraformer 中文字幕顯示為繁體中文，改善 Zipformer 串流字幕穩定性降低整行反覆刷新，保留 Zipformer 模型下載與 Model Center 安裝流程。",
+          "downloadURL": "https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/download/v1.9.2/LectureTranscriber-v1.9.2.ipa",
+          "size": 0,
+          "minOSVersion": "16.1"
+        },
+        {
           "version": "1.9.1",
           "date": "2026-09-17T00:00:00Z",
           "localizedDescription": "改善裝置音訊即時辨識與 ASR 引擎熱切換接軌穩定性，支援 Sherpa-ONNX 離線串流辨識（Zipformer/Paraformer 實機測試進行中），最佳化 Live Activity 與 PiP 字幕同步。",

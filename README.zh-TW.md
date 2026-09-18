@@ -1,15 +1,33 @@
 [English](README.md) | [繁體中文](README.zh-TW.md)
 
-> **課堂逐字稿 App 1.8.5 (Build 18) — Xcode 27 + iOS 27 原生 ScreenCaptureKit 裝置聲音 + 課程詞彙 (Beta)**：iPhone／iPad 通用單一 IPA，支援 SideStore 個人免費憑證簽署側載（剛好 1 App + 1 Widget Extension，無額外 App ID 負擔）。使用 Xcode 27 + iOS 27 SDK 原生編譯 ScreenCaptureKit 裝置聲音擷取路徑、支援 SCContentSharingPicker 系統選取器與原生音訊緩衝流、新增 ScreenCaptureKit 音訊觀測與診斷面板（一鍵複製診斷報告）、保證裝置聲音零磁碟錄音寫入（絕對不寫入任何 .wav/.m4a/.pcm16 音訊檔）、支援「僅即時顯示（不留紀錄）」與「僅保留文字稿（不存音檔）」兩種儲存模式、新增「課程詞彙 (Course Vocabulary Beta)」支援專業術語標準化與識別別名替換（Apple Speech 脈絡詞提示 + SenseVoice 穩定詞彙修正）、升級 SegmentMerger 懸空子句整併翻譯、支援跨 App（GoodNotes／Safari／PDF 等）PiP 子母畫面即時字幕、鎖定畫面 Live Activity 與 iPhone 動態島、以及反應式全域在地化語系支援（系統預設／繁體中文／English）。
-> [GitHub Release v1.8.5 下載 IPA](https://github.com/peijungwu0302-Wu/argmax-oss-swift-playground/releases/tag/v1.8.5) · [SideStore 安裝指南](Apps/PRIVATE_INSTALL.zh-Hant.md)
+> **課堂逐字稿 App 1.9.2 (Build 21) — 繁體中文即時規格化 + 串流字幕穩定器 (Beta)**：iPhone／iPad 通用單一 IPA，支援 SideStore 個人免費憑證簽署側載（剛好 1 App + 1 Widget Extension，無額外 App ID 負擔）。全面為 Zipformer 與 Paraformer 串流語音辨識導入繁體中文即時規格化轉換（包含即時草稿、PiP 畫中畫、動態島與歷史文字稿），新增 `StreamingPartialStabilizer` 消除重複假說與過濾字幕高頻跳動／整句重寫，完成 Model Center Zipformer 雙語串流模型下載流程驗證，並保持 ScreenCaptureKit 裝置音訊擷取、SenseVoice、WhisperKit 與 PiP 既有實機功能之完整穩定性。
+> [SideStore 安裝指南](Apps/PRIVATE_INSTALL.zh-Hant.md) · [v1.9.2 更新日誌](Apps/UPDATE-1.9.2.zh-Hant.md)
 
 ---
 
-## 🎙️ 課堂逐字稿 (LectureTranscriber) v1.8.5 功能說明
+## 🎙️ 課堂逐字稿 (LectureTranscriber) 功能說明
 
-**課堂逐字稿 (LectureTranscriber)** 是一款專為 iOS 與 iPadOS 設計的本機即時語音轉文字與即時翻譯工具。
+### v1.9.2 重點更新（實機驗證持續進行中）
 
-### v1.8.5 重點更新
+#### 1. Zipformer / Paraformer 串流字幕即時轉繁體中文
+- **全鏈路繁體中文支援**：原生 Sherpa 辨識引擎之 raw partial 與 final 輸出即時經過 Foundation / ICU 規格化轉換，確保畫面 live draft、PiP 浮動字幕、Live Activity 動態島、即時翻譯佇列與儲存之逐字稿皆為繁體中文。
+- **混合語言安全保護**：中英文混說情境完整保留英文單字與大小寫，純英文內容維持原樣不被破壞。
+
+#### 2. 串流字幕穩定器 (StreamingPartialStabilizer)
+- **消除高頻視覺抖動**：自動抑制字元內容相同的重複推論更新，並攔截異常向後抖動與文字大幅縮減。
+- **單調延伸與平滑微調**：文字長度單調增長時立即推進；長度相等或尾端微調時，在保留最大共同前綴前提下更新最後變動字符，大幅減緩整句重寫的閱讀負擔。
+- **定稿權威性與自動重置**：final 定稿文字具絕對優先權，分段確認後自動重置穩定器內部狀態，無接縫進入下一語句。
+
+#### 3. Zipformer 雙語模型下載流程驗證就緒
+- **模型中心狀態檢驗**：完整驗證乾淨下載安裝與已下載模型識別；錄音期間持續鎖定狀態，防範未就緒模型的非預期熱切換。
+
+#### 4. 既有實機功能相容與穩定
+- **零退化保證**：已在實機驗證之 ScreenCaptureKit 裝置聲音擷取（絕對零磁碟音訊寫入）、麥克風錄音、SenseVoice、WhisperKit、Apple 語音辨識、PiP 多比例字幕以及 SideStore 個人開發者架構保持完全相容。
+- **客觀註明**：不同 iOS / iPadOS 實體裝置之硬體負載與語音特性各異，實機驗證持續進行中（Real-device validation is ongoing）。
+
+---
+
+### 既有功能特性 (v1.8.5 ~ v1.9.1)
 
 #### 1. 裝置聲音實機啟用與觀測（ScreenCaptureKit）
 - **修復實體 iOS 27 誤報問題**：修復 v1.8.3 因 SDK 條件編譯導致實體 iOS 27 誤報「需要 iOS/iPadOS 27 或更新版本」的底層原因，導入動態執行階段橋接，實機無痛啟用。

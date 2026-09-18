@@ -86,11 +86,12 @@ final class ParaformerStreamingEngine: LiveSpeechEngine {
         // Factual segment-level media timing from sample indices. No fabricated token timestamps.
         let startPTS = Double(result.startSampleIndex) / 16000.0
         let endPTS = Double(result.endSampleIndex) / 16000.0
+        let normalizedText = ChineseTextNormalizer.toTraditional(result.text)
 
         if result.isEndpoint {
-            if !result.text.isEmpty {
+            if !normalizedText.isEmpty {
                 let update = SpeechUpdate(
-                    text: result.text,
+                    text: normalizedText,
                     start: startPTS,
                     end: endPTS,
                     finalizedThrough: endPTS,
@@ -99,9 +100,9 @@ final class ParaformerStreamingEngine: LiveSpeechEngine {
                 onResult?(update)
             }
         } else {
-            if !result.text.isEmpty {
+            if !normalizedText.isEmpty {
                 let update = SpeechUpdate(
-                    text: result.text,
+                    text: normalizedText,
                     start: startPTS,
                     end: endPTS,
                     finalizedThrough: startPTS,
@@ -116,9 +117,10 @@ final class ParaformerStreamingEngine: LiveSpeechEngine {
         if let result = await runtime.finishStream() {
             let startPTS = Double(result.startSampleIndex) / 16000.0
             let endPTS = Double(result.endSampleIndex) / 16000.0
-            if !result.text.isEmpty {
+            let normalizedText = ChineseTextNormalizer.toTraditional(result.text)
+            if !normalizedText.isEmpty {
                 let update = SpeechUpdate(
-                    text: result.text,
+                    text: normalizedText,
                     start: startPTS,
                     end: endPTS,
                     finalizedThrough: endPTS,

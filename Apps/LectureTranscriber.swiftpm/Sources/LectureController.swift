@@ -185,6 +185,8 @@ final class LectureController: ObservableObject {
     private let senseVoice = SenseVoiceEngine()
     private let zipformerEngine = ZipformerStreamingEngine()
     private let paraformerEngine = ParaformerStreamingEngine()
+    private let zipformerStabilizer = StreamingPartialStabilizer()
+    private let paraformerStabilizer = StreamingPartialStabilizer()
     private let recorder = PCMRecorder()
     private var appleSpeech: (any LiveSpeechEngine)?
     private var appleCursor = 0
@@ -867,6 +869,8 @@ final class LectureController: ObservableObject {
         }
 
         CaptionFeed.shared.update(isRecording: false, isPaused: !endLiveActivity)
+        zipformerStabilizer.reset()
+        paraformerStabilizer.reset()
         if endLiveActivity { LiveActivityCoordinator.shared.stop() }
     }
 
@@ -2218,17 +2222,19 @@ final class LectureController: ObservableObject {
         zipformerCursor = from
         let offset = part.offset + Double(from) / 16000
         let generation = UUID(); activeDecodeID = generation
+        zipformerStabilizer.reset()
         liveDraft = ""; provisional = []; restartTranslation()
         try await zipformerEngine.start(language: current.language) { [weak self] result in
             guard let self, self.activeDecodeID == generation, self.session?.id == current.id,
                   let index = self.session?.parts.firstIndex(where: { $0.id == part.id }),
                   result.start.isFinite, result.end.isFinite else { return }
-            let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalized = ChineseTextNormalizer.toTraditional(result.text.trimmingCharacters(in: .whitespacesAndNewlines))
             self.draftAudioEnd = max(self.draftAudioEnd, offset + result.end)
             if result.isFinal {
-                if !text.isEmpty {
+                let finalText = self.zipformerStabilizer.processFinal(normalized)
+                if !finalText.isEmpty {
                     self.session?.previousLines = nil
-                    let corrected = CourseVocabulary.shared.correctFinalText(text)
+                    let corrected = CourseVocabulary.shared.correctFinalText(finalText)
                     let newLine = TranscriptLine(start: offset + result.start, end: offset + result.end, text: corrected)
                     self.session?.lines.append(newLine)
                     LiveActivityCoordinator.shared.updateTranscript(original: corrected, translation: self.validTranslatedDraft)
@@ -2247,21 +2253,23 @@ final class LectureController: ObservableObject {
                 let previous = self.session?.parts[index].processedSamples ?? 0
                 self.session?.parts[index].processedSamples = min(count, max(previous, durable))
                 self.persist()
+                self.liveDraftStart = offset + result.start
+                self.liveDraft = ""
+                self.provisional = []
             } else {
-                if !text.isEmpty {
-                    LiveCaptionSyncController.shared.receivePartial(
-                        start: offset + result.start,
-                        end: offset + result.end,
-                        text: text,
-                        engine: "zipformer",
-                        language: self.language,
-                        translation: self.validTranslatedDraft
-                    )
-                }
+                guard let stabilized = self.zipformerStabilizer.processPartial(normalized) else { return }
+                LiveCaptionSyncController.shared.receivePartial(
+                    start: offset + result.start,
+                    end: offset + result.end,
+                    text: stabilized,
+                    engine: "zipformer",
+                    language: self.language,
+                    translation: self.validTranslatedDraft
+                )
+                self.liveDraftStart = offset + result.start
+                self.liveDraft = stabilized
+                self.provisional = []
             }
-            self.liveDraftStart = offset + result.start
-            self.liveDraft = result.isFinal ? "" : text
-            self.provisional = []
         }
     }
 
@@ -2289,17 +2297,19 @@ final class LectureController: ObservableObject {
 
     private func startZipformerDeviceAudio(current: LectureSession, startSampleOffset: Int? = nil) async throws {
         let generation = UUID(); activeDecodeID = generation
+        zipformerStabilizer.reset()
         liveDraft = ""; provisional = []; restartTranslation()
         let offset = startSampleOffset.map { Double($0) / 16000.0 } ?? duration
         try await zipformerEngine.start(language: current.language) { [weak self] result in
             guard let self, self.activeDecodeID == generation, self.session?.id == current.id,
                   result.start.isFinite, result.end.isFinite else { return }
-            let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalized = ChineseTextNormalizer.toTraditional(result.text.trimmingCharacters(in: .whitespacesAndNewlines))
             self.draftAudioEnd = max(self.draftAudioEnd, offset + result.end)
             if result.isFinal {
-                if !text.isEmpty {
+                let finalText = self.zipformerStabilizer.processFinal(normalized)
+                if !finalText.isEmpty {
                     self.session?.previousLines = nil
-                    let corrected = CourseVocabulary.shared.correctFinalText(text)
+                    let corrected = CourseVocabulary.shared.correctFinalText(finalText)
                     let newLine = TranscriptLine(start: offset + result.start, end: offset + result.end, text: corrected)
                     self.session?.lines.append(newLine)
                     LiveActivityCoordinator.shared.updateTranscript(original: corrected, translation: self.validTranslatedDraft)
@@ -2317,21 +2327,23 @@ final class LectureController: ObservableObject {
                 if self.sessionStorageMode == .saveTranscript {
                     self.persist()
                 }
+                self.liveDraftStart = offset + result.start
+                self.liveDraft = ""
+                self.provisional = []
             } else {
-                if !text.isEmpty {
-                    LiveCaptionSyncController.shared.receivePartial(
-                        start: offset + result.start,
-                        end: offset + result.end,
-                        text: text,
-                        engine: "zipformer",
-                        language: self.language,
-                        translation: self.validTranslatedDraft
-                    )
-                }
+                guard let stabilized = self.zipformerStabilizer.processPartial(normalized) else { return }
+                LiveCaptionSyncController.shared.receivePartial(
+                    start: offset + result.start,
+                    end: offset + result.end,
+                    text: stabilized,
+                    engine: "zipformer",
+                    language: self.language,
+                    translation: self.validTranslatedDraft
+                )
+                self.liveDraftStart = offset + result.start
+                self.liveDraft = stabilized
+                self.provisional = []
             }
-            self.liveDraftStart = offset + result.start
-            self.liveDraft = result.isFinal ? "" : text
-            self.provisional = []
         }
     }
 
@@ -2342,17 +2354,19 @@ final class LectureController: ObservableObject {
         paraformerCursor = from
         let offset = part.offset + Double(from) / 16000
         let generation = UUID(); activeDecodeID = generation
+        paraformerStabilizer.reset()
         liveDraft = ""; provisional = []; restartTranslation()
         try await paraformerEngine.start(language: current.language) { [weak self] result in
             guard let self, self.activeDecodeID == generation, self.session?.id == current.id,
                   let index = self.session?.parts.firstIndex(where: { $0.id == part.id }),
                   result.start.isFinite, result.end.isFinite else { return }
-            let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalized = ChineseTextNormalizer.toTraditional(result.text.trimmingCharacters(in: .whitespacesAndNewlines))
             self.draftAudioEnd = max(self.draftAudioEnd, offset + result.end)
             if result.isFinal {
-                if !text.isEmpty {
+                let finalText = self.paraformerStabilizer.processFinal(normalized)
+                if !finalText.isEmpty {
                     self.session?.previousLines = nil
-                    let corrected = CourseVocabulary.shared.correctFinalText(text)
+                    let corrected = CourseVocabulary.shared.correctFinalText(finalText)
                     let newLine = TranscriptLine(start: offset + result.start, end: offset + result.end, text: corrected)
                     self.session?.lines.append(newLine)
                     LiveActivityCoordinator.shared.updateTranscript(original: corrected, translation: self.validTranslatedDraft)
@@ -2371,21 +2385,23 @@ final class LectureController: ObservableObject {
                 let previous = self.session?.parts[index].processedSamples ?? 0
                 self.session?.parts[index].processedSamples = min(count, max(previous, durable))
                 self.persist()
+                self.liveDraftStart = offset + result.start
+                self.liveDraft = ""
+                self.provisional = []
             } else {
-                if !text.isEmpty {
-                    LiveCaptionSyncController.shared.receivePartial(
-                        start: offset + result.start,
-                        end: offset + result.end,
-                        text: text,
-                        engine: "paraformer",
-                        language: self.language,
-                        translation: self.validTranslatedDraft
-                    )
-                }
+                guard let stabilized = self.paraformerStabilizer.processPartial(normalized) else { return }
+                LiveCaptionSyncController.shared.receivePartial(
+                    start: offset + result.start,
+                    end: offset + result.end,
+                    text: stabilized,
+                    engine: "paraformer",
+                    language: self.language,
+                    translation: self.validTranslatedDraft
+                )
+                self.liveDraftStart = offset + result.start
+                self.liveDraft = stabilized
+                self.provisional = []
             }
-            self.liveDraftStart = offset + result.start
-            self.liveDraft = result.isFinal ? "" : text
-            self.provisional = []
         }
     }
 
@@ -2413,17 +2429,19 @@ final class LectureController: ObservableObject {
 
     private func startParaformerDeviceAudio(current: LectureSession, startSampleOffset: Int? = nil) async throws {
         let generation = UUID(); activeDecodeID = generation
+        paraformerStabilizer.reset()
         liveDraft = ""; provisional = []; restartTranslation()
         let offset = startSampleOffset.map { Double($0) / 16000.0 } ?? duration
         try await paraformerEngine.start(language: current.language) { [weak self] result in
             guard let self, self.activeDecodeID == generation, self.session?.id == current.id,
                   result.start.isFinite, result.end.isFinite else { return }
-            let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalized = ChineseTextNormalizer.toTraditional(result.text.trimmingCharacters(in: .whitespacesAndNewlines))
             self.draftAudioEnd = max(self.draftAudioEnd, offset + result.end)
             if result.isFinal {
-                if !text.isEmpty {
+                let finalText = self.paraformerStabilizer.processFinal(normalized)
+                if !finalText.isEmpty {
                     self.session?.previousLines = nil
-                    let corrected = CourseVocabulary.shared.correctFinalText(text)
+                    let corrected = CourseVocabulary.shared.correctFinalText(finalText)
                     let newLine = TranscriptLine(start: offset + result.start, end: offset + result.end, text: corrected)
                     self.session?.lines.append(newLine)
                     LiveActivityCoordinator.shared.updateTranscript(original: corrected, translation: self.validTranslatedDraft)
@@ -2441,21 +2459,23 @@ final class LectureController: ObservableObject {
                 if self.sessionStorageMode == .saveTranscript {
                     self.persist()
                 }
+                self.liveDraftStart = offset + result.start
+                self.liveDraft = ""
+                self.provisional = []
             } else {
-                if !text.isEmpty {
-                    LiveCaptionSyncController.shared.receivePartial(
-                        start: offset + result.start,
-                        end: offset + result.end,
-                        text: text,
-                        engine: "paraformer",
-                        language: self.language,
-                        translation: self.validTranslatedDraft
-                    )
-                }
+                guard let stabilized = self.paraformerStabilizer.processPartial(normalized) else { return }
+                LiveCaptionSyncController.shared.receivePartial(
+                    start: offset + result.start,
+                    end: offset + result.end,
+                    text: stabilized,
+                    engine: "paraformer",
+                    language: self.language,
+                    translation: self.validTranslatedDraft
+                )
+                self.liveDraftStart = offset + result.start
+                self.liveDraft = stabilized
+                self.provisional = []
             }
-            self.liveDraftStart = offset + result.start
-            self.liveDraft = result.isFinal ? "" : text
-            self.provisional = []
         }
     }
 

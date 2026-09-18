@@ -1,7 +1,7 @@
 name: Lecture App Validation
 on:
   push:
-    branches: [playground-compatible, 'release/**', main, 'fix/**']
+    branches: [playground-compatible, 'release/**', main, 'fix/**', 'antigravity/**']
     tags: ['v*']
     paths: ['Apps/**', 'AppBuild/**', 'AppTests/**', '.github/workflows/lecture-app.yml', 'Deliverables/**']
   workflow_dispatch:
